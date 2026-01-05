@@ -2,13 +2,13 @@
    1. FIREBASE CONFIGURATION
    ======================================================== */
 const firebaseConfig = {
-  apiKey: "AIzaSyAKth3o5XhUTLNZ8JSbsKPKEIHmqhTHHH4",
-  authDomain: "nileprise-crm.firebaseapp.com",
-  projectId: "nileprise-crm",
-  storageBucket: "nileprise-crm.firebasestorage.app",
-  messagingSenderId: "1090344693240",
-  appId: "1:1090344693240:web:68be4d7df18c82232b7a0d",
-  measurementId: "G-RP3R2P9JPF"
+  apiKey: "AIzaSyCx81Xr7SOts_nQV-bz-A0bUBp-z1x80IU",
+  authDomain: "nileprisecrm-d912e.firebaseapp.com",
+  projectId: "nileprisecrm-d912e",
+  storageBucket: "nileprisecrm-d912e.firebasestorage.app",
+  messagingSenderId: "64204398590",
+  appId: "1:64204398590:web:85e4c41bf1436cf3cf2aaf",
+  measurementId: "G-MDLJ4R0T4V"
 };
 
 try { firebase.initializeApp(firebaseConfig); } catch (e) { console.error("Firebase Init Error:", e); }
