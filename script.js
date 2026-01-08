@@ -1,17 +1,25 @@
 /* ========================================================
-   1. FIREBASE CONFIGURATION
+   1. FIREBASE CONFIGURATION (UPDATED)
    ======================================================== */
 const firebaseConfig = {
-  apiKey: "AIzaSyCx81Xr7SOts_nQV-bz-A0bUBp-z1x80IU",
-  authDomain: "nileprisecrm-d912e.firebaseapp.com",
-  projectId: "nileprisecrm-d912e",
-  storageBucket: "nileprisecrm-d912e.firebasestorage.app",
-  messagingSenderId: "64204398590",
-  appId: "1:64204398590:web:85e4c41bf1436cf3cf2aaf",
-  measurementId: "G-MDLJ4R0T4V"
+  apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
+  authDomain: "nile-group-crm.firebaseapp.com",
+  projectId: "nile-group-crm",
+  storageBucket: "nile-group-crm.firebasestorage.app",
+  messagingSenderId: "575678017832",
+  appId: "1:575678017832:web:8ae69a81cfaaf7a717601d",
+  measurementId: "G-11XNH0CYY1"
 };
 
-try { firebase.initializeApp(firebaseConfig); } catch (e) { console.error("Firebase Init Error:", e); }
+try { 
+    firebase.initializeApp(firebaseConfig); 
+    // Initialize Analytics if available in your HTML script tags
+    if (firebase.analytics) { firebase.analytics(); }
+} catch (e) { 
+    console.error("Firebase Init Error:", e); 
+}
+
+// Initialize Services
 const db = firebase.firestore();
 const auth = firebase.auth();
 const storage = firebase.storage();
@@ -69,11 +77,7 @@ const state = {
     pendingDelete: { type: null },
     metadata: {
         recruiters: [],
-        techs: [
-            "React", "Node.js", "Java", "Python", ".NET", 
-            "AWS", "Azure", "DevOps", "Salesforce", "Data Science",
-            "Angular", "Flutter", "Golang", "PHP"
-        ]
+        techs: [] // Populated dynamically
     }
 };
 
@@ -128,7 +132,7 @@ function init() {
                     return; 
                 }
                 
-                // --- SECURITY: Check Block Status ---
+                // --- SECURITY CHECK ---
                 db.collection('users').doc(user.email).get().then(doc => {
                     if (doc.exists && doc.data().accessStatus === 'Blocked') {
                         auth.signOut();
@@ -136,19 +140,18 @@ function init() {
                         return;
                     }
                     
-                    // If allowed, proceed
                     state.user = user;
                     const email = user.email.toLowerCase();
                     const knownUser = ALLOWED_USERS[email];
-                   
+                  
                     state.userRole = knownUser ? knownUser.role : 'Viewer'; 
                     state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
-                   
+                  
                     if (state.userRole === 'Employee') {
                          document.getElementById('btn-delete-selected').style.display = 'none';
                     }
 
-                    // --- KEY: Re-render dropdowns now that we know the Role ---
+                    // Re-render dropdowns with correct role
                     renderDropdowns(); 
 
                     updateUserProfile(user, knownUser);
@@ -191,7 +194,6 @@ function showToast(msg) {
     const iconContainer = document.getElementById('toast-icon-container');
     
     const isError = msg.toLowerCase().includes('error') || msg.toLowerCase().includes('failed') || msg.toLowerCase().includes('denied');
-    
     message.innerText = msg;
     
     if (isError) {
@@ -273,7 +275,7 @@ function updateUserProfile(user, hardcodedData) {
             if(document.getElementById('prof-work-mobile')) document.getElementById('prof-work-mobile').value = data.workMobile || '';
             if(document.getElementById('prof-personal-mobile')) document.getElementById('prof-personal-mobile').value = data.personalMobile || '';
             if(document.getElementById('prof-personal-email')) document.getElementById('prof-personal-email').value = data.personalEmail || '';
-            
+           
             let photoURL = data.photoURL || user.photoURL;
             if(photoURL) {
                 const avatarImg = document.getElementById('profile-main-img');
@@ -290,7 +292,6 @@ function updateUserProfile(user, hardcodedData) {
         }
     });
 
-    // --- ACCESS CONTROL ---
     const navOnb = document.querySelector('button[data-target="view-onboarding"]');
     const navPlace = document.querySelector('button[data-target="view-placements"]');
     const navSettings = document.querySelector('button[data-target="view-settings"]');
@@ -344,82 +345,108 @@ window.saveProfileData = () => {
    7. REAL-TIME DATA & LISTENERS
    ======================================================== */
 function initRealtimeListeners() {
+    // 1. CANDIDATES LISTENER
     db.collection('candidates').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
         state.candidates = [];
         snap.forEach(doc => state.candidates.push({ id: doc.id, ...doc.data() }));
         
+        // --- DYNAMIC TECH COLLECTION ---
+        const rawTechs = state.candidates.map(c => c.tech).filter(t => t && t.trim().length > 0);
+        state.metadata.techs = [...new Set(rawTechs)].sort();
+        
+        renderDropdowns();
         renderCandidateTable();
         renderPlacementTable();
+        
         if(window.updateHubStats) window.updateHubStats(state.hubFilterType, state.hubDate);
         updateDashboardStats();
         if(dom.headerUpdated) dom.headerUpdated.innerText = 'Synced';
     });
 
+    // 2. ONBOARDING LISTENER
     db.collection('onboarding').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.onboarding = [];
         snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() }));
         renderOnboardingTable();
     });
 
+    // 3. EMPLOYEES LISTENER
     db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.employees = [];
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
         
+        // --- FILTER EXCLUDED MANAGERS/ADMINS ---
+        const excludedNames = Object.values(ALLOWED_USERS)
+            .filter(u => u.role === 'Manager' || u.role === 'Admin')
+            .map(u => u.name); 
+
         const firstNames = state.employees.map(e => e.first).filter(name => name && name.trim().length > 0);
-        const uniqueRecruiters = [...new Set(firstNames)].sort();
-        state.metadata.recruiters = uniqueRecruiters;
+        const validRecruiters = firstNames.filter(empName => {
+            return !excludedNames.some(excluded => excluded.includes(empName));
+        });
+
+        state.metadata.recruiters = [...new Set(validRecruiters)].sort();
         
         renderDropdowns(); 
         renderEmployeeTable();
         updateDashboardStats();
-        
-        // BIRTHDAY CHECK (on data load)
         checkBirthdays(); 
     });
     
+    // 4. USERS LISTENER
     db.collection('users').onSnapshot(snap => {
         state.allUsers = [];
         snap.forEach(doc => {
             const data = doc.data();
-            const fullName = (data.firstName && data.lastName) 
-                            ? `${data.firstName} ${data.lastName}` 
-                            : (data.displayName || 'Staff Member');
+            let fullName = 'User';
+            if (data.firstName && data.lastName) fullName = `${data.firstName} ${data.lastName}`;
+            else if (data.firstName) fullName = data.firstName;
+            else if (data.displayName) fullName = data.displayName;
+            else fullName = data.email.split('@')[0];
+           
             state.allUsers.push({ id: doc.id, name: fullName, dob: data.dob });
         });
-        // Also check birthdays when users update
         checkBirthdays();
     });
 }
 
+/* ================= BIRTHDAY LOGIC (24-Hour Visibility) ================= */
 window.checkBirthdays = () => {
     const today = new Date();
     const currentMonth = String(today.getMonth() + 1).padStart(2, '0');
     const currentDay = String(today.getDate()).padStart(2, '0');
     const todayMatch = `${currentMonth}-${currentDay}`;
 
-    // 1. Collect from System Users
-    const systemUsers = state.allUsers.map(u => ({ name: u.name, dob: u.dob }));
-    // 2. Collect from Employees Table
-    const tableEmployees = state.employees.map(e => ({ name: `${e.first} ${e.last}`, dob: e.dob }));
-    // 3. Merge
-    const allPeople = [...systemUsers, ...tableEmployees];
+    const employeeMatches = state.employees
+        .filter(e => {
+            if (!e.dob) return false;
+            return e.dob.substring(5) === todayMatch; 
+        })
+        .map(e => {
+            const f = e.first || '';
+            const l = e.last || '';
+            return `${f} ${l}`.trim();
+        });
 
-    const birthdayList = allPeople.filter(person => {
-        if (!person.dob) return false;
-        const personBorn = person.dob.substring(5); 
-        return personBorn === todayMatch;
-    });
+    const userMatches = state.allUsers
+        .filter(u => {
+            if (!u.dob) return false;
+            return u.dob.substring(5) === todayMatch;
+        })
+        .map(u => u.name);
 
-    const uniqueNames = [...new Set(birthdayList.map(p => p.name))];
+    const allNames = [...new Set([...employeeMatches, ...userMatches])];
+    const validNames = allNames.filter(n => n && n.trim().length > 0 && !n.toLowerCase().includes('staff member') && n !== 'User');
+
     const card = document.getElementById('birthday-card');
     const namesContainer = document.getElementById('bday-names');
 
+    // No Timer -> Stays visible all day
     if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
 
-    if (uniqueNames.length > 0) {
-        namesContainer.innerText = uniqueNames.join(', ');
-        card.classList.add('active');
-        window.birthdayTimer = setTimeout(() => { closeBirthdayCard(); }, 7000); 
+    if (validNames.length > 0) {
+        namesContainer.innerText = validNames.join(', ');
+        card.classList.add('active'); 
     } else {
         closeBirthdayCard();
     }
@@ -435,8 +462,6 @@ window.closeBirthdayCard = () => {
    ======================================================== */
 function renderDropdowns() {
     let displayRecruiters = state.metadata.recruiters;
-
-    // --- ACCESS CONTROL: Restrict Recruiter List for Employees ---
     if (state.userRole === 'Employee' && state.currentUserName) {
         displayRecruiters = [state.currentUserName];
     }
@@ -682,7 +707,6 @@ function renderEmployeeTable() {
         const idx = i + 1;
         const isSel = state.selection.emp.has(c.id) ? 'checked' : '';
         const rowClass = state.selection.emp.has(c.id) ? 'selected-row' : '';
-        
         return `
         <tr class="${rowClass}">
             <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td>
@@ -762,11 +786,12 @@ window.renderPlacementTable = () => {
     const thead = table.querySelector('thead');
     if(!tbody) return;
 
-    const headers = ['<input type="checkbox" id="select-all-place" onclick="toggleSelectAll(\'place\', this)">', '#', 'First Name', 'Last Name', 'Location', 'Contract Type', 'Placed Date'];
+    // UPDATE HEADER
+    const headers = ['<input type="checkbox" id="select-all-place" onclick="toggleSelectAll(\'place\', this)">', '#', 'First Name', 'Last Name', 'Recruiter', 'Location', 'Contract Type', 'Placed Date'];
     thead.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="opacity:0.6; padding:20px;">No placements found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="opacity:0.6; padding:20px;">No placements found.</td></tr>`;
         document.getElementById('placement-footer-count').innerText = "Showing 0 records";
         return;
     }
@@ -779,6 +804,7 @@ window.renderPlacementTable = () => {
             <td>${i + 1}</td>
             <td onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td>
             <td onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td>
+            <td onclick="editRecruiter('${c.id}', 'candidates', this)">${c.recruiter || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'location', 'candidates', this)">${c.location || '<span style="opacity:0.5; font-size:0.8rem;">Add Location</span>'}</td>
             <td onclick="inlineEdit('${c.id}', 'contract', 'candidates', this)">${c.contract || '<span style="opacity:0.5; font-size:0.8rem;">Add Type</span>'}</td>
             <td>${c.assigned || '-'}</td>
@@ -861,39 +887,8 @@ window.deleteUser = (email) => {
     }).catch(err => showToast("Error: " + err.message));
 };
 
-/* ================= QUICK ACTIONS ================= */
-window.toggleQuickMenu = () => {
-    const wrapper = document.querySelector('.quick-action-wrapper');
-    const fab = document.querySelector('.qa-fab');
-    wrapper.classList.toggle('open');
-    fab.classList.toggle('active');
-};
-
-window.handleQuickAction = (action) => {
-    toggleQuickMenu();
-    Object.values(dom.views).forEach(view => view.classList.remove('active'));
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-
-    if (action === 'add-candidate') {
-        dom.views.candidates.classList.add('active');
-        document.querySelector('button[data-target="view-candidates"]').classList.add('active');
-        setTimeout(() => { document.getElementById('btn-add-candidate').click(); document.querySelector('#view-candidates .table-wrapper').scrollTop = 0; }, 300);
-    } 
-    else if (action === 'go-hub') {
-        dom.views.hub.classList.add('active');
-        document.querySelector('button[data-target="view-hub"]').classList.add('active');
-        updateHubStats(state.hubFilterType, state.hubDate);
-    } 
-    else if (action === 'go-placements') {
-        dom.views.placements.classList.add('active');
-        document.querySelector('button[data-target="view-placements"]').classList.add('active');
-        renderPlacementTable();
-    }
-};
-
+/* ================= EVENT LISTENERS ================= */
 document.addEventListener('click', (e) => {
-    const wrapper = document.querySelector('.quick-action-wrapper');
-    if (wrapper && wrapper.classList.contains('open') && !e.target.closest('.quick-action-wrapper')) { toggleQuickMenu(); }
     if(e.target.closest('#nav-admin')) { renderAdminPanel(); }
 });
 
