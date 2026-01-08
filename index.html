@@ -33,19 +33,6 @@
     </div>
   </div>
 
-  <div id="birthday-card" class="birthday-card glass-panel">
-    <div class="bday-icon">
-      <i class="fa-solid fa-cake-candles"></i>
-    </div>
-    <div class="bday-content">
-      <h4>Happy Birthday! ??</h4>
-      <div id="bday-names" class="bday-names"></div>
-    </div>
-    <button class="bday-close" onclick="closeBirthdayCard()">
-      <i class="fa-solid fa-xmark"></i>
-    </button>
-  </div>
-
   <input type="file" id="hub-file-input" accept=".eml,.msg" style="display:none;" onchange="handleHubFileSelect(this)">
 
   <div id="app" class="app-container">
@@ -150,6 +137,19 @@
       </aside>
 
       <main class="main-content">
+
+        <div id="birthday-card" class="birthday-card glass-panel">
+          <div class="bday-icon">
+            <i class="fa-solid fa-cake-candles"></i>
+          </div>
+          <div class="bday-content">
+            <h4>Happy Birthday! 🎉</h4>
+            <div id="bday-names" class="bday-names"></div>
+          </div>
+          <button class="bday-close" onclick="closeBirthdayCard()">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
 
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;">
@@ -665,26 +665,6 @@
 
       </main>
     </section>
-  </div>
-
-  <div class="quick-action-wrapper">
-    <div class="qa-menu" id="qa-menu">
-      <button class="qa-item" onclick="handleQuickAction('add-candidate')" style="transition-delay: 0.1s;">
-        <span class="qa-tooltip">Add Candidate</span>
-        <i class="fa-solid fa-user-plus"></i>
-      </button>
-      <button class="qa-item" onclick="handleQuickAction('go-hub')" style="transition-delay: 0.05s;">
-        <span class="qa-tooltip">Log Activity</span>
-        <i class="fa-solid fa-file-pen"></i>
-      </button>
-      <button class="qa-item" onclick="handleQuickAction('go-placements')">
-        <span class="qa-tooltip">Placements</span>
-        <i class="fa-solid fa-trophy"></i>
-      </button>
-    </div>
-    <button class="qa-fab" onclick="toggleQuickMenu()">
-      <i class="fa-solid fa-plus" id="qa-icon"></i>
-    </button>
   </div>
 
   <div id="delete-modal" class="modal-overlay">
