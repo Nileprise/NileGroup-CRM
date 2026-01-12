@@ -33,7 +33,7 @@ const ALLOWED_USERS = {
     'mmr@nileprise.com': { name: 'Manikanta', role: 'Employee' },
     'maj@nileprise.com': { name: 'Mazher', role: 'Employee' },
     'msa@nileprise.com': { name: 'Shoeb', role: 'Employee' },
-    'fma@nileprise.com': { name: 'Fayaz', role: 'Manager' },
+    'fma@nileprise.com': { name: 'Fayaz', role: 'Admin' },
     'an@nileprise.com': { name: 'Akhil', role: 'Manager' },
     'aman@nileprise.com': { name: 'Sanketh', role: 'Manager' },
     'careers@nileprise.com': { name: 'Nikhil Rapolu', role: 'Admin' },
