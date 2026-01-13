@@ -1,9 +1,10 @@
 /* ========================================================
-   1. FIREBASE CONFIGURATION (UPDATED)
+   1. FIREBASE CONFIGURATION (UPDATED for Nile Group CRM)
    ======================================================== */
 const firebaseConfig = {
   apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
   authDomain: "nile-group-crm.firebaseapp.com",
+  databaseURL: "https://nile-group-crm-default-rtdb.firebaseio.com",
   projectId: "nile-group-crm",
   storageBucket: "nile-group-crm.firebasestorage.app",
   messagingSenderId: "575678017832",
@@ -11,15 +12,7 @@ const firebaseConfig = {
   measurementId: "G-11XNH0CYY1"
 };
 
-try { 
-    firebase.initializeApp(firebaseConfig); 
-    // Initialize Analytics if available in your HTML script tags
-    if (firebase.analytics) { firebase.analytics(); }
-} catch (e) { 
-    console.error("Firebase Init Error:", e); 
-}
-
-// Initialize Services
+try { firebase.initializeApp(firebaseConfig); } catch (e) { console.error("Firebase Init Error:", e); }
 const db = firebase.firestore();
 const auth = firebase.auth();
 const storage = firebase.storage();
@@ -33,7 +26,7 @@ const ALLOWED_USERS = {
     'mmr@nileprise.com': { name: 'Manikanta', role: 'Employee' },
     'maj@nileprise.com': { name: 'Mazher', role: 'Employee' },
     'msa@nileprise.com': { name: 'Shoeb', role: 'Employee' },
-    'fma@nileprise.com': { name: 'Fayaz', role: 'Admin' },
+    'fma@nileprise.com': { name: 'Fayaz', role: 'Manager' },
     'an@nileprise.com': { name: 'Akhil', role: 'Manager' },
     'aman@nileprise.com': { name: 'Sanketh', role: 'Manager' },
     'careers@nileprise.com': { name: 'Nikhil Rapolu', role: 'Admin' },
@@ -71,13 +64,17 @@ const state = {
     empFilters: { text: '' },
     
     // SELECTION
-    selection: { cand: new Set(), onb: new Set(), emp: new Set(), place: new Set() },
+    selection: { cand: new Set(), onb: new Set(), emp: new Set() },
     
     modal: { id: null, type: null },
     pendingDelete: { type: null },
     metadata: {
         recruiters: [],
-        techs: [] // Populated dynamically
+        techs: [
+            "React", "Node.js", "Java", "Python", ".NET", 
+            "AWS", "Azure", "DevOps", "Salesforce", "Data Science",
+            "Angular", "Flutter", "Golang", "PHP"
+        ]
     }
 };
 
@@ -95,8 +92,7 @@ const dom = {
         onboarding: document.getElementById('view-onboarding'),
         settings: document.getElementById('view-settings'),
         profile: document.getElementById('view-profile'),
-        placements: document.getElementById('view-placements'),
-        admin: document.getElementById('view-admin')
+        placements: document.getElementById('view-placements')
     },
     headerUpdated: document.getElementById('header-updated'),
     tables: {
@@ -122,7 +118,7 @@ function init() {
     try {
         console.log("App Initializing...");
         setupEventListeners();
-        renderDropdowns(); // Initial render
+        renderDropdowns();
         
         auth.onAuthStateChanged(user => {
             if (user) {
@@ -131,35 +127,23 @@ function init() {
                     switchScreen('verify'); 
                     return; 
                 }
+                state.user = user;
+                const email = user.email.toLowerCase();
+                const knownUser = ALLOWED_USERS[email];
                 
-                // --- SECURITY CHECK ---
-                db.collection('users').doc(user.email).get().then(doc => {
-                    if (doc.exists && doc.data().accessStatus === 'Blocked') {
-                        auth.signOut();
-                        showToast("Access Denied: Your account is blocked.");
-                        return;
-                    }
-                    
-                    state.user = user;
-                    const email = user.email.toLowerCase();
-                    const knownUser = ALLOWED_USERS[email];
-                  
-                    state.userRole = knownUser ? knownUser.role : 'Viewer'; 
-                    state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
-                  
-                    if (state.userRole === 'Employee') {
-                         document.getElementById('btn-delete-selected').style.display = 'none';
-                    }
+                // --- SECURITY CONTEXT SETUP ---
+                state.userRole = knownUser ? knownUser.role : 'Viewer'; 
+                state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
+                
+                // Hide specific buttons based on role
+                if (state.userRole === 'Employee') {
+                     document.getElementById('btn-delete-selected').style.display = 'none';
+                }
 
-                    // Re-render dropdowns with correct role
-                    renderDropdowns(); 
-
-                    updateUserProfile(user, knownUser);
-                    switchScreen('app');
-                    initRealtimeListeners();
-                    startAutoLogoutTimer();
-                });
-
+                updateUserProfile(user, knownUser);
+                switchScreen('app');
+                initRealtimeListeners();
+                startAutoLogoutTimer();
             } else {
                 switchScreen('auth');
                 stopAutoLogoutTimer();
@@ -189,24 +173,9 @@ window.switchAuth = (target) => {
 
 function showToast(msg) { 
     const t = document.getElementById('toast'); 
-    const title = document.getElementById('toast-title');
-    const message = document.getElementById('toast-msg');
-    const iconContainer = document.getElementById('toast-icon-container');
-    
-    const isError = msg.toLowerCase().includes('error') || msg.toLowerCase().includes('failed') || msg.toLowerCase().includes('denied');
-    message.innerText = msg;
-    
-    if (isError) {
-        t.className = 'toast error show';
-        title.innerText = "Attention";
-        iconContainer.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i>';
-    } else {
-        t.className = 'toast success show';
-        title.innerText = "Success";
-        iconContainer.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
-    }
-
-    setTimeout(() => { t.classList.remove('show'); }, 3000); 
+    document.getElementById('toast-msg').innerText = msg; 
+    t.classList.add('show'); 
+    setTimeout(() => t.classList.remove('show'), 2000); 
 }
 
 function cleanError(msg) { 
@@ -237,7 +206,6 @@ dom.navItems.forEach(btn => {
             if (targetId === 'view-dashboard') updateDashboardStats();
             if (targetId === 'view-profile') refreshProfileData();
             if (targetId === 'view-placements') renderPlacementTable();
-            if (targetId === 'view-admin') renderAdminPanel();
         }
     });
 });
@@ -275,7 +243,7 @@ function updateUserProfile(user, hardcodedData) {
             if(document.getElementById('prof-work-mobile')) document.getElementById('prof-work-mobile').value = data.workMobile || '';
             if(document.getElementById('prof-personal-mobile')) document.getElementById('prof-personal-mobile').value = data.personalMobile || '';
             if(document.getElementById('prof-personal-email')) document.getElementById('prof-personal-email').value = data.personalEmail || '';
-           
+            
             let photoURL = data.photoURL || user.photoURL;
             if(photoURL) {
                 const avatarImg = document.getElementById('profile-main-img');
@@ -291,27 +259,6 @@ function updateUserProfile(user, hardcodedData) {
             if(document.getElementById('prof-last')) document.getElementById('prof-last').value = names.slice(1).join(' ') || '';
         }
     });
-
-    const navOnb = document.querySelector('button[data-target="view-onboarding"]');
-    const navPlace = document.querySelector('button[data-target="view-placements"]');
-    const navSettings = document.querySelector('button[data-target="view-settings"]');
-    const navAdmin = document.getElementById('nav-admin');
-
-    if (role === 'Employee') {
-        if(navOnb) navOnb.style.display = 'none';
-        if(navPlace) navPlace.style.display = 'none';
-        if(navSettings) navSettings.style.display = 'none';
-    } else {
-        if(navOnb) navOnb.style.display = 'flex';
-        if(navPlace) navPlace.style.display = 'flex';
-        if(navSettings) navSettings.style.display = 'flex';
-    }
-
-    if (role === 'Admin') {
-        if(navAdmin) navAdmin.style.display = 'flex';
-    } else {
-        if(navAdmin) navAdmin.style.display = 'none';
-    }
 }
 
 function refreshProfileData() {
@@ -345,130 +292,86 @@ window.saveProfileData = () => {
    7. REAL-TIME DATA & LISTENERS
    ======================================================== */
 function initRealtimeListeners() {
-    // 1. CANDIDATES LISTENER
     db.collection('candidates').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
         state.candidates = [];
         snap.forEach(doc => state.candidates.push({ id: doc.id, ...doc.data() }));
         
-        // --- DYNAMIC TECH COLLECTION ---
-        const rawTechs = state.candidates.map(c => c.tech).filter(t => t && t.trim().length > 0);
-        state.metadata.techs = [...new Set(rawTechs)].sort();
-        
-        renderDropdowns();
         renderCandidateTable();
         renderPlacementTable();
-        
         if(window.updateHubStats) window.updateHubStats(state.hubFilterType, state.hubDate);
         updateDashboardStats();
         if(dom.headerUpdated) dom.headerUpdated.innerText = 'Synced';
     });
 
-    // 2. ONBOARDING LISTENER
     db.collection('onboarding').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.onboarding = [];
         snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() }));
         renderOnboardingTable();
     });
 
-    // 3. EMPLOYEES LISTENER
     db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.employees = [];
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
         
-        // --- FILTER EXCLUDED MANAGERS/ADMINS ---
-        const excludedNames = Object.values(ALLOWED_USERS)
-            .filter(u => u.role === 'Manager' || u.role === 'Admin')
-            .map(u => u.name); 
-
         const firstNames = state.employees.map(e => e.first).filter(name => name && name.trim().length > 0);
-        const validRecruiters = firstNames.filter(empName => {
-            return !excludedNames.some(excluded => excluded.includes(empName));
-        });
-
-        state.metadata.recruiters = [...new Set(validRecruiters)].sort();
+        const uniqueRecruiters = [...new Set(firstNames)].sort();
+        state.metadata.recruiters = uniqueRecruiters;
         
         renderDropdowns(); 
         renderEmployeeTable();
         updateDashboardStats();
-        checkBirthdays(); 
     });
     
-    // 4. USERS LISTENER
     db.collection('users').onSnapshot(snap => {
         state.allUsers = [];
         snap.forEach(doc => {
             const data = doc.data();
-            let fullName = 'User';
-            if (data.firstName && data.lastName) fullName = `${data.firstName} ${data.lastName}`;
-            else if (data.firstName) fullName = data.firstName;
-            else if (data.displayName) fullName = data.displayName;
-            else fullName = data.email.split('@')[0];
-           
+            const fullName = (data.firstName && data.lastName) 
+                                ? `${data.firstName} ${data.lastName}` 
+                                : (data.displayName || 'Staff Member');
             state.allUsers.push({ id: doc.id, name: fullName, dob: data.dob });
         });
         checkBirthdays();
     });
 }
 
-/* ================= BIRTHDAY LOGIC (24-Hour Visibility) ================= */
 window.checkBirthdays = () => {
     const today = new Date();
     const currentMonth = String(today.getMonth() + 1).padStart(2, '0');
     const currentDay = String(today.getDate()).padStart(2, '0');
     const todayMatch = `${currentMonth}-${currentDay}`;
 
-    const employeeMatches = state.employees
-        .filter(e => {
-            if (!e.dob) return false;
-            return e.dob.substring(5) === todayMatch; 
-        })
-        .map(e => {
-            const f = e.first || '';
-            const l = e.last || '';
-            return `${f} ${l}`.trim();
-        });
+    const birthdayPeople = state.allUsers.filter(user => {
+        if (!user.dob) return false;
+        const userBorn = user.dob.substring(5); 
+        return userBorn === todayMatch;
+    });
 
-    const userMatches = state.allUsers
-        .filter(u => {
-            if (!u.dob) return false;
-            return u.dob.substring(5) === todayMatch;
-        })
-        .map(u => u.name);
+    const bar = document.getElementById('birthday-bar');
+    const content = document.getElementById('birthday-ticker-content');
 
-    const allNames = [...new Set([...employeeMatches, ...userMatches])];
-    const validNames = allNames.filter(n => n && n.trim().length > 0 && !n.toLowerCase().includes('staff member') && n !== 'User');
-
-    const card = document.getElementById('birthday-card');
-    const namesContainer = document.getElementById('bday-names');
-
-    // No Timer -> Stays visible all day
     if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
 
-    if (validNames.length > 0) {
-        namesContainer.innerText = validNames.join(', ');
-        card.classList.add('active'); 
+    if (birthdayPeople.length > 0) {
+        const html = birthdayPeople.map(u => `<span class="birthday-item"><i class="fa-solid fa-cake-candles"></i> Happy Birthday, ${u.name}! 🎉</span>`).join('');
+        content.innerHTML = html + html + html; 
+        bar.style.display = 'flex';
+        
+        window.birthdayTimer = setTimeout(() => {
+            bar.style.display = 'none';
+        }, 7000); 
     } else {
-        closeBirthdayCard();
+        bar.style.display = 'none';
     }
-};
-
-window.closeBirthdayCard = () => {
-    const card = document.getElementById('birthday-card');
-    if(card) card.classList.remove('active');
 };
 
 /* ========================================================
    8. RENDERERS & DROPDOWNS
    ======================================================== */
 function renderDropdowns() {
-    let displayRecruiters = state.metadata.recruiters;
-    if (state.userRole === 'Employee' && state.currentUserName) {
-        displayRecruiters = [state.currentUserName];
-    }
-
     const rSelect = document.getElementById('filter-recruiter');
     if (rSelect) {
-        const options = displayRecruiters.map(r => `<option value="${r}">${r}</option>`).join('');
+        const options = state.metadata.recruiters.map(r => `<option value="${r}">${r}</option>`).join('');
         rSelect.innerHTML = `<option value="">All Recruiters</option>${options}`;
     }
 
@@ -480,7 +383,7 @@ function renderDropdowns() {
 
     const hubRec = document.getElementById('hub-filter-recruiter');
     if (hubRec) {
-        const options = displayRecruiters.map(r => `<option value="${r}">${r}</option>`).join('');
+        const options = state.metadata.recruiters.map(r => `<option value="${r}">${r}</option>`).join('');
         hubRec.innerHTML = `<option value="">All Recruiters</option>${options}`;
     }
 }
@@ -488,9 +391,14 @@ function renderDropdowns() {
 // === MAIN FILTER LOGIC FOR CANDIDATES ===
 function getFilteredData(data, filters) {
     let subset = data;
+
+    // --- ACCESS CONTROL: If Employee, show ONLY their own candidates ---
     if (state.userRole === 'Employee' && state.currentUserName) {
-        subset = subset.filter(item => item.recruiter === state.currentUserName);
+        subset = subset.filter(item => {
+            return item.recruiter === state.currentUserName;
+        });
     }
+
     return subset.filter(item => {
         const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text);
         const matchesRec = filters.recruiter ? item.recruiter === filters.recruiter : true;
@@ -502,7 +410,7 @@ function getFilteredData(data, filters) {
 
 function renderCandidateTable() {
     const filtered = getFilteredData(state.candidates, state.filters);
-    const headers = ['<input type="checkbox" id="select-all-cand" onclick="toggleSelectAll(\'cand\', this)">', '#', 'First Name', 'Last Name', 'Mobile', 'WhatsApp', 'Experience', 'Visa', 'Tech', 'Recruiter', 'Status', 'Assigned', 'Gmail', 'LinkedIn', 'Resume', 'Track', 'Comments'];
+    const headers = ['<input type="checkbox" id="select-all-cand" onclick="toggleSelectAll(\'cand\', this)">', '#', 'First Name', 'Last Name', 'Mobile', 'WhatsApp', 'Tech', 'Recruiter', 'Status', 'Assigned', 'Gmail', 'LinkedIn', 'Resume', 'Track', 'Comments'];
     dom.tables.cand.head.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
     const footerCount = document.getElementById('cand-footer-count');
     if(footerCount) footerCount.innerText = `Showing ${filtered.length} records`;
@@ -511,9 +419,11 @@ function renderCandidateTable() {
         const idx = i + 1;
         const isSel = state.selection.cand.has(c.id) ? 'checked' : '';
         const rowClass = state.selection.cand.has(c.id) ? 'selected-row' : '';
+        
         let statusStyle = "";
         if(c.status === 'Active') statusStyle = 'active';
         else if (c.status === 'Inactive') statusStyle = 'inactive';
+        else statusStyle = '';
         
         return `
         <tr class="${rowClass}">
@@ -523,8 +433,6 @@ function renderCandidateTable() {
             <td onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td>
             <td onclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td>
             <td onclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td>
-            <td onclick="inlineEdit('${c.id}', 'experience', 'candidates', this)">${c.experience || '-'}</td>
-            <td onclick="inlineEdit('${c.id}', 'visa', 'candidates', this)">${c.visa || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td>
             <td onclick="editRecruiter('${c.id}', 'candidates', this)">${c.recruiter}</td>
             <td>
@@ -535,10 +443,12 @@ function renderCandidateTable() {
                 </select>
             </td>
             <td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>
+        
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'gmail', 'candidates', this)">${c.gmail ? 'Gmail' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'linkedin', 'candidates', this)">${c.linkedin ? 'LinkedIn' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'resume', 'candidates', this)">${c.resume ? 'Resume' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'track', 'candidates', this)">${c.track ? 'Tracker' : ''}</td>
+        
             <td onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments || '-'}</td>
         </tr>`;
     }).join('');
@@ -557,6 +467,7 @@ function renderHubTable() {
     });
 
     const headers = ['#', 'Name', 'Recruiter', 'Tech', 'Submission', 'Screening', 'Interview', 'Last Activity'];
+    
     dom.tables.hub.head.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
     
     const footerCount = document.getElementById('hub-footer-count');
@@ -568,29 +479,24 @@ function renderHubTable() {
 
     dom.tables.hub.body.innerHTML = filtered.map((c, i) => {
         const idx = i + 1;
+        
         const checkDateInRange = (entry) => {
             const dStr = (typeof entry === 'string') ? entry : entry.date;
             const t = new Date(dStr).getTime();
             return t >= rowStart && t < rowEnd;
         };
+
         const filterLogs = (logs) => (logs || []).filter(checkDateInRange);
         
         let lastActDate = '-';
-        const allLogs = [ ...(c.submissionLog||[]), ...(c.screeningLog||[]), ...(c.interviewLog||[]), ...(c.otherLog||[]) ];
-        if (allLogs.length > 0) {
-            allLogs.sort((a, b) => {
-                const da = (typeof a === 'string') ? a : a.date;
-                const db = (typeof b === 'string') ? b : b.date;
-                return new Date(db) - new Date(da);
-            });
-            const lastEntry = allLogs[0];
+        if (c.interviewLog && c.interviewLog.length > 0) {
+            const lastEntry = c.interviewLog[0];
             lastActDate = (typeof lastEntry === 'string') ? lastEntry : lastEntry.date;
         }
 
         const subs = filterLogs(c.submissionLog);
         const scrs = filterLogs(c.screeningLog);
         const ints = filterLogs(c.interviewLog);
-        const others = filterLogs(c.otherLog);
 
         const isExpanded = state.expandedRowId === c.id;
         const activeClass = isExpanded ? 'background: rgba(6, 182, 212, 0.1); border-left: 3px solid var(--primary);' : '';
@@ -604,28 +510,36 @@ function renderHubTable() {
             <td class="text-cyan" style="font-weight:bold;">${subs.length}</td>
             <td class="text-gold" style="font-weight:bold;">${scrs.length}</td>
             <td class="text-purple" style="font-weight:bold;">${ints.length}</td>
-            <td style="font-size:0.85rem; font-weight:600; color:var(--text-main)">${lastActDate}</td>
+            <td style="font-size:0.8rem; color:var(--text-muted)">${lastActDate}</td>
         </tr>`;
 
         if(isExpanded) {
             const inputDefault = state.hubDate; 
+            
             const renderTimeline = (list, fieldName) => {
-                if(!list || list.length === 0) return `<li class="hub-log-item" style="justify-content:center; opacity:0.5; padding-left:0;">No records</li>`;
+                if(!list || list.length === 0) return `<li class="hub-log-item" style="justify-content:center; opacity:0.5; padding-left:0;">No records for selected date</li>`;
+             
                 return list.map((entry, index) => {
                     const isLegacy = typeof entry === 'string';
                     const dateStr = isLegacy ? entry : entry.date;
                     const link = isLegacy ? '' : entry.link;
                     const dateObj = new Date(dateStr);
                     const niceDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                 
                     let linkHtml = '';
                     if(link) {
                         const isEmail = link.includes('firebasestorage') || link.endsWith('.eml');
                         const icon = isEmail ? 'fa-envelope-open-text' : 'fa-arrow-up-right-from-square';
-                        const clickAction = isEmail ? `onclick="event.stopPropagation(); viewEmailLog('${link}')"` : `href="${link}" target="_blank" onclick="event.stopPropagation()" rel="noopener noreferrer"`;
+                        const clickAction = isEmail ? `onclick="viewEmailLog('${link}')"` : `href="${link}" target="_blank"`;
                         const btnClass = isEmail ? 'hub-link-btn is-email' : 'hub-link-btn';
-                        if(isEmail) linkHtml = `<button class="${btnClass}" ${clickAction} title="Open Email"><i class="fa-solid ${icon}"></i></button>`;
-                        else linkHtml = `<a ${clickAction} class="${btnClass}" title="Open Link"><i class="fa-solid ${icon}"></i></a>`;
+                     
+                        if(isEmail) {
+                            linkHtml = `<button class="${btnClass}" ${clickAction} title="Open Email"><i class="fa-solid ${icon}"></i></button>`;
+                        } else {
+                            linkHtml = `<a ${clickAction} class="${btnClass}" title="Open Link"><i class="fa-solid ${icon}"></i></a>`;
+                        }
                     }
+
                     return `
                     <li class="hub-log-item">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -633,8 +547,9 @@ function renderHubTable() {
                             ${linkHtml}
                         </div>
                         <div class="hub-log-actions">
-                            <button class="hub-action-btn" title="Edit Log" onclick="event.stopPropagation(); editHubLog('${c.id}', '${fieldName}', ${index})"><i class="fa-solid fa-pen-to-square"></i></button>
-                            <button class="hub-action-btn delete" title="Delete Log" onclick="event.stopPropagation(); deleteHubLog('${c.id}', '${fieldName}', ${index})"><i class="fa-solid fa-trash"></i></button>
+                            <button class="hub-action-btn delete" title="Delete Log" onclick="deleteHubLog('${c.id}', '${fieldName}', ${index})">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </div>
                     </li>`;
                 }).join('');
@@ -644,42 +559,37 @@ function renderHubTable() {
             <tr class="hub-details-row">
                 <td colspan="8">
                     <div class="hub-details-wrapper" onclick="event.stopPropagation()">
+                   
                         <div class="hub-col cyan">
                             <div class="hub-col-header cyan"><i class="fa-solid fa-paper-plane"></i> Submission <span style="float:right; opacity:0.5">${subs.length}</span></div>
                             <div class="hub-input-group">
                                 <input type="date" id="input-sub-${c.id}" value="${inputDefault}">
-                                <button class="hub-attach-btn" title="Attach EML" onclick="triggerHubFileUpload('${c.id}', 'submissionLog')"><i class="fa-solid fa-paperclip"></i></button>
+                                <button class="hub-attach-btn" title="Attach EML File" onclick="triggerHubFileUpload('${c.id}', 'submissionLog')"><i class="fa-solid fa-paperclip"></i></button>
                                 <button class="btn btn-primary" onclick="addHubLog('${c.id}', 'submissionLog', 'input-sub-${c.id}')">Add</button>
                             </div>
                             <ul class="hub-log-list custom-scroll">${renderTimeline(subs, 'submissionLog')}</ul>
                         </div>
+
                         <div class="hub-col gold">
                             <div class="hub-col-header gold"><i class="fa-solid fa-user-clock"></i> Screening <span style="float:right; opacity:0.5">${scrs.length}</span></div>
                             <div class="hub-input-group">
                                 <input type="date" id="input-scr-${c.id}" value="${inputDefault}">
-                                <button class="hub-attach-btn" title="Attach EML" onclick="triggerHubFileUpload('${c.id}', 'screeningLog')"><i class="fa-solid fa-paperclip"></i></button>
+                                <button class="hub-attach-btn" title="Attach EML File" onclick="triggerHubFileUpload('${c.id}', 'screeningLog')"><i class="fa-solid fa-paperclip"></i></button>
                                 <button class="btn btn-primary" style="background:#f59e0b;" onclick="addHubLog('${c.id}', 'screeningLog', 'input-scr-${c.id}')">Add</button>
                             </div>
                             <ul class="hub-log-list custom-scroll">${renderTimeline(scrs, 'screeningLog')}</ul>
                         </div>
+
                         <div class="hub-col purple">
                             <div class="hub-col-header purple"><i class="fa-solid fa-headset"></i> Interview <span style="float:right; opacity:0.5">${ints.length}</span></div>
                             <div class="hub-input-group">
                                 <input type="date" id="input-int-${c.id}" value="${inputDefault}">
-                                <button class="hub-attach-btn" title="Attach EML" onclick="triggerHubFileUpload('${c.id}', 'interviewLog')"><i class="fa-solid fa-paperclip"></i></button>
+                                <button class="hub-attach-btn" title="Attach EML File" onclick="triggerHubFileUpload('${c.id}', 'interviewLog')"><i class="fa-solid fa-paperclip"></i></button>
                                 <button class="btn btn-primary" style="background:#8b5cf6;" onclick="addHubLog('${c.id}', 'interviewLog', 'input-int-${c.id}')">Add</button>
                             </div>
                             <ul class="hub-log-list custom-scroll">${renderTimeline(ints, 'interviewLog')}</ul>
                         </div>
-                        <div class="hub-col slate">
-                            <div class="hub-col-header slate"><i class="fa-solid fa-note-sticky"></i> Notes / Other <span style="float:right; opacity:0.5">${others.length}</span></div>
-                            <div class="hub-input-group">
-                                <input type="date" id="input-oth-${c.id}" value="${inputDefault}">
-                                <button class="hub-attach-btn" title="Attach File" onclick="triggerHubFileUpload('${c.id}', 'otherLog')"><i class="fa-solid fa-paperclip"></i></button>
-                                <button class="btn btn-primary" style="background:#64748b;" onclick="addHubLog('${c.id}', 'otherLog', 'input-oth-${c.id}')">Add</button>
-                            </div>
-                            <ul class="hub-log-list custom-scroll">${renderTimeline(others, 'otherLog')}</ul>
-                        </div>
+
                     </div>
                 </td>
             </tr>`;
@@ -690,16 +600,25 @@ function renderHubTable() {
 
 function renderEmployeeTable() {
     let filtered = state.employees;
+
     if (state.userRole === 'Employee') {
         filtered = filtered.filter(e => e.officialEmail === state.user.email);
     }
+
     filtered = filtered.filter(item => {
         const searchText = state.empFilters.text;
         const fullName = (item.first + ' ' + item.last).toLowerCase();
         return fullName.includes(searchText);
     });
-    const headers = ['<input type="checkbox" id="select-all-emp" onclick="toggleSelectAll(\'emp\', this)">', '#', 'First Name', 'Last Name', 'Date of Birth', 'Designation', 'Work Mobile', 'Personal Mobile', 'Official Email', 'Personal Email', 'LinkedIn', 'Tracking Sheet'];
+
+    const headers = [
+        '<input type="checkbox" id="select-all-emp" onclick="toggleSelectAll(\'emp\', this)">', 
+        '#', 'First Name', 'Last Name', 'Date of Birth', 'Designation', 
+        'Work Mobile', 'Personal Mobile', 'Official Email', 'Personal Email'
+    ];
+    
     dom.tables.emp.head.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+
     const footerCount = document.getElementById('emp-footer-count');
     if(footerCount) footerCount.innerText = `Showing ${filtered.length} records`;
 
@@ -707,20 +626,24 @@ function renderEmployeeTable() {
         const idx = i + 1;
         const isSel = state.selection.emp.has(c.id) ? 'checked' : '';
         const rowClass = state.selection.emp.has(c.id) ? 'selected-row' : '';
+        
         return `
         <tr class="${rowClass}">
             <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td>
             <td>${idx}</td>
             <td onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td>
             <td onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td>
-            <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td>
+            <td>
+                <input type="date" class="date-input-modern" 
+                       value="${c.dob || ''}" 
+                       onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)">
+            </td>
             <td onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile || '-'}</td>
+         
             <td class="url-cell" onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail || ''}</td>
             <td class="url-cell" onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail || ''}</td>
-            <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'linkedin', 'employees', this)">${c.linkedin ? 'LinkedIn' : ''}</td>
-            <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'trackingSheet', 'employees', this)">${c.trackingSheet ? 'Open Sheet' : ''}</td>
         </tr>`;
     }).join('');
 }
@@ -732,24 +655,36 @@ function renderOnboardingTable() {
         const mobile = (item.mobile || '').toLowerCase();
         return fullName.includes(searchText) || mobile.includes(searchText);
     });
-    const headers = ['<input type="checkbox" id="select-all-onb" onclick="toggleSelectAll(\'onb\', this)">', '#', 'First Name', 'Last Name', 'Date of Birth', 'Recruiter', 'Mobile', 'Tech', 'Status', 'Assigned', 'Comments'];
+
+    const headers = ['<input type="checkbox" id="select-all-onb" onclick="toggleSelectAll(\'onb\', this)">', '#', 'First Name', 'Last Name', 'Date of Birth', 'Recruiter', 'Mobile', 'Status', 'Assigned', 'Comments'];
     dom.tables.onb.head.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+
     const footerCount = document.getElementById('onb-footer-count');
     if(footerCount) footerCount.innerText = `Showing ${filtered.length} records`;
 
     dom.tables.onb.body.innerHTML = filtered.map((c, i) => {
         const idx = i + 1;
         const isSel = state.selection.onb.has(c.id) ? 'checked' : '';
+        
         return `<tr>
             <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td>
             <td>${idx}</td>
             <td onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td>
             <td onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td>
-            <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td>
+            <td>
+                <input type="date" class="date-input-modern" 
+                       value="${c.dob || ''}" 
+                       onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)">
+            </td>
             <td onclick="editRecruiter('${c.id}', 'onboarding', this)">${c.recruiter || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td>
-            <td onclick="inlineEdit('${c.id}', 'tech', 'onboarding', this)" class="text-cyan">${c.tech || ''}</td>
-            <td onclick="inlineEdit('${c.id}', 'status', 'onboarding', this)">${c.status || '-'}</td>
+            <td>
+                <select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" 
+                        onchange="updateStatus('${c.id}', 'onboarding', this.value)">
+                    <option value="Onboarding" ${c.status==='Onboarding'?'selected':''}>Onboarding</option>
+                    <option value="Completed" ${c.status==='Completed'?'selected':''}>Completed</option>
+                </select>
+            </td>
             <td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td>
             <td onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments || '-'}</td>
         </tr>`;
@@ -771,126 +706,80 @@ window.updatePlacementFilter = (type, btn) => {
 window.renderPlacementTable = () => {
     const monthVal = document.getElementById('placement-month-picker').value; 
     const yearVal = document.getElementById('placement-year-picker').value; 
+    
     let placedCandidates = state.candidates.filter(c => c.status === 'Placed');
     if (state.userRole === 'Employee' && state.currentUserName) {
         placedCandidates = placedCandidates.filter(c => c.recruiter === state.currentUserName);
     }
+    
     const filtered = placedCandidates.filter(c => {
         if (!c.assigned) return false;
         if (state.placementFilter === 'monthly') return c.assigned.startsWith(monthVal); 
         else return c.assigned.startsWith(yearVal); 
     });
 
-    const table = document.getElementById('placement-table');
     const tbody = document.getElementById('placement-table-body');
-    const thead = table.querySelector('thead');
     if(!tbody) return;
 
-    // UPDATE HEADER
-    const headers = ['<input type="checkbox" id="select-all-place" onclick="toggleSelectAll(\'place\', this)">', '#', 'First Name', 'Last Name', 'Recruiter', 'Location', 'Contract Type', 'Placed Date'];
-    thead.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
-
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="opacity:0.6; padding:20px;">No placements found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="opacity:0.6; padding:20px;">No placements found for this period.</td></tr>`;
         document.getElementById('placement-footer-count').innerText = "Showing 0 records";
         return;
     }
 
     tbody.innerHTML = filtered.map((c, i) => {
-        const isSel = state.selection.place.has(c.id) ? 'checked' : '';
         return `
         <tr>
-            <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td>
             <td>${i + 1}</td>
             <td onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td>
             <td onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td>
-            <td onclick="editRecruiter('${c.id}', 'candidates', this)">${c.recruiter || '-'}</td>
+            <td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)" class="text-cyan">${c.tech}</td>
             <td onclick="inlineEdit('${c.id}', 'location', 'candidates', this)">${c.location || '<span style="opacity:0.5; font-size:0.8rem;">Add Location</span>'}</td>
             <td onclick="inlineEdit('${c.id}', 'contract', 'candidates', this)">${c.contract || '<span style="opacity:0.5; font-size:0.8rem;">Add Type</span>'}</td>
-            <td>${c.assigned || '-'}</td>
+            <td>
+                <input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)">
+            </td>
+            <td>
+                ${state.userRole !== 'Employee' ? 
+                `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')" title="Permanently Delete">
+                    <i class="fa-solid fa-trash"></i>
+                </button>` : ''}
+            </td>
         </tr>`;
     }).join('');
+    
     document.getElementById('placement-footer-count').innerText = `Showing ${filtered.length} placed candidates`;
 };
 
 window.manualAddPlacement = () => {
     const today = new Date().toISOString().split('T')[0];
     db.collection('candidates').add({
-        first: 'New', last: 'Candidate', tech: 'Technology',
-        status: 'Placed', assigned: today, location: '', contract: '',
-        createdAt: Date.now(), mobile: '',
+        first: 'New',
+        last: 'Candidate',
+        tech: 'Technology',
+        status: 'Placed',      
+        assigned: today,       
+        location: '',
+        contract: '',
+        createdAt: Date.now(),
+        mobile: '',
         recruiter: state.userRole === 'Employee' ? state.currentUserName : ''
     }).then(() => {
         showToast("New Placement Row Added");
         const currentMonth = today.slice(0, 7); 
         document.getElementById('placement-month-picker').value = currentMonth;
         if(state.placementFilter === 'monthly') renderPlacementTable();
-    }).catch(err => { showToast("Error: " + err.message); });
-};
-
-/* ================= ADMIN PANEL LOGIC ================= */
-window.renderAdminPanel = () => {
-    const tbody = document.getElementById('admin-table-body');
-    const search = document.getElementById('admin-search').value.toLowerCase();
-    if(!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="6">Loading...</td></tr>';
-
-    db.collection('users').orderBy('createdAt', 'desc').get().then(snap => {
-        let users = [];
-        snap.forEach(doc => users.push({ id: doc.id, ...doc.data() }));
-        const filtered = users.filter(u => (u.firstName + ' ' + u.email).toLowerCase().includes(search));
-
-        if(filtered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6">No users found.</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = filtered.map(u => {
-            const name = u.firstName ? `${u.firstName} ${u.lastName || ''}` : 'Unknown';
-            const role = u.role || 'Viewer';
-            const joined = u.createdAt ? new Date(u.createdAt.toDate()).toLocaleDateString() : '-';
-            const status = u.accessStatus || 'Approved'; 
-            const statusClass = status.toLowerCase();
-
-            return `
-            <tr>
-                <td style="font-weight:600; color:var(--text-main)">${name}</td>
-                <td>${u.email}</td>
-                <td><span style="opacity:0.8">${role}</span></td>
-                <td>${joined}</td>
-                <td><span class="admin-badge ${statusClass}">${status}</span></td>
-                <td>
-                    <div class="action-btn-group">
-                        <button class="btn-approve" title="Approve Access" onclick="updateUserAccess('${u.id}', 'Approved')"><i class="fa-solid fa-check"></i></button>
-                        <button class="btn-block" title="Block Access" onclick="updateUserAccess('${u.id}', 'Blocked')"><i class="fa-solid fa-ban"></i></button>
-                        <button class="btn-delete" title="Delete User Data" onclick="deleteUser('${u.id}')"><i class="fa-solid fa-trash"></i></button>
-                    </div>
-                </td>
-            </tr>`;
-        }).join('');
+    }).catch(err => {
+        showToast("Error: " + err.message);
     });
 };
 
-window.updateUserAccess = (email, status) => {
-    if(email === auth.currentUser.email && status === 'Blocked') { return showToast("You cannot block yourself."); }
-    db.collection('users').doc(email).update({ accessStatus: status }).then(() => {
-        showToast(`User ${status}`);
-        renderAdminPanel();
-    }).catch(err => showToast("Error: " + err.message));
+window.deletePlacement = (id) => {
+    if(!confirm("Are you sure? This will permanently delete this record.")) return;
+    db.collection('candidates').doc(id).delete()
+        .then(() => showToast("Record Deleted"))
+        .catch(err => showToast("Error: " + err.message));
 };
-
-window.deleteUser = (email) => {
-    if(!confirm("Permanently delete this user's profile data?")) return;
-    db.collection('users').doc(email).delete().then(() => {
-        showToast("User Data Deleted");
-        renderAdminPanel();
-    }).catch(err => showToast("Error: " + err.message));
-};
-
-/* ================= EVENT LISTENERS ================= */
-document.addEventListener('click', (e) => {
-    if(e.target.closest('#nav-admin')) { renderAdminPanel(); }
-});
 
 /* ========================================================
    9. UTILITIES & ACTIONS
@@ -908,7 +797,10 @@ function inlineEdit(id, field, collection, el) {
 function inlineUrlEdit(id, field, collection, el) {
     if(el.querySelector('input')) return;
     el.innerHTML = ''; el.classList.add('editing-cell');
-    const input = document.createElement('input'); input.type = 'url'; input.placeholder = 'Paste Link Here...'; input.className = 'inline-input-active';
+    const input = document.createElement('input'); 
+    input.type = 'url'; 
+    input.placeholder = 'Paste Link Here...';
+    input.className = 'inline-input-active';
     const save = () => { 
         let newVal = input.value.trim(); 
         if(newVal && !newVal.startsWith('http')) newVal = 'https://' + newVal; 
@@ -916,8 +808,10 @@ function inlineUrlEdit(id, field, collection, el) {
         el.classList.remove('editing-cell'); 
         db.collection(collection).doc(id).update({ [field]: newVal }); 
     };
-    input.addEventListener('blur', save); input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
-    el.appendChild(input); input.focus();
+    input.addEventListener('blur', save); 
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+    el.appendChild(input); 
+    input.focus();
 }
 
 function inlineDateEdit(id, field, collection, val) {
@@ -925,7 +819,11 @@ function inlineDateEdit(id, field, collection, val) {
 }
 
 function editRecruiter(id, collection, el) {
-    if (state.userRole === 'Employee') { showToast("Access Denied: You cannot change the recruiter."); return; }
+    if (state.userRole === 'Employee') {
+        showToast("Access Denied: You cannot change the recruiter.");
+        return;
+    }
+
     if(el.querySelector('select')) return;
     const val = el.innerText; el.innerHTML = '';
     const sel = document.createElement('select'); sel.className = 'modern-select';
@@ -938,7 +836,12 @@ window.updateStatus = (id, col, val) => db.collection(col).doc(id).update({ stat
 
 window.toggleSelect = (id, type) => {
     if(!state.selection[type]) return; 
-    if(state.selection[type].has(id)) state.selection[type].delete(id); else state.selection[type].add(id);
+    
+    if(state.selection[type].has(id)) {
+        state.selection[type].delete(id);
+    } else {
+        state.selection[type].add(id);
+    }
     updateSelectButtons(type);
 };
 
@@ -952,27 +855,15 @@ window.toggleSelectAll = (type, mainCheckbox) => {
         const searchText = state.empFilters.text;
         currentData = currentData.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(searchText));
     }
-    else if (type === 'onb') { 
+    else { 
         const searchText = state.onbFilters.text;
         currentData = state.onboarding.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(searchText));
-    }
-    else if (type === 'place') { 
-        const monthVal = document.getElementById('placement-month-picker').value; 
-        const yearVal = document.getElementById('placement-year-picker').value; 
-        let placedCandidates = state.candidates.filter(c => c.status === 'Placed');
-        if (state.userRole === 'Employee' && state.currentUserName) placedCandidates = placedCandidates.filter(c => c.recruiter === state.currentUserName);
-        currentData = placedCandidates.filter(c => {
-            if (!c.assigned) return false;
-            if (state.placementFilter === 'monthly') return c.assigned.startsWith(monthVal); 
-            else return c.assigned.startsWith(yearVal); 
-        });
     }
     currentData.forEach(item => { if (isChecked) state.selection[type].add(item.id); else state.selection[type].delete(item.id); });
     updateSelectButtons(type);
     if (type === 'cand') renderCandidateTable(); 
     else if (type === 'emp') renderEmployeeTable();
-    else if (type === 'onb') renderOnboardingTable();
-    else if (type === 'place') renderPlacementTable();
+    else renderOnboardingTable();
     setTimeout(() => { 
         const newMaster = document.getElementById(`select-all-${type}`); 
         if(newMaster) newMaster.checked = isChecked; 
@@ -983,14 +874,12 @@ function updateSelectButtons(type) {
     let btn, countSpan;
     if(type === 'cand') { btn = document.getElementById('btn-delete-selected'); countSpan = document.getElementById('selected-count'); }
     else if(type === 'emp') { btn = document.getElementById('btn-delete-employee'); countSpan = document.getElementById('emp-selected-count'); }
-    else if(type === 'onb') { btn = document.getElementById('btn-delete-onboarding'); countSpan = document.getElementById('onboarding-selected-count'); }
-    else if(type === 'place') { btn = document.getElementById('btn-delete-placement'); countSpan = document.getElementById('placement-selected-count'); }
-    
-    if (btn) {
-        if (state.selection[type].size > 0 && state.userRole !== 'Employee') { 
-            btn.style.display = 'inline-flex'; 
-            if (countSpan) countSpan.innerText = state.selection[type].size; 
-        } else { btn.style.display = 'none'; }
+    else { btn = document.getElementById('btn-delete-onboarding'); countSpan = document.getElementById('onboarding-selected-count'); }
+    if (state.selection[type].size > 0 && state.userRole !== 'Employee') {
+        btn.style.display = 'inline-flex'; 
+        if (countSpan) countSpan.innerText = state.selection[type].size; 
+    } else { 
+        btn.style.display = 'none'; 
     }
 }
 
@@ -1003,7 +892,7 @@ function setupEventListeners() {
     window.handleSignup = () => { 
         const n = document.getElementById('reg-name').value, e = document.getElementById('reg-email').value, p = document.getElementById('reg-pass').value; 
         auth.createUserWithEmailAndPassword(e, p).then(r => {
-             db.collection('users').doc(e).set({ firstName: n.split(' ')[0], email: e, role: 'Employee', createdAt: firebase.firestore.FieldValue.serverTimestamp(), accessStatus: 'Pending' });
+             db.collection('users').doc(e).set({ firstName: n.split(' ')[0], email: e, role: 'Employee', createdAt: firebase.firestore.FieldValue.serverTimestamp() });
              return r.user.updateProfile({displayName:n});
         }).then(u=>{firebase.auth().currentUser.sendEmailVerification();showToast("Check Email!");switchAuth('login');}).catch(err => showToast(cleanError(err.message))); 
     };
@@ -1011,8 +900,10 @@ function setupEventListeners() {
     window.checkVerificationStatus = () => { const u = firebase.auth().currentUser; if(u) u.reload().then(()=>{if(u.emailVerified) location.reload();}); };
     window.resendVerificationEmail = () => { const u = firebase.auth().currentUser; if(u) u.sendEmailVerification().then(()=>showToast("Sent!")); };
 
-    // Seed & Filters
+    // Seed
     document.getElementById('btn-seed-data').addEventListener('click', window.seedData);
+    
+    // Filters
     document.getElementById('search-input').addEventListener('input', e => { state.filters.text = e.target.value.toLowerCase(); renderCandidateTable(); });
     document.getElementById('filter-recruiter').addEventListener('change', e => { state.filters.recruiter = e.target.value; renderCandidateTable(); });
     document.getElementById('filter-tech').addEventListener('change', e => { state.filters.tech = e.target.value; renderCandidateTable(); });
@@ -1032,16 +923,20 @@ function setupEventListeners() {
     // Add Buttons
     document.getElementById('btn-add-candidate').addEventListener('click', () => { 
         const defaultRecruiter = state.userRole === 'Employee' ? state.currentUserName : '';
+        
         db.collection('candidates').add({ 
-            first: '', last: '', mobile: '', wa: '', experience: '', visa: '', tech: '', 
-            recruiter: defaultRecruiter, status: 'Active', assigned: new Date().toISOString().split('T')[0], 
-            comments: '', createdAt: Date.now(), submissionLog: [], screeningLog: [], interviewLog: [], otherLog: [] 
+            first: '', last: '', mobile: '', wa: '', tech: '', 
+            recruiter: defaultRecruiter, 
+            status: 'Active', 
+            assigned: new Date().toISOString().split('T')[0], 
+            comments: '', createdAt: Date.now(), 
+            submissionLog: [], screeningLog: [], interviewLog: [] 
         }).then(() => showToast("Inserted")); 
     });
     
     document.getElementById('btn-add-onboarding').addEventListener('click', () => { 
         db.collection('onboarding').add({ 
-            first: '', last: '', dob: '', mobile: '', tech: '', status: '', 
+            first: '', last: '', dob: '', mobile: '', status: 'Onboarding', 
             recruiter: state.userRole === 'Employee' ? state.currentUserName : '',
             assigned: new Date().toISOString().split('T')[0], comments: '', createdAt: Date.now() 
         }).then(() => showToast("Inserted")); 
@@ -1050,39 +945,82 @@ function setupEventListeners() {
     document.getElementById('btn-add-employee').addEventListener('click', () => { 
         if(state.userRole === 'Employee') return showToast("Permission Denied");
         db.collection('employees').add({ 
-            first: '', last: '', dob: '', designation: '', workMobile: '', personalMobile: '', 
-            officialEmail: '', personalEmail: '', linkedin: '', trackingSheet: '', createdAt: Date.now() 
+            first: '', last: '', dob: '', designation: '', 
+            workMobile: '', personalMobile: '', officialEmail: '', personalEmail: '',
+            createdAt: Date.now() 
         }).then(() => showToast("Employee Added")); 
     });
 
+    // Delete Buttons
     document.getElementById('btn-delete-selected').addEventListener('click', () => openDeleteModal('cand'));
     document.getElementById('btn-delete-onboarding').addEventListener('click', () => openDeleteModal('onb'));
     document.getElementById('btn-delete-employee').addEventListener('click', () => openDeleteModal('emp'));
-    document.getElementById('btn-delete-placement').addEventListener('click', () => openDeleteModal('place'));
 
-    // Sidebar & Hub
+    // Mobile Sidebar
     const mobileBtn = document.getElementById('btn-mobile-menu');
     const sidebar = document.querySelector('.sidebar');
     const overlay = document.getElementById('sidebar-overlay');
     const navLinks = document.querySelectorAll('.nav-item');
 
-    if(mobileBtn) { mobileBtn.addEventListener('click', () => { sidebar.classList.toggle('mobile-open'); overlay.classList.toggle('active'); }); }
-    if(overlay) { overlay.addEventListener('click', () => { sidebar.classList.remove('mobile-open'); overlay.classList.remove('active'); }); }
-    navLinks.forEach(link => { link.addEventListener('click', () => { if(window.innerWidth <= 900) { sidebar.classList.remove('mobile-open'); overlay.classList.remove('active'); } }); });
+    if(mobileBtn) {
+        mobileBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('mobile-open');
+            overlay.classList.toggle('active');
+        });
+    }
 
+    if(overlay) {
+        overlay.addEventListener('click', () => {
+            sidebar.classList.remove('mobile-open');
+            overlay.classList.remove('active');
+        });
+    }
+
+    navLinks.forEach(link => {
+        link.addEventListener('click', () => {
+            if(window.innerWidth <= 900) {
+                sidebar.classList.remove('mobile-open');
+                overlay.classList.remove('active');
+            }
+        });
+    });
+
+    // Hub Date & Filter
     const hubPicker = document.getElementById('hub-date-picker');
-    if(hubPicker) { hubPicker.value = new Date().toISOString().split('T')[0]; hubPicker.addEventListener('change', (e) => { updateHubStats(null, e.target.value); }); }
+    if(hubPicker) {
+        hubPicker.value = new Date().toISOString().split('T')[0];
+        hubPicker.addEventListener('change', (e) => {
+            updateHubStats(null, e.target.value);
+        });
+    }
 
     document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.addEventListener('click', () => { if(btn.closest('#view-placements')) return; updateHubStats(btn.getAttribute('data-filter'), null); });
+        btn.addEventListener('click', () => {
+             if(btn.closest('#view-placements')) return; 
+             updateHubStats(btn.getAttribute('data-filter'), null);
+        });
     });
 
     setTimeout(() => { if(window.updateHubStats) updateHubStats('daily', new Date().toISOString().split('T')[0]); }, 1000);
 
     const wallpaperBtn = document.getElementById('change-wallpaper-btn');
-    const wallpapers = [ "", "linear-gradient(to right, #243949 0%, #517fa4 100%)", "linear-gradient(109.6deg, rgb(20, 30, 48) 11.2%, rgb(36, 59, 85) 91.1%)", "linear-gradient(to top, #30cfd0 0%, #330867 100%)", "linear-gradient(to right, #434343 0%, black 100%)" ];
+    const wallpapers = [
+        "", // Default
+        "linear-gradient(to right, #243949 0%, #517fa4 100%)", // Corporate Blue
+        "linear-gradient(109.6deg, rgb(20, 30, 48) 11.2%, rgb(36, 59, 85) 91.1%)", // Deep Night
+        "linear-gradient(to top, #30cfd0 0%, #330867 100%)", // Accent
+        "linear-gradient(to right, #434343 0%, black 100%)" // Pitch Dark
+    ];
     let wpIndex = 0;
-    if(wallpaperBtn) { wallpaperBtn.addEventListener('click', () => { wpIndex++; if(wpIndex >= wallpapers.length) wpIndex = 0; document.body.style.background = wallpapers[wpIndex]; }); }
+
+    if(wallpaperBtn) {
+        wallpaperBtn.addEventListener('click', () => {
+            wpIndex++;
+            if(wpIndex >= wallpapers.length) wpIndex = 0;
+            if(wpIndex === 0) document.body.style.background = ""; 
+            else document.body.style.background = wallpapers[wpIndex];
+        });
+    }
 }
 
 /* ========================================================
@@ -1093,81 +1031,124 @@ window.seedData = () => {
     const batch = db.batch();
     const techList = state.metadata.techs;
     const recList = state.metadata.recruiters.length > 0 ? state.metadata.recruiters : ['Test Recruiter'];
-    const visaTypes = ['H1B', 'GC', 'USC', 'OPT', 'CPT', 'H4-EAD'];
     for (let i = 1; i <= 25; i++) {
         const newRef = db.collection('candidates').doc();
-        batch.set(newRef, { 
-            first: `Candidate`, last: `${i}`, mobile: `98765432${i < 10 ? '0'+i : i}`, wa: `98765432${i < 10 ? '0'+i : i}`, 
-            experience: Math.floor(Math.random() * 15) + ' Years', visa: visaTypes[Math.floor(Math.random() * visaTypes.length)],
-            tech: techList[Math.floor(Math.random() * techList.length)], recruiter: recList[Math.floor(Math.random() * recList.length)], 
-            status: i % 3 === 0 ? "Inactive" : "Active", assigned: new Date().toISOString().split('T')[0], 
-            comments: "Auto-generated demo data", createdAt: Date.now() + i, submissionLog: [], screeningLog: [], interviewLog: [], otherLog: []
-        });
+        batch.set(newRef, { first: `Candidate`, last: `${i}`, mobile: `98765432${i < 10 ? '0'+i : i}`, wa: `98765432${i < 10 ? '0'+i : i}`, tech: techList[Math.floor(Math.random() * techList.length)], recruiter: recList[Math.floor(Math.random() * recList.length)], status: i % 3 === 0 ? "Inactive" : "Active", assigned: new Date().toISOString().split('T')[0], comments: "Auto-generated demo data", createdAt: Date.now() + i });
     }
     batch.commit().then(() => { renderCandidateTable(); showToast("25 Demo Candidates Inserted"); });
 };
 
+// 1. Open the Modal and Set the State
 window.openDeleteModal = (type) => {
-    if (!state.selection[type]) return;
+    if (!state.selection[type]) {
+        console.error(`Selection type '${type}' not found in state.`);
+        return;
+    }
+
     const count = state.selection[type].size;
-    if (count === 0) { showToast("No items selected"); return; }
+    if (count === 0) {
+        showToast("No items selected");
+        return;
+    }
+
     state.pendingDelete.type = type; 
+    
     document.getElementById('del-count').innerText = count;
     document.getElementById('delete-modal').style.display = 'flex';
 };
 
-window.closeDeleteModal = () => { document.getElementById('delete-modal').style.display = 'none'; state.pendingDelete.type = null; };
+// 2. Close the Modal
+window.closeDeleteModal = () => {
+    document.getElementById('delete-modal').style.display = 'none';
+    state.pendingDelete.type = null;
+};
 
+// 3. Execute the Delete (The Fix)
 window.executeDelete = async () => { 
     const type = state.pendingDelete.type; 
-    if (!type) { closeDeleteModal(); return; }
-    let collection = ''; let tableRenderFunc = null;
-    if (type === 'cand') { collection = 'candidates'; tableRenderFunc = renderCandidateTable; }
-    else if (type === 'onb') { collection = 'onboarding'; tableRenderFunc = renderOnboardingTable; }
-    else if (type === 'emp') { collection = 'employees'; tableRenderFunc = renderEmployeeTable; }
-    else if (type === 'place') { collection = 'candidates'; tableRenderFunc = renderPlacementTable; }
     
-    if (!collection) { showToast("Error: Unknown Collection Type"); closeDeleteModal(); return; }
-    const btn = document.querySelector('#delete-modal .btn-danger'); const originalText = btn.innerText;
-    btn.innerText = "Deleting..."; btn.disabled = true;
+    if (!type) {
+        console.error("No delete type found in state.");
+        closeDeleteModal();
+        return;
+    }
+
+    let collection = '';
+    let tableRenderFunc = null;
+
+    if (type === 'cand') { 
+        collection = 'candidates'; 
+        tableRenderFunc = renderCandidateTable;
+    }
+    else if (type === 'onb') { 
+        collection = 'onboarding'; 
+        tableRenderFunc = renderOnboardingTable;
+    }
+    else if (type === 'emp') { 
+        collection = 'employees'; 
+        tableRenderFunc = renderEmployeeTable;
+    }
+    
+    if (!collection) {
+        showToast("Error: Unknown Collection Type");
+        closeDeleteModal();
+        return;
+    }
+
+    const btn = document.querySelector('#delete-modal .btn-danger');
+    const originalText = btn.innerText;
+    btn.innerText = "Deleting...";
+    btn.disabled = true;
 
     try {
         const batch = db.batch();
         const idsArray = Array.from(state.selection[type]);
+
         if (idsArray.length === 0) throw new Error("No IDs selected.");
-        idsArray.forEach(id => { if(id) { const ref = db.collection(collection).doc(id); batch.delete(ref); } });
+
+        idsArray.forEach(id => {
+            if(id) {
+                const ref = db.collection(collection).doc(id);
+                batch.delete(ref);
+            }
+        });
+
         await batch.commit();
+
         state.selection[type].clear(); 
+        
         updateSelectButtons(type); 
         if (tableRenderFunc) tableRenderFunc();
+
         showToast(`Successfully deleted ${idsArray.length} items.`);
-    } catch (error) { console.error("Delete Failed:", error); alert("Delete Failed: " + error.message); } 
-    finally { btn.innerText = originalText; btn.disabled = false; closeDeleteModal(); }
+        
+    } catch (error) {
+        console.error("Delete Failed:", error);
+        alert("Delete Failed: " + error.message); 
+    } finally {
+        btn.innerText = originalText;
+        btn.disabled = false;
+        closeDeleteModal();
+    }
 };
 
-window.exportData = () => { 
-    if (state.candidates.length === 0) return showToast("No data"); 
-    const headers = ["ID", "First", "Last", "Mobile", "Experience", "Visa", "Tech", "Recruiter", "Status", "Date", "Comments"]; 
-    const csvRows = [headers.join(",")]; 
-    state.candidates.forEach(c => { 
-        const row = [c.id, `"${c.first}"`, `"${c.last}"`, `"${c.mobile}"`, `"${c.experience || ''}"`, `"${c.visa || ''}"`, `"${c.tech}"`, `"${c.recruiter}"`, `"${c.status}"`, c.assigned, `"${(c.comments || '').replace(/"/g, '""')}"`]; 
-        csvRows.push(row.join(",")); 
-    }); 
-    const blob = new Blob([csvRows.join("\n")], { type: "text/csv" }); 
-    const url = window.URL.createObjectURL(blob); 
-    const a = document.createElement("a"); a.href = url; a.download = "candidates.csv"; a.click(); 
-};
+window.exportData = () => { if (state.candidates.length === 0) return showToast("No data"); const headers = ["ID", "First", "Last", "Mobile", "Tech", "Recruiter", "Status", "Date", "Comments"]; const csvRows = [headers.join(",")]; state.candidates.forEach(c => { const row = [c.id, `"${c.first}"`, `"${c.last}"`, `"${c.mobile}"`, `"${c.tech}"`, `"${c.recruiter}"`, `"${c.status}"`, c.assigned, `"${(c.comments || '').replace(/"/g, '""')}"`]; csvRows.push(row.join(",")); }); const blob = new Blob([csvRows.join("\n")], { type: "text/csv" }); const url = window.URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "candidates.csv"; a.click(); };
 
 /* ========================================================
    11. DASHBOARD & CHARTS
    ======================================================== */
 function updateDashboardStats() { 
     let calcData = state.candidates;
-    if (state.userRole === 'Employee' && state.currentUserName) { calcData = calcData.filter(c => c.recruiter === state.currentUserName); }
+    
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        calcData = calcData.filter(c => c.recruiter === state.currentUserName);
+    }
+
     const total = calcData.length;
     const active = calcData.filter(c => c.status === 'Active').length;
     const inactive = calcData.filter(c => c.status === 'Inactive').length;
     const placed = calcData.filter(c => c.status === 'Placed').length;
+    
     const techs = new Set(calcData.map(c=>c.tech)).size;
     const recruiters = state.metadata.recruiters.length;
 
@@ -1175,12 +1156,14 @@ function updateDashboardStats() {
     if(document.getElementById('stat-active-count')) document.getElementById('stat-active-count').innerText = active;
     if(document.getElementById('stat-inactive-count')) document.getElementById('stat-inactive-count').innerText = inactive;
     if(document.getElementById('stat-placed')) document.getElementById('stat-placed').innerText = placed;
+    
     if(document.getElementById('stat-tech')) document.getElementById('stat-tech').innerText = techs;
     if(document.getElementById('stat-rec')) document.getElementById('stat-rec').innerText = recruiters;
     if(document.getElementById('current-date-display')) document.getElementById('current-date-display').innerText = new Date().toLocaleDateString();
 
     const techData = getChartData(calcData, 'tech');
     const recData = getChartData(calcData, 'recruiter');
+
     renderChart('chart-recruiter', recData, 'bar'); 
     renderChart('chart-tech', techData, 'doughnut');
 }
@@ -1188,8 +1171,10 @@ function updateDashboardStats() {
 function getChartData(data, key) { const counts = {}; data.forEach(c => counts[c[key]] = (counts[c[key]] || 0) + 1); return { labels: Object.keys(counts), data: Object.values(counts) }; }
 let chartInstances = {}; 
 function renderChart(id, data, type) { 
-    const ctx = document.getElementById(id); if(!ctx) return; 
+    const ctx = document.getElementById(id);
+    if(!ctx) return; 
     if(ctx.clientHeight === 0) ctx.style.height = '250px';
+
     const context = ctx.getContext('2d');
     if(chartInstances[id]) chartInstances[id].destroy(); 
     const colors = ['#06b6d4', '#f59e0b', '#8b5cf6', '#22c55e', '#ef4444', '#ec4899', '#6366f1'];
@@ -1200,18 +1185,30 @@ function renderChart(id, data, type) {
    12. SECURITY & TIMERS
    ======================================================== */
 let inactivityTimer;
+
 function startAutoLogoutTimer() {
     const TIMEOUT_DURATION = 10 * 60 * 1000; 
+
     function resetTimer() {
         if (!firebase.auth().currentUser) return; 
         clearTimeout(inactivityTimer);
-        inactivityTimer = setTimeout(() => { firebase.auth().signOut().then(() => { showToast("Session expired due to inactivity"); switchScreen('auth'); }); }, TIMEOUT_DURATION);
+        inactivityTimer = setTimeout(() => {
+            firebase.auth().signOut().then(() => {
+                showToast("Session expired due to inactivity");
+                switchScreen('auth');
+            });
+        }, TIMEOUT_DURATION);
     }
     const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
-    activityEvents.forEach(event => { document.addEventListener(event, resetTimer); });
+    activityEvents.forEach(event => {
+        document.addEventListener(event, resetTimer);
+    });
     resetTimer();
 }
-function stopAutoLogoutTimer() { clearTimeout(inactivityTimer); }
+
+function stopAutoLogoutTimer() {
+    clearTimeout(inactivityTimer);
+}
 
 /* ========================================================
    13. HUB DATE & FILTER LOGIC
@@ -1222,28 +1219,44 @@ state.hubFilterType = 'daily';
 window.updateHubStats = (filterType, dateVal) => {
     if(filterType) state.hubFilterType = filterType;
     if(dateVal) state.hubDate = dateVal;
-    document.querySelectorAll('.filter-btn').forEach(btn => { if(btn.closest('#view-placements')) return; if(btn.dataset.filter === state.hubFilterType) btn.classList.add('active'); else btn.classList.remove('active'); });
+
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        if(btn.closest('#view-placements')) return;
+        if(btn.dataset.filter === state.hubFilterType) btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+
     const picker = document.getElementById('hub-date-picker');
     if(picker && picker.value !== state.hubDate) picker.value = state.hubDate;
+
     const d = new Date(state.hubDate);
-    let startTimestamp, endTimestamp, labelText = "";
+    let startTimestamp, endTimestamp;
+    let labelText = "";
 
     if (state.hubFilterType === 'daily') {
         startTimestamp = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
         endTimestamp = startTimestamp + 86400000; 
         labelText = d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    } else if (state.hubFilterType === 'weekly') {
-        const day = d.getDay(); const distanceToMon = day === 0 ? 6 : day - 1; 
-        const monday = new Date(d); monday.setDate(d.getDate() - distanceToMon); 
-        const friday = new Date(monday); friday.setDate(monday.getDate() + 4); 
+    } 
+    else if (state.hubFilterType === 'weekly') {
+        const day = d.getDay(); 
+        const distanceToMon = day === 0 ? 6 : day - 1; 
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - distanceToMon); 
+        const friday = new Date(monday);
+        friday.setDate(monday.getDate() + 4); 
+
         startTimestamp = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate()).getTime();
         endTimestamp = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate()).getTime() + 86400000;
         labelText = `${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${friday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-    } else if (state.hubFilterType === 'monthly') {
+    } 
+    else if (state.hubFilterType === 'monthly') {
         startTimestamp = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
         const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
         endTimestamp = lastDay.getTime() + 86400000;
-        labelText = `${new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${lastDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        const firstDayStr = new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const lastDayStr = lastDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        labelText = `${firstDayStr} - ${lastDayStr}`;
     }
 
     state.hubRange = { start: startTimestamp, end: endTimestamp };
@@ -1258,7 +1271,9 @@ window.updateHubStats = (filterType, dateVal) => {
     };
     
     let hubData = state.candidates;
-    if (state.userRole === 'Employee' && state.currentUserName) { hubData = hubData.filter(c => c.recruiter === state.currentUserName); }
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        hubData = hubData.filter(c => c.recruiter === state.currentUserName);
+    }
 
     if(hubData) {
         hubData.forEach(c => {
@@ -1267,114 +1282,177 @@ window.updateHubStats = (filterType, dateVal) => {
             if(c.interviewLog) c.interviewLog.forEach(entry => { if(checkDateInRange(entry)) intCount++; });
         });
     }
-    animateValue('stat-sub', subCount); animateValue('stat-scr', scrCount); animateValue('stat-int', intCount);
+
+    animateValue('stat-sub', subCount);
+    animateValue('stat-scr', scrCount);
+    animateValue('stat-int', intCount);
     renderHubTable();
 };
 
 function animateValue(id, end) {
-    const obj = document.getElementById(id); if(!obj) return;
-    const start = parseInt(obj.innerText) || 0; if(start === end) return;
-    let current = start; const range = end - start; const increment = end > start ? 1 : -1;
+    const obj = document.getElementById(id);
+    if(!obj) return;
+    const start = parseInt(obj.innerText) || 0;
+    if(start === end) return;
+    
+    let current = start;
+    const range = end - start;
+    const increment = end > start ? 1 : -1;
     const stepTime = Math.abs(Math.floor(500 / range));
-    const timer = setInterval(() => { current += increment; obj.innerText = current; if (current == end) clearInterval(timer); }, range === 0 ? 0 : (stepTime || 10));
+    
+    const timer = setInterval(() => {
+        current += increment;
+        obj.innerText = current;
+        if (current == end) clearInterval(timer);
+    }, range === 0 ? 0 : (stepTime || 10));
 }
 
-window.toggleHubRow = (id) => { if(state.expandedRowId === id) state.expandedRowId = null; else state.expandedRowId = id; renderHubTable(); };
+// --- HUB ACTIONS ---
+window.toggleHubRow = (id) => {
+    if(state.expandedRowId === id) state.expandedRowId = null; else state.expandedRowId = id;
+    renderHubTable();
+};
 
 window.addHubLog = (id, fieldName, inputId) => {
     const dateVal = document.getElementById(inputId).value;
     if(!dateVal) return showToast("Please select a date");
     const linkVal = prompt("Paste Email/Meeting Link (Optional):");
-    const candidate = state.candidates.find(c => c.id === id); if(!candidate) return;
+    const candidate = state.candidates.find(c => c.id === id);
+    if(!candidate) return;
+
     let logs = candidate[fieldName] || [];
     const newEntry = { date: dateVal, link: linkVal || "", timestamp: Date.now() };
     logs.push(newEntry);
-    logs.sort((a, b) => { return new Date((typeof b === 'string') ? b : b.date) - new Date((typeof a === 'string') ? a : a.date); });
-    db.collection('candidates').doc(id).update({ [fieldName]: logs }).then(() => { showToast("Log Added!"); }).catch(err => showToast("Error: " + err.message));
+    logs.sort((a, b) => {
+        const da = (typeof a === 'string') ? a : a.date;
+        const db = (typeof b === 'string') ? b : b.date;
+        return new Date(db) - new Date(da);
+    });
+
+    db.collection('candidates').doc(id).update({ [fieldName]: logs }).then(() => {
+        showToast("Log Added!");
+    }).catch(err => showToast("Error: " + err.message));
 };
 
 window.deleteHubLog = (id, fieldName, indexToDelete) => {
     if(!confirm("Delete this log entry?")) return;
-    const candidate = state.candidates.find(c => c.id === id); if(!candidate) return;
+    const candidate = state.candidates.find(c => c.id === id);
+    if(!candidate) return;
     let logs = candidate[fieldName] || [];
     if (indexToDelete > -1 && indexToDelete < logs.length) logs.splice(indexToDelete, 1);
-    db.collection('candidates').doc(id).update({ [fieldName]: logs }).then(() => { showToast("Log Deleted"); }).catch(err => showToast("Error: " + err.message));
-};
-
-window.editHubLog = (id, fieldName, index) => {
-    const candidate = state.candidates.find(c => c.id === id); if (!candidate) return;
-    let logs = candidate[fieldName] || [];
-    const entry = logs[index];
-    const oldDate = (typeof entry === 'string') ? entry : entry.date;
-    const oldLink = (typeof entry === 'string') ? '' : (entry.link || '');
-    const newDate = prompt("Edit Date (YYYY-MM-DD):", oldDate);
-    if (newDate === null) return; 
-    if (!newDate) return showToast("Date cannot be empty.");
-    const newLink = prompt("Edit Link / Notes (Optional):", oldLink);
-    if (newLink === null) return; 
-    const updatedEntry = { date: newDate, link: newLink, timestamp: entry.timestamp || Date.now() };
-    logs[index] = updatedEntry;
-    logs.sort((a, b) => { return new Date((typeof b === 'string') ? b : b.date) - new Date((typeof a === 'string') ? a : a.date); });
-    db.collection('candidates').doc(id).update({ [fieldName]: logs }).then(() => showToast("Log Updated")).catch(err => showToast("Error: " + err.message));
+    db.collection('candidates').doc(id).update({ [fieldName]: logs }).then(() => {
+        showToast("Log Deleted");
+    }).catch(err => showToast("Error: " + err.message));
 };
 
 /* ========================================================
    14. FILE HANDLING (HUB + PROFILE)
    ======================================================== */
-window.triggerHubFileUpload = (candidateId, fieldName) => { state.uploadTarget = { id: candidateId, field: fieldName }; document.getElementById('hub-file-input').click(); };
+window.triggerHubFileUpload = (candidateId, fieldName) => {
+    state.uploadTarget = { id: candidateId, field: fieldName };
+    document.getElementById('hub-file-input').click();
+};
 
 window.handleHubFileSelect = (input) => {
-    const file = input.files[0]; if (!file) return;
-    const { id, field } = state.uploadTarget; if (!id || !field) return;
+    const file = input.files[0];
+    if (!file) return;
+    const { id, field } = state.uploadTarget;
+    if (!id || !field) return;
+
     const dateVal = new Date().toISOString().split('T')[0];
+    const user = auth.currentUser;
     const storageRef = storage.ref(`candidates/${id}/emails/${Date.now()}_${file.name}`);
+    
     showToast("Uploading Email...");
-    storageRef.put(file).then(snapshot => { return snapshot.ref.getDownloadURL(); }).then(url => {
+
+    storageRef.put(file).then(snapshot => {
+        return snapshot.ref.getDownloadURL();
+    }).then(url => {
         const candidate = state.candidates.find(c => c.id === id);
         let logs = candidate[field] || [];
         const newEntry = { date: dateVal, link: url, timestamp: Date.now() };
         logs.push(newEntry);
-        logs.sort((a, b) => { return new Date((typeof b === 'string') ? b : b.date) - new Date((typeof a === 'string') ? a : a.date); });
+        logs.sort((a, b) => {
+            const da = (typeof a === 'string') ? a : a.date;
+            const db = (typeof b === 'string') ? b : b.date;
+            return new Date(db) - new Date(da);
+        });
         return db.collection('candidates').doc(id).update({ [field]: logs });
-    }).then(() => { showToast("Email Attached!"); input.value = ''; }).catch(err => { showToast("Upload Error: " + err.message); input.value = ''; });
+    }).then(() => {
+        showToast("Email Attached!");
+        input.value = '';
+    }).catch(err => {
+        showToast("Upload Error: " + err.message);
+        input.value = '';
+    });
 };
 
 window.viewEmailLog = async (url) => {
     dom.emailViewer.modal.style.display = 'flex';
     dom.emailViewer.subject.textContent = "Loading Email...";
     dom.emailViewer.iframe.srcdoc = "";
+
     try {
         const response = await fetch(url);
         if (!response.ok) throw new Error("File not found or link expired.");
         const blob = await response.blob();
         const parser = new PostalMime.default();
         const email = await parser.parse(blob);
+
         dom.emailViewer.subject.textContent = email.subject || '(No Subject)';
         dom.emailViewer.from.textContent = email.from ? `${email.from.name || ''} <${email.from.address}>` : 'Unknown';
         dom.emailViewer.to.textContent = email.to ? email.to.map(t => t.address).join(', ') : 'Unknown';
         dom.emailViewer.date.textContent = email.date ? new Date(email.date).toLocaleString() : '';
+
         let bodyContent = email.html || email.text || '<div style="padding:20px">No content to display.</div>';
         bodyContent = bodyContent.replace(/<a /g, '<a style="pointer-events:none; cursor:default; color:gray; text-decoration:none;" ');
-        dom.emailViewer.iframe.srcdoc = `<base target="_blank"><style>body { font-family: sans-serif; padding: 20px; }</style>${bodyContent}`;
+
+        dom.emailViewer.iframe.srcdoc = `
+            <base target="_blank">
+            <style>body { font-family: sans-serif; padding: 20px; }</style>
+            ${bodyContent}
+        `;
+
     } catch (err) {
         console.error(err);
         dom.emailViewer.subject.textContent = "Error Loading Email";
-        dom.emailViewer.iframe.srcdoc = `<div style="padding:20px; text-align:center; color:#ef4444;"><h3>Could not load email</h3><p>Ensure you uploaded a <b>.eml</b> file.</p><small>${err.message}</small></div>`;
+        dom.emailViewer.iframe.srcdoc = `
+            <div style="padding:20px; text-align:center; color:#ef4444;">
+                <h3>Could not load email</h3>
+                <p>Ensure you uploaded a <b>.eml</b> file.</p>
+                <small>${err.message}</small>
+            </div>`;
     }
 };
 
-window.closeEmailViewer = () => { dom.emailViewer.modal.style.display = 'none'; dom.emailViewer.iframe.srcdoc = ''; };
+window.closeEmailViewer = () => {
+    dom.emailViewer.modal.style.display = 'none';
+    dom.emailViewer.iframe.srcdoc = '';
+};
 
+// Profile Photo Logic
 window.triggerPhotoUpload = () => { document.getElementById('profile-upload-input').click(); };
+
 window.handlePhotoUpload = async (input) => {
-    const file = input.files[0]; if (!file) return;
+    const file = input.files[0];
+    if (!file) return;
     if (!file.type.startsWith('image/')) return showToast("Please select an image file.");
-    const user = auth.currentUser; if (!user) return;
-    const loader = document.getElementById('avatar-loading'); if(loader) loader.style.display = 'flex';
+
+    const user = auth.currentUser;
+    if (!user) return;
+    const loader = document.getElementById('avatar-loading');
+    if(loader) loader.style.display = 'flex';
+    const localPreviewURL = URL.createObjectURL(file);
+    const avatarImg = document.getElementById('profile-main-img');
+    const avatarPlaceholder = document.getElementById('profile-main-icon');
+    if(avatarImg) { avatarImg.src = localPreviewURL; avatarImg.style.display = 'block'; }
+    if(avatarPlaceholder) avatarPlaceholder.style.display = 'none';
+
     try {
         const compressedBlob = await compressImage(file, 600, 0.7);
         const storageRef = storage.ref(`users/${user.email}/profile.jpg`); 
         const uploadTask = storageRef.put(compressedBlob);
+
         uploadTask.on('state_changed', null, 
             (error) => { showToast("Upload Failed"); if(loader) loader.style.display = 'none'; }, 
             () => {
@@ -1392,15 +1470,20 @@ window.handlePhotoUpload = async (input) => {
 
 function compressImage(file, maxWidth, quality) {
     return new Promise((resolve, reject) => {
-        const reader = new FileReader(); reader.readAsDataURL(file);
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
         reader.onload = (event) => {
-            const img = new Image(); img.src = event.target.result;
+            const img = new Image();
+            img.src = event.target.result;
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                let width = img.width; let height = img.height;
+                let width = img.width;
+                let height = img.height;
                 if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
-                canvas.width = width; canvas.height = height;
-                const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
                 canvas.toBlob((blob) => { resolve(blob); }, 'image/jpeg', quality);
             };
             img.onerror = (error) => reject(error);
@@ -1411,15 +1494,21 @@ function compressImage(file, maxWidth, quality) {
 
 window.deleteProfilePhoto = () => {
     if(!confirm("Remove profile photo?")) return;
-    const user = auth.currentUser; if (!user) return;
-    const loader = document.getElementById('avatar-loading'); if(loader) loader.style.display = 'flex';
+    const user = auth.currentUser;
+    if (!user) return;
+    const loader = document.getElementById('avatar-loading');
+    if(loader) loader.style.display = 'flex';
+
     db.collection('users').doc(user.email).update({ photoURL: firebase.firestore.FieldValue.delete() }).then(() => {
         document.getElementById('profile-main-img').style.display = 'none';
         document.getElementById('profile-main-icon').style.display = 'flex';
         document.getElementById('btn-delete-photo').style.display = 'none';
         if(loader) loader.style.display = 'none';
         showToast("Photo Removed");
-    }).catch(err => { showToast("Error: " + err.message); if(loader) loader.style.display = 'none'; });
+    }).catch(err => {
+        showToast("Error: " + err.message);
+        if(loader) loader.style.display = 'none';
+    });
 };
 
 document.addEventListener('DOMContentLoaded', init);
