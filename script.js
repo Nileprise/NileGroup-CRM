@@ -1,5 +1,5 @@
 /* ========================================================
-   1. FIREBASE CONFIGURATION (UPDATED for Nile Group CRM)
+   1. CONFIGURATION (FIREBASE + GOOGLE GMAIL)
    ======================================================== */
 const firebaseConfig = {
   apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
@@ -12,6 +12,14 @@ const firebaseConfig = {
   measurementId: "G-11XNH0CYY1"
 };
 
+// --- GOOGLE API CONFIG (Gmail) ---
+// ENSURE THESE MATCH YOUR GOOGLE CLOUD CONSOLE EXACTLY
+const G_CLIENT_ID = '575678017832-34fs5qkepdnrgqdc58h0semgjrct5arl.apps.googleusercontent.com';
+const G_API_KEY = 'AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE';
+const G_DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest';
+const G_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly';
+
+// Initialize Firebase
 try { firebase.initializeApp(firebaseConfig); } catch (e) { console.error("Firebase Init Error:", e); }
 const db = firebase.firestore();
 const auth = firebase.auth();
@@ -44,13 +52,21 @@ const state = {
     employees: [],
     allUsers: [],
     
+    // GMAIL STATE
+    gmail: {
+        tokenClient: null,
+        gapiInited: false,
+        gisInited: false,
+        nextPageToken: null
+    },
+
     // HUB STATES
     expandedRowId: null,
     hubFilterType: 'daily',
     hubDate: new Date().toISOString().split('T')[0],
     hubRange: null,
     
-    // Upload State
+    // UPLOAD TARGET
     uploadTarget: { id: null, field: null },
 
     // PLACEMENT STATE
@@ -63,11 +79,12 @@ const state = {
     onbFilters: { text: '' }, 
     empFilters: { text: '' },
     
-    // SELECTION
+    // SELECTION SETS
     selection: { cand: new Set(), onb: new Set(), emp: new Set() },
     
     modal: { id: null, type: null },
     pendingDelete: { type: null },
+    
     metadata: {
         recruiters: [],
         techs: [
@@ -79,13 +96,18 @@ const state = {
 };
 
 /* ========================================================
-   4. DOM ELEMENTS
+   4. DOM ELEMENTS CACHE
    ======================================================== */
 const dom = {
-    screens: { auth: document.getElementById('auth-screen'), app: document.getElementById('dashboard-screen'), verify: document.getElementById('verify-screen') },
+    screens: { 
+        auth: document.getElementById('auth-screen'), 
+        app: document.getElementById('dashboard-screen'), 
+        verify: document.getElementById('verify-screen') 
+    },
     navItems: document.querySelectorAll('.nav-item'),
     views: {
         dashboard: document.getElementById('view-dashboard'),
+        inbox: document.getElementById('view-inbox'),
         candidates: document.getElementById('view-candidates'),
         hub: document.getElementById('view-hub'),
         employees: document.getElementById('view-employees'),
@@ -101,6 +123,17 @@ const dom = {
         emp: { body: document.getElementById('employee-table-body'), head: document.getElementById('employee-table-head') },
         onb: { body: document.getElementById('onboarding-table-body'), head: document.getElementById('onboarding-table-head') }
     },
+    // GMAIL SPECIFIC DOM
+    gmail: {
+        btnAuth: document.getElementById('btn-gmail-auth'),
+        btnSignout: document.getElementById('btn-gmail-signout'),
+        list: document.getElementById('email-list'),
+        skeleton: document.getElementById('gmail-skeleton'),
+        empty: document.getElementById('gmail-empty'),
+        loadMore: document.getElementById('btn-load-more'),
+        searchInput: document.getElementById('gmail-search-input')
+    },
+    // EMAIL VIEWER MODAL
     emailViewer: {
         modal: document.getElementById('email-viewer-modal'),
         iframe: document.getElementById('viewer-iframe'),
@@ -112,32 +145,38 @@ const dom = {
 };
 
 /* ========================================================
-   5. INIT & AUTH
+   5. INITIALIZATION & AUTHENTICATION
    ======================================================== */
 function init() {
     try {
-        console.log("App Initializing...");
+        console.log("System Initializing...");
         setupEventListeners();
         renderDropdowns();
         
+        // --- IMPORTANT: Load Google Scripts Dynamically ---
+        loadGoogleScripts();
+        
+        // Listen for Firebase Auth State
         auth.onAuthStateChanged(user => {
             if (user) {
+                // Check Email Verification
                 if (!user.emailVerified) { 
                     document.getElementById('verify-email-display').innerText = user.email; 
                     switchScreen('verify'); 
                     return; 
                 }
+
+                // Set User Context
                 state.user = user;
                 const email = user.email.toLowerCase();
                 const knownUser = ALLOWED_USERS[email];
                 
-                // --- SECURITY CONTEXT SETUP ---
                 state.userRole = knownUser ? knownUser.role : 'Viewer'; 
                 state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
                 
-                // Hide specific buttons based on role
+                // Permission Handling
                 if (state.userRole === 'Employee') {
-                     document.getElementById('btn-delete-selected').style.display = 'none';
+                     if(document.getElementById('btn-delete-selected')) document.getElementById('btn-delete-selected').style.display = 'none';
                 }
 
                 updateUserProfile(user, knownUser);
@@ -153,10 +192,13 @@ function init() {
         console.error("Init Error:", err);
         switchScreen('auth'); 
     }
+
+    // Theme Check
     if(localStorage.getItem('np_theme') === 'light') {
         document.body.classList.add('light-mode');
     }
     
+    // Set default month for placements
     const monthPicker = document.getElementById('placement-month-picker');
     if(monthPicker) { monthPicker.value = new Date().toISOString().slice(0, 7); }
 }
@@ -175,7 +217,7 @@ function showToast(msg) {
     const t = document.getElementById('toast'); 
     document.getElementById('toast-msg').innerText = msg; 
     t.classList.add('show'); 
-    setTimeout(() => t.classList.remove('show'), 2000); 
+    setTimeout(() => t.classList.remove('show'), 4000); // Increased time for error reading
 }
 
 function cleanError(msg) { 
@@ -183,48 +225,58 @@ function cleanError(msg) {
 }
 
 /* ========================================================
-   6. PROFILE & NAVIGATION LOGIC
+   6. NAVIGATION & PROFILE LOGIC
    ======================================================== */
 dom.navItems.forEach(btn => {
     btn.addEventListener('click', (e) => {
+        // UI Updates
         dom.navItems.forEach(b => b.classList.remove('active'));
         const clickedBtn = e.target.closest('.nav-item');
         clickedBtn.classList.add('active');
 
+        // Mobile Menu Logic
         if (window.innerWidth <= 900) {
             document.querySelector('.sidebar').classList.remove('mobile-open');
             const overlay = document.getElementById('sidebar-overlay');
             if(overlay) overlay.classList.remove('active');
         }
 
-        Object.values(dom.views).forEach(view => view.classList.remove('active'));
+        // View Switching
+        Object.values(dom.views).forEach(view => {
+            if(view) view.classList.remove('active');
+        });
+
         const targetId = clickedBtn.getAttribute('data-target');
         const targetView = document.getElementById(targetId);
     
         if (targetView) {
             targetView.classList.add('active');
+            
+            // View Specific Triggers
             if (targetId === 'view-dashboard') updateDashboardStats();
             if (targetId === 'view-profile') refreshProfileData();
             if (targetId === 'view-placements') renderPlacementTable();
+            
+            // Auto-load Inbox if connected
+            if (targetId === 'view-inbox') {
+                 if(state.gmail.gapiInited && state.gmail.gisInited && gapi.client.getToken()) {
+                     if(dom.gmail.list.children.length === 0) loadInbox();
+                 }
+            }
         }
     });
 });
-
-window.openProfileTab = (tabId, btnElement) => {
-    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-    document.querySelectorAll('.tab-link').forEach(btn => btn.classList.remove('active'));
-    document.getElementById(tabId).classList.add('active');
-    btnElement.classList.add('active');
-};
 
 function updateUserProfile(user, hardcodedData) {
     if (!user) return;
     const displayName = hardcodedData ? hardcodedData.name : (user.displayName || 'Staff Member');
     const role = hardcodedData ? hardcodedData.role : 'Viewer';
     
+    // Header UI
     const headerUser = document.getElementById('display-username');
     if (headerUser) { headerUser.innerText = displayName; headerUser.style.display = 'block'; }
     
+    // Profile Page UI
     const nameDisplay = document.getElementById('prof-name-display');
     const roleDisplay = document.getElementById('prof-role-display');
     if (nameDisplay) nameDisplay.innerText = displayName;
@@ -234,6 +286,7 @@ function updateUserProfile(user, hardcodedData) {
     if(document.getElementById('prof-office-email')) document.getElementById('prof-office-email').value = user.email;
     if(document.getElementById('prof-designation')) document.getElementById('prof-designation').value = role; 
 
+    // Fetch Extra Data
     db.collection('users').doc(user.email).get().then(doc => {
         if (doc.exists) {
             const data = doc.data();
@@ -289,9 +342,10 @@ window.saveProfileData = () => {
 };
 
 /* ========================================================
-   7. REAL-TIME DATA & LISTENERS
+   7. REAL-TIME DATA LISTENER
    ======================================================== */
 function initRealtimeListeners() {
+    // Candidates
     db.collection('candidates').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
         state.candidates = [];
         snap.forEach(doc => state.candidates.push({ id: doc.id, ...doc.data() }));
@@ -303,12 +357,14 @@ function initRealtimeListeners() {
         if(dom.headerUpdated) dom.headerUpdated.innerText = 'Synced';
     });
 
+    // Onboarding
     db.collection('onboarding').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.onboarding = [];
         snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() }));
         renderOnboardingTable();
     });
 
+    // Employees
     db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.employees = [];
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
@@ -322,6 +378,7 @@ function initRealtimeListeners() {
         updateDashboardStats();
     });
     
+    // Users (For Birthdays)
     db.collection('users').onSnapshot(snap => {
         state.allUsers = [];
         snap.forEach(doc => {
@@ -347,26 +404,26 @@ window.checkBirthdays = () => {
         return userBorn === todayMatch;
     });
 
-    const bar = document.getElementById('birthday-bar');
-    const content = document.getElementById('birthday-ticker-content');
+    const card = document.getElementById('birthday-card');
+    const content = document.getElementById('bday-names');
 
     if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
 
     if (birthdayPeople.length > 0) {
-        const html = birthdayPeople.map(u => `<span class="birthday-item"><i class="fa-solid fa-cake-candles"></i> Happy Birthday, ${u.name}! 🎉</span>`).join('');
-        content.innerHTML = html + html + html; 
-        bar.style.display = 'flex';
+        const names = birthdayPeople.map(u => u.name).join(', ');
+        content.innerText = names;
+        card.classList.add('active');
         
         window.birthdayTimer = setTimeout(() => {
-            bar.style.display = 'none';
+            card.classList.remove('active');
         }, 7000); 
     } else {
-        bar.style.display = 'none';
+        card.classList.remove('active');
     }
 };
 
 /* ========================================================
-   8. RENDERERS & DROPDOWNS
+   8. DATA RENDERERS
    ======================================================== */
 function renderDropdowns() {
     const rSelect = document.getElementById('filter-recruiter');
@@ -388,17 +445,13 @@ function renderDropdowns() {
     }
 }
 
-// === MAIN FILTER LOGIC FOR CANDIDATES ===
 function getFilteredData(data, filters) {
     let subset = data;
-
-    // --- ACCESS CONTROL: If Employee, show ONLY their own candidates ---
     if (state.userRole === 'Employee' && state.currentUserName) {
         subset = subset.filter(item => {
             return item.recruiter === state.currentUserName;
         });
     }
-
     return subset.filter(item => {
         const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text);
         const matchesRec = filters.recruiter ? item.recruiter === filters.recruiter : true;
@@ -443,12 +496,12 @@ function renderCandidateTable() {
                 </select>
             </td>
             <td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>
-        
+       
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'gmail', 'candidates', this)">${c.gmail ? 'Gmail' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'linkedin', 'candidates', this)">${c.linkedin ? 'LinkedIn' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'resume', 'candidates', this)">${c.resume ? 'Resume' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'track', 'candidates', this)">${c.track ? 'Tracker' : ''}</td>
-        
+       
             <td onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments || '-'}</td>
         </tr>`;
     }).join('');
@@ -515,24 +568,24 @@ function renderHubTable() {
 
         if(isExpanded) {
             const inputDefault = state.hubDate; 
-            
+           
             const renderTimeline = (list, fieldName) => {
                 if(!list || list.length === 0) return `<li class="hub-log-item" style="justify-content:center; opacity:0.5; padding-left:0;">No records for selected date</li>`;
-             
+            
                 return list.map((entry, index) => {
                     const isLegacy = typeof entry === 'string';
                     const dateStr = isLegacy ? entry : entry.date;
                     const link = isLegacy ? '' : entry.link;
                     const dateObj = new Date(dateStr);
                     const niceDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-                 
+                
                     let linkHtml = '';
                     if(link) {
                         const isEmail = link.includes('firebasestorage') || link.endsWith('.eml');
                         const icon = isEmail ? 'fa-envelope-open-text' : 'fa-arrow-up-right-from-square';
                         const clickAction = isEmail ? `onclick="viewEmailLog('${link}')"` : `href="${link}" target="_blank"`;
                         const btnClass = isEmail ? 'hub-link-btn is-email' : 'hub-link-btn';
-                     
+                    
                         if(isEmail) {
                             linkHtml = `<button class="${btnClass}" ${clickAction} title="Open Email"><i class="fa-solid ${icon}"></i></button>`;
                         } else {
@@ -559,7 +612,6 @@ function renderHubTable() {
             <tr class="hub-details-row">
                 <td colspan="8">
                     <div class="hub-details-wrapper" onclick="event.stopPropagation()">
-                   
                         <div class="hub-col cyan">
                             <div class="hub-col-header cyan"><i class="fa-solid fa-paper-plane"></i> Submission <span style="float:right; opacity:0.5">${subs.length}</span></div>
                             <div class="hub-input-group">
@@ -569,7 +621,6 @@ function renderHubTable() {
                             </div>
                             <ul class="hub-log-list custom-scroll">${renderTimeline(subs, 'submissionLog')}</ul>
                         </div>
-
                         <div class="hub-col gold">
                             <div class="hub-col-header gold"><i class="fa-solid fa-user-clock"></i> Screening <span style="float:right; opacity:0.5">${scrs.length}</span></div>
                             <div class="hub-input-group">
@@ -579,7 +630,6 @@ function renderHubTable() {
                             </div>
                             <ul class="hub-log-list custom-scroll">${renderTimeline(scrs, 'screeningLog')}</ul>
                         </div>
-
                         <div class="hub-col purple">
                             <div class="hub-col-header purple"><i class="fa-solid fa-headset"></i> Interview <span style="float:right; opacity:0.5">${ints.length}</span></div>
                             <div class="hub-input-group">
@@ -589,7 +639,6 @@ function renderHubTable() {
                             </div>
                             <ul class="hub-log-list custom-scroll">${renderTimeline(ints, 'interviewLog')}</ul>
                         </div>
-
                     </div>
                 </td>
             </tr>`;
@@ -600,11 +649,9 @@ function renderHubTable() {
 
 function renderEmployeeTable() {
     let filtered = state.employees;
-
     if (state.userRole === 'Employee') {
         filtered = filtered.filter(e => e.officialEmail === state.user.email);
     }
-
     filtered = filtered.filter(item => {
         const searchText = state.empFilters.text;
         const fullName = (item.first + ' ' + item.last).toLowerCase();
@@ -618,7 +665,6 @@ function renderEmployeeTable() {
     ];
     
     dom.tables.emp.head.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
-
     const footerCount = document.getElementById('emp-footer-count');
     if(footerCount) footerCount.innerText = `Showing ${filtered.length} records`;
 
@@ -633,15 +679,10 @@ function renderEmployeeTable() {
             <td>${idx}</td>
             <td onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td>
             <td onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td>
-            <td>
-                <input type="date" class="date-input-modern" 
-                       value="${c.dob || ''}" 
-                       onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)">
-            </td>
+            <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td>
             <td onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile || '-'}</td>
-         
             <td class="url-cell" onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail || ''}</td>
             <td class="url-cell" onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail || ''}</td>
         </tr>`;
@@ -658,7 +699,6 @@ function renderOnboardingTable() {
 
     const headers = ['<input type="checkbox" id="select-all-onb" onclick="toggleSelectAll(\'onb\', this)">', '#', 'First Name', 'Last Name', 'Date of Birth', 'Recruiter', 'Mobile', 'Status', 'Assigned', 'Comments'];
     dom.tables.onb.head.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
-
     const footerCount = document.getElementById('onb-footer-count');
     if(footerCount) footerCount.innerText = `Showing ${filtered.length} records`;
 
@@ -671,16 +711,11 @@ function renderOnboardingTable() {
             <td>${idx}</td>
             <td onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td>
             <td onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td>
-            <td>
-                <input type="date" class="date-input-modern" 
-                       value="${c.dob || ''}" 
-                       onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)">
-            </td>
+            <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td>
             <td onclick="editRecruiter('${c.id}', 'onboarding', this)">${c.recruiter || '-'}</td>
             <td onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td>
             <td>
-                <select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" 
-                        onchange="updateStatus('${c.id}', 'onboarding', this.value)">
+                <select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)">
                     <option value="Onboarding" ${c.status==='Onboarding'?'selected':''}>Onboarding</option>
                     <option value="Completed" ${c.status==='Completed'?'selected':''}>Completed</option>
                 </select>
@@ -691,7 +726,9 @@ function renderOnboardingTable() {
     }).join('');
 }
 
-/* ================= PLACEMENT BOARD LOGIC ================= */
+/* ========================================================
+   9. PLACEMENT BOARD LOGIC
+   ======================================================== */
 window.updatePlacementFilter = (type, btn) => {
     state.placementFilter = type;
     document.querySelectorAll('#view-placements .filter-btn').forEach(b => b.classList.remove('active'));
@@ -736,14 +773,10 @@ window.renderPlacementTable = () => {
             <td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)" class="text-cyan">${c.tech}</td>
             <td onclick="inlineEdit('${c.id}', 'location', 'candidates', this)">${c.location || '<span style="opacity:0.5; font-size:0.8rem;">Add Location</span>'}</td>
             <td onclick="inlineEdit('${c.id}', 'contract', 'candidates', this)">${c.contract || '<span style="opacity:0.5; font-size:0.8rem;">Add Type</span>'}</td>
-            <td>
-                <input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)">
-            </td>
+            <td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>
             <td>
                 ${state.userRole !== 'Employee' ? 
-                `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')" title="Permanently Delete">
-                    <i class="fa-solid fa-trash"></i>
-                </button>` : ''}
+                `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')" title="Permanently Delete"><i class="fa-solid fa-trash"></i></button>` : ''}
             </td>
         </tr>`;
     }).join('');
@@ -754,15 +787,8 @@ window.renderPlacementTable = () => {
 window.manualAddPlacement = () => {
     const today = new Date().toISOString().split('T')[0];
     db.collection('candidates').add({
-        first: 'New',
-        last: 'Candidate',
-        tech: 'Technology',
-        status: 'Placed',      
-        assigned: today,       
-        location: '',
-        contract: '',
-        createdAt: Date.now(),
-        mobile: '',
+        first: 'New', last: 'Candidate', tech: 'Technology', status: 'Placed',       
+        assigned: today, location: '', contract: '', createdAt: Date.now(), mobile: '',
         recruiter: state.userRole === 'Employee' ? state.currentUserName : ''
     }).then(() => {
         showToast("New Placement Row Added");
@@ -782,7 +808,7 @@ window.deletePlacement = (id) => {
 };
 
 /* ========================================================
-   9. UTILITIES & ACTIONS
+   10. ACTIONS & UTILITIES
    ======================================================== */
 function inlineEdit(id, field, collection, el) {
     if(el.querySelector('input')) return;
@@ -797,10 +823,7 @@ function inlineEdit(id, field, collection, el) {
 function inlineUrlEdit(id, field, collection, el) {
     if(el.querySelector('input')) return;
     el.innerHTML = ''; el.classList.add('editing-cell');
-    const input = document.createElement('input'); 
-    input.type = 'url'; 
-    input.placeholder = 'Paste Link Here...';
-    input.className = 'inline-input-active';
+    const input = document.createElement('input'); input.type = 'url'; input.placeholder = 'Paste Link Here...'; input.className = 'inline-input-active';
     const save = () => { 
         let newVal = input.value.trim(); 
         if(newVal && !newVal.startsWith('http')) newVal = 'https://' + newVal; 
@@ -808,10 +831,8 @@ function inlineUrlEdit(id, field, collection, el) {
         el.classList.remove('editing-cell'); 
         db.collection(collection).doc(id).update({ [field]: newVal }); 
     };
-    input.addEventListener('blur', save); 
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
-    el.appendChild(input); 
-    input.focus();
+    input.addEventListener('blur', save); input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+    el.appendChild(input); input.focus();
 }
 
 function inlineDateEdit(id, field, collection, val) {
@@ -823,7 +844,6 @@ function editRecruiter(id, collection, el) {
         showToast("Access Denied: You cannot change the recruiter.");
         return;
     }
-
     if(el.querySelector('select')) return;
     const val = el.innerText; el.innerHTML = '';
     const sel = document.createElement('select'); sel.className = 'modern-select';
@@ -836,12 +856,7 @@ window.updateStatus = (id, col, val) => db.collection(col).doc(id).update({ stat
 
 window.toggleSelect = (id, type) => {
     if(!state.selection[type]) return; 
-    
-    if(state.selection[type].has(id)) {
-        state.selection[type].delete(id);
-    } else {
-        state.selection[type].add(id);
-    }
+    if(state.selection[type].has(id)) state.selection[type].delete(id); else state.selection[type].add(id);
     updateSelectButtons(type);
 };
 
@@ -864,10 +879,7 @@ window.toggleSelectAll = (type, mainCheckbox) => {
     if (type === 'cand') renderCandidateTable(); 
     else if (type === 'emp') renderEmployeeTable();
     else renderOnboardingTable();
-    setTimeout(() => { 
-        const newMaster = document.getElementById(`select-all-${type}`); 
-        if(newMaster) newMaster.checked = isChecked; 
-    }, 0);
+    setTimeout(() => { const newMaster = document.getElementById(`select-all-${type}`); if(newMaster) newMaster.checked = isChecked; }, 0);
 };
 
 function updateSelectButtons(type) {
@@ -887,7 +899,7 @@ function setupEventListeners() {
     document.getElementById('btn-logout').addEventListener('click', () => auth.signOut());
     document.getElementById('theme-toggle').addEventListener('click', () => { document.body.classList.toggle('light-mode'); localStorage.setItem('np_theme', document.body.classList.contains('light-mode') ? 'light' : 'dark'); });
     
-    // Auth
+    // Auth Handlers
     window.handleLogin = () => { const e = document.getElementById('login-email').value, p = document.getElementById('login-pass').value; auth.signInWithEmailAndPassword(e, p).catch(err => showToast(cleanError(err.message))); };
     window.handleSignup = () => { 
         const n = document.getElementById('reg-name').value, e = document.getElementById('reg-email').value, p = document.getElementById('reg-pass').value; 
@@ -900,10 +912,10 @@ function setupEventListeners() {
     window.checkVerificationStatus = () => { const u = firebase.auth().currentUser; if(u) u.reload().then(()=>{if(u.emailVerified) location.reload();}); };
     window.resendVerificationEmail = () => { const u = firebase.auth().currentUser; if(u) u.sendEmailVerification().then(()=>showToast("Sent!")); };
 
-    // Seed
+    // Seed Data
     document.getElementById('btn-seed-data').addEventListener('click', window.seedData);
     
-    // Filters
+    // Search Filters
     document.getElementById('search-input').addEventListener('input', e => { state.filters.text = e.target.value.toLowerCase(); renderCandidateTable(); });
     document.getElementById('filter-recruiter').addEventListener('change', e => { state.filters.recruiter = e.target.value; renderCandidateTable(); });
     document.getElementById('filter-tech').addEventListener('change', e => { state.filters.tech = e.target.value; renderCandidateTable(); });
@@ -920,16 +932,12 @@ function setupEventListeners() {
     const empSearch = document.getElementById('emp-search-input');
     if(empSearch) { empSearch.addEventListener('input', e => { state.empFilters.text = e.target.value.toLowerCase(); renderEmployeeTable(); }); }
 
-    // Add Buttons
+    // Add Action Buttons
     document.getElementById('btn-add-candidate').addEventListener('click', () => { 
         const defaultRecruiter = state.userRole === 'Employee' ? state.currentUserName : '';
-        
         db.collection('candidates').add({ 
-            first: '', last: '', mobile: '', wa: '', tech: '', 
-            recruiter: defaultRecruiter, 
-            status: 'Active', 
-            assigned: new Date().toISOString().split('T')[0], 
-            comments: '', createdAt: Date.now(), 
+            first: '', last: '', mobile: '', wa: '', tech: '', recruiter: defaultRecruiter, status: 'Active', 
+            assigned: new Date().toISOString().split('T')[0], comments: '', createdAt: Date.now(), 
             submissionLog: [], screeningLog: [], interviewLog: [] 
         }).then(() => showToast("Inserted")); 
     });
@@ -945,9 +953,7 @@ function setupEventListeners() {
     document.getElementById('btn-add-employee').addEventListener('click', () => { 
         if(state.userRole === 'Employee') return showToast("Permission Denied");
         db.collection('employees').add({ 
-            first: '', last: '', dob: '', designation: '', 
-            workMobile: '', personalMobile: '', officialEmail: '', personalEmail: '',
-            createdAt: Date.now() 
+            first: '', last: '', dob: '', designation: '', workMobile: '', personalMobile: '', officialEmail: '', personalEmail: '', createdAt: Date.now() 
         }).then(() => showToast("Employee Added")); 
     });
 
@@ -960,71 +966,37 @@ function setupEventListeners() {
     const mobileBtn = document.getElementById('btn-mobile-menu');
     const sidebar = document.querySelector('.sidebar');
     const overlay = document.getElementById('sidebar-overlay');
-    const navLinks = document.querySelectorAll('.nav-item');
+    if(mobileBtn) { mobileBtn.addEventListener('click', () => { sidebar.classList.toggle('mobile-open'); overlay.classList.toggle('active'); }); }
+    if(overlay) { overlay.addEventListener('click', () => { sidebar.classList.remove('mobile-open'); overlay.classList.remove('active'); }); }
 
-    if(mobileBtn) {
-        mobileBtn.addEventListener('click', () => {
-            sidebar.classList.toggle('mobile-open');
-            overlay.classList.toggle('active');
-        });
-    }
-
-    if(overlay) {
-        overlay.addEventListener('click', () => {
-            sidebar.classList.remove('mobile-open');
-            overlay.classList.remove('active');
-        });
-    }
-
-    navLinks.forEach(link => {
-        link.addEventListener('click', () => {
-            if(window.innerWidth <= 900) {
-                sidebar.classList.remove('mobile-open');
-                overlay.classList.remove('active');
-            }
-        });
-    });
-
-    // Hub Date & Filter
+    // Hub Date Logic
     const hubPicker = document.getElementById('hub-date-picker');
     if(hubPicker) {
         hubPicker.value = new Date().toISOString().split('T')[0];
-        hubPicker.addEventListener('change', (e) => {
-            updateHubStats(null, e.target.value);
-        });
+        hubPicker.addEventListener('change', (e) => { updateHubStats(null, e.target.value); });
     }
-
     document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
              if(btn.closest('#view-placements')) return; 
              updateHubStats(btn.getAttribute('data-filter'), null);
         });
     });
-
     setTimeout(() => { if(window.updateHubStats) updateHubStats('daily', new Date().toISOString().split('T')[0]); }, 1000);
 
+    // Wallpaper Logic
     const wallpaperBtn = document.getElementById('change-wallpaper-btn');
-    const wallpapers = [
-        "", // Default
-        "linear-gradient(to right, #243949 0%, #517fa4 100%)", // Corporate Blue
-        "linear-gradient(109.6deg, rgb(20, 30, 48) 11.2%, rgb(36, 59, 85) 91.1%)", // Deep Night
-        "linear-gradient(to top, #30cfd0 0%, #330867 100%)", // Accent
-        "linear-gradient(to right, #434343 0%, black 100%)" // Pitch Dark
-    ];
+    const wallpapers = [ "", "linear-gradient(to right, #243949 0%, #517fa4 100%)", "linear-gradient(109.6deg, rgb(20, 30, 48) 11.2%, rgb(36, 59, 85) 91.1%)", "linear-gradient(to top, #30cfd0 0%, #330867 100%)", "linear-gradient(to right, #434343 0%, black 100%)" ];
     let wpIndex = 0;
-
     if(wallpaperBtn) {
         wallpaperBtn.addEventListener('click', () => {
-            wpIndex++;
-            if(wpIndex >= wallpapers.length) wpIndex = 0;
-            if(wpIndex === 0) document.body.style.background = ""; 
-            else document.body.style.background = wallpapers[wpIndex];
+            wpIndex++; if(wpIndex >= wallpapers.length) wpIndex = 0;
+            if(wpIndex === 0) document.body.style.background = ""; else document.body.style.background = wallpapers[wpIndex];
         });
     }
 }
 
 /* ========================================================
-   10. DATA OPS
+   11. DATA SEEDING & DELETION
    ======================================================== */
 window.seedData = () => {
     if (state.userRole === 'Employee') return showToast("Permission Denied");
@@ -1038,62 +1010,29 @@ window.seedData = () => {
     batch.commit().then(() => { renderCandidateTable(); showToast("25 Demo Candidates Inserted"); });
 };
 
-// 1. Open the Modal and Set the State
 window.openDeleteModal = (type) => {
-    if (!state.selection[type]) {
-        console.error(`Selection type '${type}' not found in state.`);
-        return;
-    }
-
-    const count = state.selection[type].size;
-    if (count === 0) {
-        showToast("No items selected");
-        return;
-    }
-
+    if (!state.selection[type] || state.selection[type].size === 0) return showToast("No items selected");
     state.pendingDelete.type = type; 
-    
-    document.getElementById('del-count').innerText = count;
+    document.getElementById('del-count').innerText = state.selection[type].size;
     document.getElementById('delete-modal').style.display = 'flex';
 };
 
-// 2. Close the Modal
 window.closeDeleteModal = () => {
     document.getElementById('delete-modal').style.display = 'none';
     state.pendingDelete.type = null;
 };
 
-// 3. Execute the Delete (The Fix)
 window.executeDelete = async () => { 
     const type = state.pendingDelete.type; 
-    
-    if (!type) {
-        console.error("No delete type found in state.");
-        closeDeleteModal();
-        return;
-    }
+    if (!type) { closeDeleteModal(); return; }
 
     let collection = '';
     let tableRenderFunc = null;
-
-    if (type === 'cand') { 
-        collection = 'candidates'; 
-        tableRenderFunc = renderCandidateTable;
-    }
-    else if (type === 'onb') { 
-        collection = 'onboarding'; 
-        tableRenderFunc = renderOnboardingTable;
-    }
-    else if (type === 'emp') { 
-        collection = 'employees'; 
-        tableRenderFunc = renderEmployeeTable;
-    }
+    if (type === 'cand') { collection = 'candidates'; tableRenderFunc = renderCandidateTable; }
+    else if (type === 'onb') { collection = 'onboarding'; tableRenderFunc = renderOnboardingTable; }
+    else if (type === 'emp') { collection = 'employees'; tableRenderFunc = renderEmployeeTable; }
     
-    if (!collection) {
-        showToast("Error: Unknown Collection Type");
-        closeDeleteModal();
-        return;
-    }
+    if (!collection) { showToast("Error: Unknown Collection Type"); closeDeleteModal(); return; }
 
     const btn = document.querySelector('#delete-modal .btn-danger');
     const originalText = btn.innerText;
@@ -1103,25 +1042,12 @@ window.executeDelete = async () => {
     try {
         const batch = db.batch();
         const idsArray = Array.from(state.selection[type]);
-
-        if (idsArray.length === 0) throw new Error("No IDs selected.");
-
-        idsArray.forEach(id => {
-            if(id) {
-                const ref = db.collection(collection).doc(id);
-                batch.delete(ref);
-            }
-        });
-
+        idsArray.forEach(id => { if(id) { const ref = db.collection(collection).doc(id); batch.delete(ref); } });
         await batch.commit();
-
         state.selection[type].clear(); 
-        
         updateSelectButtons(type); 
         if (tableRenderFunc) tableRenderFunc();
-
         showToast(`Successfully deleted ${idsArray.length} items.`);
-        
     } catch (error) {
         console.error("Delete Failed:", error);
         alert("Delete Failed: " + error.message); 
@@ -1135,11 +1061,10 @@ window.executeDelete = async () => {
 window.exportData = () => { if (state.candidates.length === 0) return showToast("No data"); const headers = ["ID", "First", "Last", "Mobile", "Tech", "Recruiter", "Status", "Date", "Comments"]; const csvRows = [headers.join(",")]; state.candidates.forEach(c => { const row = [c.id, `"${c.first}"`, `"${c.last}"`, `"${c.mobile}"`, `"${c.tech}"`, `"${c.recruiter}"`, `"${c.status}"`, c.assigned, `"${(c.comments || '').replace(/"/g, '""')}"`]; csvRows.push(row.join(",")); }); const blob = new Blob([csvRows.join("\n")], { type: "text/csv" }); const url = window.URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "candidates.csv"; a.click(); };
 
 /* ========================================================
-   11. DASHBOARD & CHARTS
+   12. DASHBOARD VISUALIZATIONS
    ======================================================== */
 function updateDashboardStats() { 
     let calcData = state.candidates;
-    
     if (state.userRole === 'Employee' && state.currentUserName) {
         calcData = calcData.filter(c => c.recruiter === state.currentUserName);
     }
@@ -1148,7 +1073,6 @@ function updateDashboardStats() {
     const active = calcData.filter(c => c.status === 'Active').length;
     const inactive = calcData.filter(c => c.status === 'Inactive').length;
     const placed = calcData.filter(c => c.status === 'Placed').length;
-    
     const techs = new Set(calcData.map(c=>c.tech)).size;
     const recruiters = state.metadata.recruiters.length;
 
@@ -1156,14 +1080,12 @@ function updateDashboardStats() {
     if(document.getElementById('stat-active-count')) document.getElementById('stat-active-count').innerText = active;
     if(document.getElementById('stat-inactive-count')) document.getElementById('stat-inactive-count').innerText = inactive;
     if(document.getElementById('stat-placed')) document.getElementById('stat-placed').innerText = placed;
-    
     if(document.getElementById('stat-tech')) document.getElementById('stat-tech').innerText = techs;
     if(document.getElementById('stat-rec')) document.getElementById('stat-rec').innerText = recruiters;
     if(document.getElementById('current-date-display')) document.getElementById('current-date-display').innerText = new Date().toLocaleDateString();
 
     const techData = getChartData(calcData, 'tech');
     const recData = getChartData(calcData, 'recruiter');
-
     renderChart('chart-recruiter', recData, 'bar'); 
     renderChart('chart-tech', techData, 'doughnut');
 }
@@ -1174,7 +1096,6 @@ function renderChart(id, data, type) {
     const ctx = document.getElementById(id);
     if(!ctx) return; 
     if(ctx.clientHeight === 0) ctx.style.height = '250px';
-
     const context = ctx.getContext('2d');
     if(chartInstances[id]) chartInstances[id].destroy(); 
     const colors = ['#06b6d4', '#f59e0b', '#8b5cf6', '#22c55e', '#ef4444', '#ec4899', '#6366f1'];
@@ -1182,36 +1103,26 @@ function renderChart(id, data, type) {
 }
 
 /* ========================================================
-   12. SECURITY & TIMERS
+   13. SECURITY TIMERS
    ======================================================== */
 let inactivityTimer;
-
 function startAutoLogoutTimer() {
     const TIMEOUT_DURATION = 10 * 60 * 1000; 
-
     function resetTimer() {
         if (!firebase.auth().currentUser) return; 
         clearTimeout(inactivityTimer);
         inactivityTimer = setTimeout(() => {
-            firebase.auth().signOut().then(() => {
-                showToast("Session expired due to inactivity");
-                switchScreen('auth');
-            });
+            firebase.auth().signOut().then(() => { showToast("Session expired due to inactivity"); switchScreen('auth'); });
         }, TIMEOUT_DURATION);
     }
     const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
-    activityEvents.forEach(event => {
-        document.addEventListener(event, resetTimer);
-    });
+    activityEvents.forEach(event => { document.addEventListener(event, resetTimer); });
     resetTimer();
 }
-
-function stopAutoLogoutTimer() {
-    clearTimeout(inactivityTimer);
-}
+function stopAutoLogoutTimer() { clearTimeout(inactivityTimer); }
 
 /* ========================================================
-   13. HUB DATE & FILTER LOGIC
+   14. HUB STATISTICS & LOGIC
    ======================================================== */
 state.hubDate = new Date().toISOString().split('T')[0]; 
 state.hubFilterType = 'daily'; 
@@ -1239,13 +1150,9 @@ window.updateHubStats = (filterType, dateVal) => {
         labelText = d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     } 
     else if (state.hubFilterType === 'weekly') {
-        const day = d.getDay(); 
-        const distanceToMon = day === 0 ? 6 : day - 1; 
-        const monday = new Date(d);
-        monday.setDate(d.getDate() - distanceToMon); 
-        const friday = new Date(monday);
-        friday.setDate(monday.getDate() + 4); 
-
+        const day = d.getDay(); const distanceToMon = day === 0 ? 6 : day - 1; 
+        const monday = new Date(d); monday.setDate(d.getDate() - distanceToMon); 
+        const friday = new Date(monday); friday.setDate(monday.getDate() + 4); 
         startTimestamp = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate()).getTime();
         endTimestamp = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate()).getTime() + 86400000;
         labelText = `${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${friday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
@@ -1254,9 +1161,7 @@ window.updateHubStats = (filterType, dateVal) => {
         startTimestamp = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
         const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
         endTimestamp = lastDay.getTime() + 86400000;
-        const firstDayStr = new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        const lastDayStr = lastDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        labelText = `${firstDayStr} - ${lastDayStr}`;
+        labelText = `${new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${lastDay.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
     }
 
     state.hubRange = { start: startTimestamp, end: endTimestamp };
@@ -1294,12 +1199,10 @@ function animateValue(id, end) {
     if(!obj) return;
     const start = parseInt(obj.innerText) || 0;
     if(start === end) return;
-    
     let current = start;
     const range = end - start;
     const increment = end > start ? 1 : -1;
     const stepTime = Math.abs(Math.floor(500 / range));
-    
     const timer = setInterval(() => {
         current += increment;
         obj.innerText = current;
@@ -1307,7 +1210,6 @@ function animateValue(id, end) {
     }, range === 0 ? 0 : (stepTime || 10));
 }
 
-// --- HUB ACTIONS ---
 window.toggleHubRow = (id) => {
     if(state.expandedRowId === id) state.expandedRowId = null; else state.expandedRowId = id;
     renderHubTable();
@@ -1346,7 +1248,7 @@ window.deleteHubLog = (id, fieldName, indexToDelete) => {
 };
 
 /* ========================================================
-   14. FILE HANDLING (HUB + PROFILE)
+   15. FILE HANDLING (HUB + PROFILE)
    ======================================================== */
 window.triggerHubFileUpload = (candidateId, fieldName) => {
     state.uploadTarget = { id: candidateId, field: fieldName };
@@ -1360,9 +1262,7 @@ window.handleHubFileSelect = (input) => {
     if (!id || !field) return;
 
     const dateVal = new Date().toISOString().split('T')[0];
-    const user = auth.currentUser;
     const storageRef = storage.ref(`candidates/${id}/emails/${Date.now()}_${file.name}`);
-    
     showToast("Uploading Email...");
 
     storageRef.put(file).then(snapshot => {
@@ -1407,21 +1307,12 @@ window.viewEmailLog = async (url) => {
         let bodyContent = email.html || email.text || '<div style="padding:20px">No content to display.</div>';
         bodyContent = bodyContent.replace(/<a /g, '<a style="pointer-events:none; cursor:default; color:gray; text-decoration:none;" ');
 
-        dom.emailViewer.iframe.srcdoc = `
-            <base target="_blank">
-            <style>body { font-family: sans-serif; padding: 20px; }</style>
-            ${bodyContent}
-        `;
+        dom.emailViewer.iframe.srcdoc = `<base target="_blank"><style>body { font-family: sans-serif; padding: 20px; }</style>${bodyContent}`;
 
     } catch (err) {
         console.error(err);
         dom.emailViewer.subject.textContent = "Error Loading Email";
-        dom.emailViewer.iframe.srcdoc = `
-            <div style="padding:20px; text-align:center; color:#ef4444;">
-                <h3>Could not load email</h3>
-                <p>Ensure you uploaded a <b>.eml</b> file.</p>
-                <small>${err.message}</small>
-            </div>`;
+        dom.emailViewer.iframe.srcdoc = `<div style="padding:20px; text-align:center; color:#ef4444;"><h3>Could not load email</h3><p>Ensure you uploaded a <b>.eml</b> file.</p><small>${err.message}</small></div>`;
     }
 };
 
@@ -1430,7 +1321,6 @@ window.closeEmailViewer = () => {
     dom.emailViewer.iframe.srcdoc = '';
 };
 
-// Profile Photo Logic
 window.triggerPhotoUpload = () => { document.getElementById('profile-upload-input').click(); };
 
 window.handlePhotoUpload = async (input) => {
@@ -1510,5 +1400,240 @@ window.deleteProfilePhoto = () => {
         if(loader) loader.style.display = 'none';
     });
 };
+
+/* ========================================================
+   16. GMAIL API LOGIC (ROBUST LOADING & ERROR HANDLING)
+   ======================================================== */
+
+// --- 1. Dynamic Script Loader ---
+function loadGoogleScripts() {
+    // 1. Load GAPI (Gmail API)
+    const gapiScript = document.createElement('script');
+    gapiScript.src = "https://apis.google.com/js/api.js";
+    gapiScript.async = true;
+    gapiScript.defer = true;
+    gapiScript.onload = window.gapiLoaded;
+    gapiScript.onerror = () => handleScriptError("GAPI");
+    document.body.appendChild(gapiScript);
+
+    // 2. Load GIS (Identity Services)
+    const gisScript = document.createElement('script');
+    gisScript.src = "https://accounts.google.com/gsi/client";
+    gisScript.async = true;
+    gisScript.defer = true;
+    gisScript.onload = window.gisLoaded;
+    gisScript.onerror = () => handleScriptError("GIS");
+    document.body.appendChild(gisScript);
+    
+    // Safety Timeout
+    setTimeout(() => {
+        if (!state.gmail.gapiInited || !state.gmail.gisInited) {
+            console.warn("Google Scripts timed out.");
+            if(dom.gmail.btnAuth) {
+                dom.gmail.btnAuth.disabled = false;
+                dom.gmail.btnAuth.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Retry Connection';
+                dom.gmail.btnAuth.onclick = () => window.location.reload(); 
+            }
+        }
+    }, 8000);
+}
+
+function handleScriptError(scriptName) {
+    showToast(`Error loading ${scriptName}. Check ad blockers.`);
+}
+
+// --- 2. Loader Callbacks ---
+window.gapiLoaded = function() {
+    gapi.load('client', async () => {
+        try {
+            await gapi.client.init({ apiKey: G_API_KEY, discoveryDocs: [G_DISCOVERY_DOC] });
+            state.gmail.gapiInited = true;
+            checkGmailAuth();
+        } catch (error) {
+            console.error('GAPI Init Error:', error);
+            // Better Error Parsing
+            let errMsg = error.message || JSON.stringify(error);
+            if (error.result && error.result.error) errMsg = error.result.error.message;
+            showToast('Google API Error: ' + errMsg);
+        }
+    });
+};
+
+window.gisLoaded = function() {
+    try {
+        state.gmail.tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: G_CLIENT_ID,
+            scope: G_SCOPES,
+            callback: async (resp) => {
+                if (resp.error) {
+                    if(resp.error === 'popup_closed_by_user') return;
+                    return showToast('Gmail Auth Error: ' + resp.error);
+                }
+                updateGmailUI(true);
+                loadInbox();
+            },
+        });
+        state.gmail.gisInited = true;
+        checkGmailAuth();
+    } catch (err) {
+        console.error("GIS Init Error:", err);
+    }
+};
+
+function checkGmailAuth() {
+    if (state.gmail.gapiInited && state.gmail.gisInited) {
+        if(dom.gmail.btnAuth) {
+            dom.gmail.btnAuth.disabled = false;
+            dom.gmail.btnAuth.style.opacity = "1";
+            dom.gmail.btnAuth.innerHTML = '<i class="fa-brands fa-google"></i> Connect Gmail';
+        }
+        const token = gapi.client.getToken();
+        if(token) updateGmailUI(true);
+    }
+}
+
+// --- 3. Auth UI Actions ---
+if(dom.gmail.btnAuth) {
+    dom.gmail.btnAuth.disabled = true;
+    dom.gmail.btnAuth.style.opacity = "0.7";
+    dom.gmail.btnAuth.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Loading...';
+
+    dom.gmail.btnAuth.addEventListener('click', () => {
+        if (!state.gmail.tokenClient) return showToast("Google Auth initializing...");
+        state.gmail.tokenClient.requestAccessToken({prompt: ''});
+    });
+}
+
+if(dom.gmail.btnSignout) {
+    dom.gmail.btnSignout.addEventListener('click', () => {
+        const token = gapi.client.getToken();
+        if (token !== null) {
+            google.accounts.oauth2.revoke(token.access_token);
+            gapi.client.setToken('');
+            dom.gmail.list.innerHTML = '';
+            updateGmailUI(false);
+            showToast("Gmail Disconnected");
+        }
+    });
+}
+
+function updateGmailUI(isSignedIn) {
+    if (isSignedIn) {
+        dom.gmail.btnAuth.style.display = 'none';
+        dom.gmail.btnSignout.style.display = 'inline-block';
+        dom.gmail.empty.style.display = 'none';
+    } else {
+        dom.gmail.btnAuth.style.display = 'inline-block';
+        dom.gmail.btnSignout.style.display = 'none';
+        dom.gmail.list.innerHTML = '';
+        dom.gmail.empty.style.display = 'block';
+    }
+}
+
+// --- 4. Inbox Operations ---
+if(dom.gmail.searchInput) {
+    dom.gmail.searchInput.addEventListener('keydown', (e) => {
+        if(e.key === 'Enter') {
+            state.gmail.nextPageToken = null;
+            dom.gmail.list.innerHTML = '';
+            loadInbox();
+        }
+    });
+}
+
+const refreshBtn = document.getElementById('btn-refresh-inbox');
+if(refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+        state.gmail.nextPageToken = null;
+        dom.gmail.list.innerHTML = '';
+        loadInbox();
+    });
+}
+
+if(dom.gmail.loadMore) {
+    dom.gmail.loadMore.addEventListener('click', loadInbox);
+}
+
+async function loadInbox() {
+    dom.gmail.skeleton.style.display = 'block';
+    dom.gmail.empty.style.display = 'none';
+    dom.gmail.loadMore.style.display = 'none';
+
+    try {
+        const searchTerm = dom.gmail.searchInput.value;
+        const requestOptions = { 'userId': 'me', 'maxResults': 15 };
+        
+        if (searchTerm.trim().length > 0) requestOptions.q = searchTerm;
+        else requestOptions.labelIds = ['INBOX'];
+
+        if (state.gmail.nextPageToken) requestOptions.pageToken = state.gmail.nextPageToken;
+
+        const response = await gapi.client.gmail.users.messages.list(requestOptions);
+        state.gmail.nextPageToken = response.result.nextPageToken;
+        const messages = response.result.messages;
+
+        dom.gmail.skeleton.style.display = 'none';
+
+        if (!messages || messages.length === 0) {
+            if (!state.gmail.nextPageToken && dom.gmail.list.children.length === 0) {
+                dom.gmail.empty.style.display = 'block';
+            }
+            return;
+        }
+
+        const batchPromises = messages.map(msg => 
+            gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': msg.id })
+        );
+        const fullEmails = await Promise.all(batchPromises);
+
+        fullEmails.forEach(details => renderEmailRow(details.result));
+
+        if (state.gmail.nextPageToken) dom.gmail.loadMore.style.display = 'inline-block';
+
+    } catch (err) {
+        dom.gmail.skeleton.style.display = 'none';
+        console.error(err);
+        if(err.result && err.result.error && err.result.error.code === 401) {
+             showToast("Session expired. Please reconnect Gmail.");
+             updateGmailUI(false);
+        } else {
+             showToast("Gmail Error: " + (err.message || "Unknown error"));
+        }
+    }
+}
+
+function renderEmailRow(email) {
+    const headers = email.payload.headers;
+    const getHeader = (name) => (headers.find(h => h.name === name) || {}).value || 'Unknown';
+    
+    const fromRaw = getHeader('From');
+    const from = fromRaw.split('<')[0].replace(/"/g, '').trim();
+    const subject = getHeader('Subject');
+    const dateObj = new Date(Number(email.internalDate));
+    
+    const now = new Date();
+    const diff = Math.floor((now - dateObj) / 1000);
+    let timeString = '';
+    if (diff < 60) timeString = 'Just now';
+    else if (diff < 3600) timeString = Math.floor(diff / 60) + 'm ago';
+    else if (diff < 86400) timeString = dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    else timeString = dateObj.toLocaleDateString([], {month: 'short', day: 'numeric'});
+
+    const initial = from.charAt(0).toUpperCase();
+
+    const li = document.createElement('li');
+    li.className = 'email-item';
+    li.innerHTML = `
+        <div class="email-avatar">${initial}</div>
+        <div class="email-content">
+            <div class="email-subject">${subject}</div>
+            <div class="email-snippet">${email.snippet}</div>
+        </div>
+        <div class="email-date">${timeString}</div>
+    `;
+    
+    li.onclick = () => { showToast("Opened: " + subject.substring(0, 20) + "..."); };
+    dom.gmail.list.appendChild(li);
+}
 
 document.addEventListener('DOMContentLoaded', init);
