@@ -13,7 +13,6 @@ const firebaseConfig = {
 };
 
 // --- GOOGLE API CONFIG (Gmail) ---
-// ENSURE THESE MATCH YOUR GOOGLE CLOUD CONSOLE EXACTLY
 const G_CLIENT_ID = '575678017832-34fs5qkepdnrgqdc58h0semgjrct5arl.apps.googleusercontent.com';
 const G_API_KEY = 'AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE';
 const G_DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest';
@@ -217,7 +216,7 @@ function showToast(msg) {
     const t = document.getElementById('toast'); 
     document.getElementById('toast-msg').innerText = msg; 
     t.classList.add('show'); 
-    setTimeout(() => t.classList.remove('show'), 4000); // Increased time for error reading
+    setTimeout(() => t.classList.remove('show'), 3000); 
 }
 
 function cleanError(msg) { 
@@ -398,27 +397,36 @@ window.checkBirthdays = () => {
     const currentDay = String(today.getDate()).padStart(2, '0');
     const todayMatch = `${currentMonth}-${currentDay}`;
 
+    // Safety check for user data
+    if(!state.allUsers) return;
+
     const birthdayPeople = state.allUsers.filter(user => {
         if (!user.dob) return false;
         const userBorn = user.dob.substring(5); 
         return userBorn === todayMatch;
     });
 
+    // Ensure elements exist before accessing
     const card = document.getElementById('birthday-card');
     const content = document.getElementById('bday-names');
+
+    if (!card || !content) return;
 
     if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
 
     if (birthdayPeople.length > 0) {
         const names = birthdayPeople.map(u => u.name).join(', ');
         content.innerText = names;
+        card.style.display = 'flex';
         card.classList.add('active');
         
         window.birthdayTimer = setTimeout(() => {
             card.classList.remove('active');
+            setTimeout(() => { card.style.display = 'none'; }, 500);
         }, 7000); 
     } else {
         card.classList.remove('active');
+        card.style.display = 'none';
     }
 };
 
