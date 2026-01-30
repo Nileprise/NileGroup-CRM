@@ -3,11 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>NILEPRISE CRM</title>
+  <title>NILEPRISE CRM | Unified Portal</title>
 
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  
   <script src="https://cdn.jsdelivr.net/npm/postal-mime/dist/browser/postal-mime.js"></script>
 
   <link rel="stylesheet" href="style.css">
@@ -39,7 +42,6 @@
   </div>
 
   <input type="file" id="hub-file-input" accept=".eml,.msg" style="display:none;" onchange="handleHubFileSelect(this)">
-
   <input type="file" id="profile-upload-input" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
 
   <div id="app" class="app-container">
@@ -114,12 +116,13 @@
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">PRISE</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
           <button class="nav-item active" data-target="view-dashboard"><i class="fa-solid fa-chart-pie"></i> <span>Overview</span></button>
+          <button class="nav-item" data-target="view-inbox"><i class="fa-solid fa-inbox"></i> <span>Inbox</span></button>
           <button class="nav-item" data-target="view-candidates"><i class="fa-solid fa-users"></i> <span>Candidates</span></button>
           <button class="nav-item" data-target="view-hub"><i class="fa-solid fa-id-card"></i> <span>Candidate Hub</span></button>
           <button class="nav-item" data-target="view-employees"><i class="fa-solid fa-address-book"></i> <span>Employees</span></button>
           <button class="nav-item" data-target="view-onboarding"><i class="fa-solid fa-user-check"></i> <span>Onboarding</span></button>
           <button class="nav-item" data-target="view-placements"><i class="fa-solid fa-trophy"></i> <span>Placements</span></button>
-          <button class="nav-item" id="nav-admin" data-target="view-settings" style="display: none;"><i class="fa-solid fa-user-shield"></i> <span>Admin</span></button>
+          <button class="nav-item" data-target="view-settings"><i class="fa-solid fa-sliders"></i> <span>Settings</span></button>
           <button class="nav-item" data-target="view-profile"><i class="fa-solid fa-user-gear"></i> <span>Profile</span></button>
         </nav>
       </aside>
@@ -129,7 +132,7 @@
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;">
             <i class="fa-solid fa-bars"></i>
           </button>
-          <h2 id="page-title">Dashboard</h2>
+          <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
           <div class="header-right modern-header-controls">
             <div class="status-widget">
               <div class="pulse-dot"></div><span id="header-updated" class="status-text">Synced</span>
@@ -197,6 +200,46 @@
           </div>
         </div>
 
+        <div id="view-inbox" class="content-view">
+          <div class="toolbar glass-panel">
+            <div class="left-actions">
+              <button id="btn-gmail-auth" class="btn btn-primary" disabled style="opacity: 0.6;">
+                <i class="fa-solid fa-circle-notch fa-spin"></i> Loading...
+              </button>
+              <button id="btn-gmail-signout" class="btn btn-danger" style="display:none;">
+                <i class="fa-solid fa-arrow-right-from-bracket"></i> Disconnect
+              </button>
+            </div>
+            <div class="filters-group modern-filter-row">
+              <div class="filter-pill">
+                <i class="fa-solid fa-search"></i>
+                <input type="text" id="gmail-search-input" placeholder="Search Inbox...">
+              </div>
+              <button id="btn-refresh-inbox" class="btn-circle-refresh" title="Refresh Inbox"><i class="fa-solid fa-rotate-right"></i></button>
+            </div>
+          </div>
+
+          <div class="table-container glass-panel">
+            <div id="gmail-skeleton" class="skeleton-container" style="display:none;">
+              <div class="skeleton-row"></div>
+              <div class="skeleton-row"></div>
+              <div class="skeleton-row"></div>
+            </div>
+
+            <ul id="email-list" class="modern-email-list">
+              </ul>
+
+            <div id="gmail-empty" class="empty-state" style="display:none;">
+              <i class="fa-regular fa-folder-open"></i>
+              <p>No emails found or not connected.</p>
+            </div>
+
+            <div class="footer-count">
+              <button id="btn-load-more" class="btn-text" style="display:none; width:100%; text-align:center;">Load More Emails <i class="fa-solid fa-chevron-down"></i></button>
+            </div>
+          </div>
+        </div>
+
         <div id="view-candidates" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
@@ -221,7 +264,7 @@
           </div>
           <div class="table-container glass-panel">
             <div class="table-wrapper">
-              <table class="modern-table">
+              <table class="modern-table" id="candidates-table">
                 <thead id="table-head"></thead>
                 <tbody id="table-body"></tbody>
               </table>
@@ -244,7 +287,8 @@
               <div class="modern-glass-pill" style="display: flex; gap: 10px; align-items: center;">
                 <input type="month" id="placement-month-picker" class="modern-input" style="width: auto; cursor:pointer;" onchange="renderPlacementTable()">
                 <select id="placement-year-picker" class="modern-select" style="display:none; width: 100px; padding: 5px; border-radius: 5px; background: rgba(0,0,0,0.3); color: white; border: 1px solid rgba(255,255,255,0.2);" onchange="renderPlacementTable()">
-                  </select>
+                  <option value="2024">2024</option><option value="2025">2025</option><option value="2026">2026</option>
+                </select>
                 <button class="btn-circle-refresh" onclick="renderPlacementTable()" title="Refresh"><i class="fa-solid fa-rotate-right"></i></button>
               </div>
             </div>
@@ -252,7 +296,7 @@
           <div class="table-container glass-panel">
             <div class="table-wrapper">
               <table class="modern-table" id="placement-table">
-                <thead></thead>
+                <thead><tr><th>#</th><th>First Name</th><th>Last Name</th><th>Tech</th><th>Location</th><th>Contract</th><th>Assigned</th><th>Actions</th></tr></thead>
                 <tbody id="placement-table-body"></tbody>
               </table>
             </div>
@@ -399,7 +443,7 @@
   </div>
 
   <div id="delete-modal" class="modal-overlay">
-    <div class="glass-panel modal-box" style="max-width: 400px; text-align: center;">
+    <div class="glass-panel modal-box" style="max-width: 400px; text-align: center; height: auto; min-height: auto;">
       <div class="icon-box" style="margin: 0 auto 20px; background: rgba(239,68,68,0.2); color: var(--danger); width: 60px; height: 60px; border-radius: 50%; font-size: 1.5rem; display:flex; align-items:center; justify-content:center;">
         <i class="fa-solid fa-triangle-exclamation"></i>
       </div>
