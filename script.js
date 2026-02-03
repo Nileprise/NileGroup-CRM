@@ -2,14 +2,14 @@
    1. CONFIGURATION (FIREBASE + GOOGLE GMAIL)
    ======================================================== */
 const firebaseConfig = {
-  apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
-  authDomain: "nile-group-crm.firebaseapp.com",
-  databaseURL: "https://nile-group-crm-default-rtdb.firebaseio.com",
-  projectId: "nile-group-crm",
-  storageBucket: "nile-group-crm.firebasestorage.app",
-  messagingSenderId: "575678017832",
-  appId: "1:575678017832:web:8ae69a81cfaaf7a717601d",
-  measurementId: "G-11XNH0CYY1"
+    apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
+    authDomain: "nile-group-crm.firebaseapp.com",
+    databaseURL: "https://nile-group-crm-default-rtdb.firebaseio.com",
+    projectId: "nile-group-crm",
+    storageBucket: "nile-group-crm.firebasestorage.app",
+    messagingSenderId: "575678017832",
+    appId: "1:575678017832:web:8ae69a81cfaaf7a717601d",
+    measurementId: "G-11XNH0CYY1"
 };
 
 // --- GOOGLE API CONFIG (Gmail) ---
@@ -85,7 +85,7 @@ const state = {
     pendingDelete: { type: null },
     
     metadata: {
-        recruiters: [],
+        recruiters: [], // Stores objects: { value: 'Name', display: 'Name (Email)' }
         techs: [
             "React", "Node.js", "Java", "Python", ".NET", 
             "AWS", "Azure", "DevOps", "Salesforce", "Data Science",
@@ -155,6 +155,11 @@ function init() {
         // --- IMPORTANT: Load Google Scripts Dynamically ---
         loadGoogleScripts();
         
+        // Initialize buttons as disabled (visible but grayed out)
+        updateSelectButtons('cand');
+        updateSelectButtons('onb');
+        updateSelectButtons('emp');
+
         // Listen for Firebase Auth State
         auth.onAuthStateChanged(user => {
             if (user) {
@@ -169,13 +174,13 @@ function init() {
                 state.user = user;
                 const email = user.email.toLowerCase();
                 const knownUser = ALLOWED_USERS[email];
-                
+               
                 state.userRole = knownUser ? knownUser.role : 'Viewer'; 
                 state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
-                
+               
                 // Permission Handling
                 if (state.userRole === 'Employee') {
-                     if(document.getElementById('btn-delete-selected')) document.getElementById('btn-delete-selected').style.display = 'none';
+                     if(document.getElementById('btn-delete-selected')) updateSelectButtons('cand'); // Re-trigger check
                 }
 
                 updateUserProfile(user, knownUser);
@@ -250,12 +255,12 @@ dom.navItems.forEach(btn => {
     
         if (targetView) {
             targetView.classList.add('active');
-            
+           
             // View Specific Triggers
             if (targetId === 'view-dashboard') updateDashboardStats();
             if (targetId === 'view-profile') refreshProfileData();
             if (targetId === 'view-placements') renderPlacementTable();
-            
+           
             // Auto-load Inbox if connected
             if (targetId === 'view-inbox') {
                  if(state.gmail.gapiInited && state.gmail.gisInited && gapi.client.getToken()) {
@@ -295,7 +300,7 @@ function updateUserProfile(user, hardcodedData) {
             if(document.getElementById('prof-work-mobile')) document.getElementById('prof-work-mobile').value = data.workMobile || '';
             if(document.getElementById('prof-personal-mobile')) document.getElementById('prof-personal-mobile').value = data.personalMobile || '';
             if(document.getElementById('prof-personal-email')) document.getElementById('prof-personal-email').value = data.personalEmail || '';
-            
+           
             let photoURL = data.photoURL || user.photoURL;
             if(photoURL) {
                 const avatarImg = document.getElementById('profile-main-img');
@@ -363,13 +368,30 @@ function initRealtimeListeners() {
         renderOnboardingTable();
     });
 
-    // Employees
+    // Employees (Updated to fetch Name + Email for Dropdown)
     db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.employees = [];
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
         
-        const firstNames = state.employees.map(e => e.first).filter(name => name && name.trim().length > 0);
-        const uniqueRecruiters = [...new Set(firstNames)].sort();
+        // Map to objects containing Name and Email for dropdowns
+        const recruiterData = state.employees
+            .filter(e => e.first && e.first.trim().length > 0)
+            .map(e => ({
+                value: e.first, // Value used for filtering/saving
+                display: `${e.first} ${e.last || ''} (${e.officialEmail || 'No Email'})` // Text shown in UI
+            }));
+
+        // Remove duplicates based on 'value'
+        const uniqueRecruiters = [];
+        const seenValues = new Set();
+        recruiterData.forEach(r => {
+            if (!seenValues.has(r.value)) {
+                seenValues.add(r.value);
+                uniqueRecruiters.push(r);
+            }
+        });
+        
+        uniqueRecruiters.sort((a, b) => a.value.localeCompare(b.value));
         state.metadata.recruiters = uniqueRecruiters;
         
         renderDropdowns(); 
@@ -397,7 +419,6 @@ window.checkBirthdays = () => {
     const currentDay = String(today.getDate()).padStart(2, '0');
     const todayMatch = `${currentMonth}-${currentDay}`;
 
-    // Safety check for user data
     if(!state.allUsers) return;
 
     const birthdayPeople = state.allUsers.filter(user => {
@@ -406,7 +427,6 @@ window.checkBirthdays = () => {
         return userBorn === todayMatch;
     });
 
-    // Ensure elements exist before accessing
     const card = document.getElementById('birthday-card');
     const content = document.getElementById('bday-names');
 
@@ -434,10 +454,14 @@ window.checkBirthdays = () => {
    8. DATA RENDERERS
    ======================================================== */
 function renderDropdowns() {
+    // 1. Generate the Options HTML from Object Array
+    const optionsHTML = state.metadata.recruiters.map(r => 
+        `<option value="${r.value}">${r.display}</option>`
+    ).join('');
+
     const rSelect = document.getElementById('filter-recruiter');
     if (rSelect) {
-        const options = state.metadata.recruiters.map(r => `<option value="${r}">${r}</option>`).join('');
-        rSelect.innerHTML = `<option value="">All Recruiters</option>${options}`;
+        rSelect.innerHTML = `<option value="">All Recruiters</option>${optionsHTML}`;
     }
 
     const tSelect = document.getElementById('filter-tech');
@@ -448,8 +472,7 @@ function renderDropdowns() {
 
     const hubRec = document.getElementById('hub-filter-recruiter');
     if (hubRec) {
-        const options = state.metadata.recruiters.map(r => `<option value="${r}">${r}</option>`).join('');
-        hubRec.innerHTML = `<option value="">All Recruiters</option>${options}`;
+        hubRec.innerHTML = `<option value="">All Recruiters</option>${optionsHTML}`;
     }
 }
 
@@ -504,12 +527,12 @@ function renderCandidateTable() {
                 </select>
             </td>
             <td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>
-       
+     
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'gmail', 'candidates', this)">${c.gmail ? 'Gmail' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'linkedin', 'candidates', this)">${c.linkedin ? 'LinkedIn' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'resume', 'candidates', this)">${c.resume ? 'Resume' : ''}</td>
             <td class="url-cell" onclick="inlineUrlEdit('${c.id}', 'track', 'candidates', this)">${c.track ? 'Tracker' : ''}</td>
-       
+     
             <td onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments || '-'}</td>
         </tr>`;
     }).join('');
@@ -527,7 +550,7 @@ function renderHubTable() {
         return matchesText && matchesRec;
     });
 
-    const headers = ['#', 'Name', 'Recruiter', 'Tech', 'Submission', 'Screening', 'Interview', 'Last Activity'];
+    const headers = ['#', 'Full Name', 'Recruiter', 'Tech', 'RTR/Rate', 'Screening', 'Interview', 'Last Activity'];
     
     dom.tables.hub.head.innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
     
@@ -541,23 +564,19 @@ function renderHubTable() {
     dom.tables.hub.body.innerHTML = filtered.map((c, i) => {
         const idx = i + 1;
         
-        const checkDateInRange = (entry) => {
-            const dStr = (typeof entry === 'string') ? entry : entry.date;
-            const t = new Date(dStr).getTime();
-            return t >= rowStart && t < rowEnd;
-        };
+        // Count RTR/Rate Submissions
+        const submissionCount = (c.submissionLog || []).filter(log => {
+            const type = (log.type || log.note || "").toLowerCase();
+            const subj = (log.subject || "").toLowerCase();
+            const combined = type + " " + subj;
+            return combined.includes('rtr') || combined.includes('rate') || combined.includes('submission');
+        }).length;
 
-        const filterLogs = (logs) => (logs || []).filter(checkDateInRange);
-        
         let lastActDate = '-';
         if (c.interviewLog && c.interviewLog.length > 0) {
             const lastEntry = c.interviewLog[0];
             lastActDate = (typeof lastEntry === 'string') ? lastEntry : lastEntry.date;
         }
-
-        const subs = filterLogs(c.submissionLog);
-        const scrs = filterLogs(c.screeningLog);
-        const ints = filterLogs(c.interviewLog);
 
         const isExpanded = state.expandedRowId === c.id;
         const activeClass = isExpanded ? 'background: rgba(6, 182, 212, 0.1); border-left: 3px solid var(--primary);' : '';
@@ -568,49 +587,39 @@ function renderHubTable() {
             <td><span style="font-weight:600">${c.first} ${c.last}</span></td>
             <td>${c.recruiter || '-'}</td>
             <td style="color:var(--primary);">${c.tech}</td>
-            <td class="text-cyan" style="font-weight:bold;">${subs.length}</td>
-            <td class="text-gold" style="font-weight:bold;">${scrs.length}</td>
-            <td class="text-purple" style="font-weight:bold;">${ints.length}</td>
+            <td class="text-cyan" style="font-weight:bold; font-size:1.1rem;">${submissionCount}</td>
+            <td class="text-gold" style="font-weight:bold;">${(c.screeningLog||[]).length}</td>
+            <td class="text-purple" style="font-weight:bold;">${(c.interviewLog||[]).length}</td>
             <td style="font-size:0.8rem; color:var(--text-muted)">${lastActDate}</td>
         </tr>`;
 
         if(isExpanded) {
-            const inputDefault = state.hubDate; 
-           
-            const renderTimeline = (list, fieldName) => {
-                if(!list || list.length === 0) return `<li class="hub-log-item" style="justify-content:center; opacity:0.5; padding-left:0;">No records for selected date</li>`;
-            
+            const renderTimeline = (list) => {
+                if(!list || list.length === 0) return `<li class="hub-log-item" style="opacity:0.5;">No records</li>`;
+                
                 return list.map((entry, index) => {
                     const isLegacy = typeof entry === 'string';
                     const dateStr = isLegacy ? entry : entry.date;
+                    const subject = isLegacy ? 'Manual Entry' : (entry.subject || entry.note || 'No Subject');
+                    const recruiter = isLegacy ? '-' : (entry.recruiter || '-');
+                    const tech = isLegacy ? '-' : (entry.tech || '-');
+                    const type = isLegacy ? 'Entry' : (entry.type || 'Log');
                     const link = isLegacy ? '' : entry.link;
-                    const dateObj = new Date(dateStr);
-                    const niceDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-                
-                    let linkHtml = '';
-                    if(link) {
-                        const isEmail = link.includes('firebasestorage') || link.endsWith('.eml');
-                        const icon = isEmail ? 'fa-envelope-open-text' : 'fa-arrow-up-right-from-square';
-                        const clickAction = isEmail ? `onclick="viewEmailLog('${link}')"` : `href="${link}" target="_blank"`;
-                        const btnClass = isEmail ? 'hub-link-btn is-email' : 'hub-link-btn';
                     
-                        if(isEmail) {
-                            linkHtml = `<button class="${btnClass}" ${clickAction} title="Open Email"><i class="fa-solid ${icon}"></i></button>`;
-                        } else {
-                            linkHtml = `<a ${clickAction} class="${btnClass}" title="Open Link"><i class="fa-solid ${icon}"></i></a>`;
-                        }
-                    }
-
                     return `
-                    <li class="hub-log-item">
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <span class="log-date">${niceDate}</span>
-                            ${linkHtml}
+                    <li class="hub-log-item" style="display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:10px;">
+                        <div style="display:flex; justify-content:space-between; width:100%;">
+                            <span class="log-date" style="color:var(--primary); font-weight:bold;">${dateStr}</span>
+                            <span style="font-size:0.75rem; background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px;">${recruiter}</span>
                         </div>
-                        <div class="hub-log-actions">
-                            <button class="hub-action-btn delete" title="Delete Log" onclick="deleteHubLog('${c.id}', '${fieldName}', ${index})">
-                                <i class="fa-solid fa-trash"></i>
-                            </button>
+                        <div style="font-weight:600; color:#fff;">${subject}</div>
+                        <div style="font-size:0.8rem; color:var(--text-muted); display:flex; gap:10px;">
+                            <span><i class="fa-solid fa-code"></i> ${tech}</span>
+                            <span><i class="fa-solid fa-tag"></i> ${type}</span>
+                        </div>
+                        ${link ? `<a href="${link}" target="_blank" class="hub-link-btn" style="width:100%; margin-top:5px; text-decoration:none;">View Email <i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ''}
+                        <div style="text-align:right; width:100%; margin-top:5px;">
+                             <button class="hub-action-btn delete" onclick="event.stopPropagation(); deleteHubLog('${c.id}', '${list === c.submissionLog ? 'submissionLog' : list === c.screeningLog ? 'screeningLog' : 'interviewLog'}', ${index})"><i class="fa-solid fa-trash"></i></button>
                         </div>
                     </li>`;
                 }).join('');
@@ -618,34 +627,19 @@ function renderHubTable() {
 
             html += `
             <tr class="hub-details-row">
-                <td colspan="8">
+                <td colspan="8" style="padding:0;">
                     <div class="hub-details-wrapper" onclick="event.stopPropagation()">
                         <div class="hub-col cyan">
-                            <div class="hub-col-header cyan"><i class="fa-solid fa-paper-plane"></i> Submission <span style="float:right; opacity:0.5">${subs.length}</span></div>
-                            <div class="hub-input-group">
-                                <input type="date" id="input-sub-${c.id}" value="${inputDefault}">
-                                <button class="hub-attach-btn" title="Attach EML File" onclick="triggerHubFileUpload('${c.id}', 'submissionLog')"><i class="fa-solid fa-paperclip"></i></button>
-                                <button class="btn btn-primary" onclick="addHubLog('${c.id}', 'submissionLog', 'input-sub-${c.id}')">Add</button>
-                            </div>
-                            <ul class="hub-log-list custom-scroll">${renderTimeline(subs, 'submissionLog')}</ul>
+                            <div class="hub-col-header cyan">RTR & Rate Submissions</div>
+                            <ul class="hub-log-list custom-scroll" style="max-height:300px;">${renderTimeline(c.submissionLog)}</ul>
                         </div>
                         <div class="hub-col gold">
-                            <div class="hub-col-header gold"><i class="fa-solid fa-user-clock"></i> Screening <span style="float:right; opacity:0.5">${scrs.length}</span></div>
-                            <div class="hub-input-group">
-                                <input type="date" id="input-scr-${c.id}" value="${inputDefault}">
-                                <button class="hub-attach-btn" title="Attach EML File" onclick="triggerHubFileUpload('${c.id}', 'screeningLog')"><i class="fa-solid fa-paperclip"></i></button>
-                                <button class="btn btn-primary" style="background:#f59e0b;" onclick="addHubLog('${c.id}', 'screeningLog', 'input-scr-${c.id}')">Add</button>
-                            </div>
-                            <ul class="hub-log-list custom-scroll">${renderTimeline(scrs, 'screeningLog')}</ul>
+                            <div class="hub-col-header gold">Screenings</div>
+                             <ul class="hub-log-list custom-scroll">${renderTimeline(c.screeningLog)}</ul>
                         </div>
                         <div class="hub-col purple">
-                            <div class="hub-col-header purple"><i class="fa-solid fa-headset"></i> Interview <span style="float:right; opacity:0.5">${ints.length}</span></div>
-                            <div class="hub-input-group">
-                                <input type="date" id="input-int-${c.id}" value="${inputDefault}">
-                                <button class="hub-attach-btn" title="Attach EML File" onclick="triggerHubFileUpload('${c.id}', 'interviewLog')"><i class="fa-solid fa-paperclip"></i></button>
-                                <button class="btn btn-primary" style="background:#8b5cf6;" onclick="addHubLog('${c.id}', 'interviewLog', 'input-int-${c.id}')">Add</button>
-                            </div>
-                            <ul class="hub-log-list custom-scroll">${renderTimeline(ints, 'interviewLog')}</ul>
+                            <div class="hub-col-header purple">Interviews</div>
+                             <ul class="hub-log-list custom-scroll">${renderTimeline(c.interviewLog)}</ul>
                         </div>
                     </div>
                 </td>
@@ -764,10 +758,16 @@ window.renderPlacementTable = () => {
     });
 
     const tbody = document.getElementById('placement-table-body');
+    const thead = document.querySelector('#placement-table thead');
+    
+    if(thead) {
+        thead.innerHTML = `<tr><th>#</th><th>Full Name</th><th>Tech</th><th>Location</th><th>Contract</th><th>Assigned</th><th>Actions</th></tr>`;
+    }
+
     if(!tbody) return;
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="opacity:0.6; padding:20px;">No placements found for this period.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" style="opacity:0.6; padding:20px;">No placements found for this period.</td></tr>`;
         document.getElementById('placement-footer-count').innerText = "Showing 0 records";
         return;
     }
@@ -776,8 +776,7 @@ window.renderPlacementTable = () => {
         return `
         <tr>
             <td>${i + 1}</td>
-            <td onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td>
-            <td onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td>
+            <td><span style="font-weight:600; color:var(--text-main);">${c.first} ${c.last}</span></td>
             <td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)" class="text-cyan">${c.tech}</td>
             <td onclick="inlineEdit('${c.id}', 'location', 'candidates', this)">${c.location || '<span style="opacity:0.5; font-size:0.8rem;">Add Location</span>'}</td>
             <td onclick="inlineEdit('${c.id}', 'contract', 'candidates', this)">${c.contract || '<span style="opacity:0.5; font-size:0.8rem;">Add Type</span>'}</td>
@@ -853,11 +852,39 @@ function editRecruiter(id, collection, el) {
         return;
     }
     if(el.querySelector('select')) return;
-    const val = el.innerText; el.innerHTML = '';
-    const sel = document.createElement('select'); sel.className = 'modern-select';
-    state.metadata.recruiters.forEach(r => { const opt = document.createElement('option'); opt.value = r; opt.text = r; if(r === val) opt.selected = true; sel.appendChild(opt); });
-    sel.focus(); const save = () => db.collection(collection).doc(id).update({ recruiter: sel.value });
-    sel.addEventListener('blur', save); sel.addEventListener('change', save); el.appendChild(sel);
+    
+    const currentVal = el.innerText; 
+    el.innerHTML = '';
+    
+    const sel = document.createElement('select'); 
+    sel.className = 'modern-select';
+    
+    const defOpt = document.createElement('option');
+    defOpt.text = "Select Recruiter";
+    defOpt.value = "";
+    sel.appendChild(defOpt);
+
+    state.metadata.recruiters.forEach(r => { 
+        const opt = document.createElement('option'); 
+        opt.value = r.value; 
+        opt.text = r.display; 
+        if(r.value === currentVal) opt.selected = true; 
+        sel.appendChild(opt); 
+    });
+
+    sel.focus(); 
+    
+    const save = () => {
+        if(sel.value) {
+            db.collection(collection).doc(id).update({ recruiter: sel.value });
+        } else {
+            el.innerText = currentVal;
+        }
+    };
+
+    sel.addEventListener('blur', save); 
+    sel.addEventListener('change', save); 
+    el.appendChild(sel);
 }
 
 window.updateStatus = (id, col, val) => db.collection(col).doc(id).update({ status: val });
@@ -895,11 +922,19 @@ function updateSelectButtons(type) {
     if(type === 'cand') { btn = document.getElementById('btn-delete-selected'); countSpan = document.getElementById('selected-count'); }
     else if(type === 'emp') { btn = document.getElementById('btn-delete-employee'); countSpan = document.getElementById('emp-selected-count'); }
     else { btn = document.getElementById('btn-delete-onboarding'); countSpan = document.getElementById('onboarding-selected-count'); }
+    
+    if (!btn) return;
+
     if (state.selection[type].size > 0 && state.userRole !== 'Employee') {
-        btn.style.display = 'inline-flex'; 
+        btn.style.display = 'inline-flex';
+        btn.style.opacity = '1';
+        btn.style.pointerEvents = 'auto';
         if (countSpan) countSpan.innerText = state.selection[type].size; 
     } else { 
-        btn.style.display = 'none'; 
+        btn.style.display = 'inline-flex';
+        btn.style.opacity = '0.3';
+        btn.style.pointerEvents = 'none';
+        if (countSpan) countSpan.innerText = '0';
     }
 }
 
@@ -1010,7 +1045,7 @@ window.seedData = () => {
     if (state.userRole === 'Employee') return showToast("Permission Denied");
     const batch = db.batch();
     const techList = state.metadata.techs;
-    const recList = state.metadata.recruiters.length > 0 ? state.metadata.recruiters : ['Test Recruiter'];
+    const recList = state.metadata.recruiters.length > 0 ? state.metadata.recruiters.map(r=>r.value) : ['Test Recruiter'];
     for (let i = 1; i <= 25; i++) {
         const newRef = db.collection('candidates').doc();
         batch.set(newRef, { first: `Candidate`, last: `${i}`, mobile: `98765432${i < 10 ? '0'+i : i}`, wa: `98765432${i < 10 ? '0'+i : i}`, tech: techList[Math.floor(Math.random() * techList.length)], recruiter: recList[Math.floor(Math.random() * recList.length)], status: i % 3 === 0 ? "Inactive" : "Active", assigned: new Date().toISOString().split('T')[0], comments: "Auto-generated demo data", createdAt: Date.now() + i });
@@ -1052,9 +1087,15 @@ window.executeDelete = async () => {
         const idsArray = Array.from(state.selection[type]);
         idsArray.forEach(id => { if(id) { const ref = db.collection(collection).doc(id); batch.delete(ref); } });
         await batch.commit();
+        
         state.selection[type].clear(); 
         updateSelectButtons(type); 
         if (tableRenderFunc) tableRenderFunc();
+        
+        // Force Uncheck "Select All"
+        const masterCheckbox = document.getElementById(`select-all-${type}`);
+        if(masterCheckbox) masterCheckbox.checked = false;
+
         showToast(`Successfully deleted ${idsArray.length} items.`);
     } catch (error) {
         console.error("Delete Failed:", error);
@@ -1092,9 +1133,49 @@ function updateDashboardStats() {
     if(document.getElementById('stat-rec')) document.getElementById('stat-rec').innerText = recruiters;
     if(document.getElementById('current-date-display')) document.getElementById('current-date-display').innerText = new Date().toLocaleDateString();
 
+    const currentYear = new Date().getFullYear();
+    const monthlyStats = Array(12).fill(0).map(() => ({ subs: 0, placements: 0 }));
+
+    calcData.forEach(c => {
+        // Count Placements
+        if (c.status === 'Placed' && c.assigned) {
+            const d = new Date(c.assigned);
+            if (d.getFullYear() === currentYear) {
+                monthlyStats[d.getMonth()].placements++;
+            }
+        }
+        // Count Submissions (using the log)
+        if (c.submissionLog) {
+            c.submissionLog.forEach(log => {
+                const d = new Date(log.date || log); // Handle legacy string dates
+                if (d.getFullYear() === currentYear) {
+                    monthlyStats[d.getMonth()].subs++;
+                }
+            });
+        }
+    });
+
+    renderChart('chart-recruiter', { 
+        labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+        datasets: [
+            {
+                label: 'Submissions',
+                data: monthlyStats.map(m => m.subs),
+                backgroundColor: 'rgba(6, 182, 212, 0.6)', 
+                borderColor: '#06b6d4',
+                borderWidth: 1
+            },
+            {
+                label: 'Placements',
+                data: monthlyStats.map(m => m.placements),
+                backgroundColor: 'rgba(34, 197, 94, 0.8)', 
+                borderColor: '#22c55e',
+                borderWidth: 1
+            }
+        ]
+    }, 'bar');
+    
     const techData = getChartData(calcData, 'tech');
-    const recData = getChartData(calcData, 'recruiter');
-    renderChart('chart-recruiter', recData, 'bar'); 
     renderChart('chart-tech', techData, 'doughnut');
 }
 
@@ -1107,7 +1188,11 @@ function renderChart(id, data, type) {
     const context = ctx.getContext('2d');
     if(chartInstances[id]) chartInstances[id].destroy(); 
     const colors = ['#06b6d4', '#f59e0b', '#8b5cf6', '#22c55e', '#ef4444', '#ec4899', '#6366f1'];
-    chartInstances[id] = new Chart(context, { type: type, data: { labels: data.labels, datasets: [{ label: 'Candidates', data: data.data, backgroundColor: colors, borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, borderRadius: 4, barThickness: 20 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: type === 'doughnut', position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } } }, scales: { y: { display: type === 'bar', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }, x: { display: type === 'bar', grid: { display: false }, ticks: { color: '#94a3b8' } } } } }); 
+    
+    // Config specifically for the bar chart comparison or general usage
+    const datasets = data.datasets || [{ label: 'Data', data: data.data, backgroundColor: colors, borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1 }];
+    
+    chartInstances[id] = new Chart(context, { type: type, data: { labels: data.labels, datasets: datasets }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } } }, scales: { y: { display: type === 'bar', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }, x: { display: type === 'bar', grid: { display: false }, ticks: { color: '#94a3b8' } } } } }); 
 }
 
 /* ========================================================
@@ -1221,27 +1306,6 @@ function animateValue(id, end) {
 window.toggleHubRow = (id) => {
     if(state.expandedRowId === id) state.expandedRowId = null; else state.expandedRowId = id;
     renderHubTable();
-};
-
-window.addHubLog = (id, fieldName, inputId) => {
-    const dateVal = document.getElementById(inputId).value;
-    if(!dateVal) return showToast("Please select a date");
-    const linkVal = prompt("Paste Email/Meeting Link (Optional):");
-    const candidate = state.candidates.find(c => c.id === id);
-    if(!candidate) return;
-
-    let logs = candidate[fieldName] || [];
-    const newEntry = { date: dateVal, link: linkVal || "", timestamp: Date.now() };
-    logs.push(newEntry);
-    logs.sort((a, b) => {
-        const da = (typeof a === 'string') ? a : a.date;
-        const db = (typeof b === 'string') ? b : b.date;
-        return new Date(db) - new Date(da);
-    });
-
-    db.collection('candidates').doc(id).update({ [fieldName]: logs }).then(() => {
-        showToast("Log Added!");
-    }).catch(err => showToast("Error: " + err.message));
 };
 
 window.deleteHubLog = (id, fieldName, indexToDelete) => {
@@ -1410,7 +1474,7 @@ window.deleteProfilePhoto = () => {
 };
 
 /* ========================================================
-   16. GMAIL API LOGIC (ROBUST LOADING & ERROR HANDLING)
+   16. GMAIL API LOGIC (LIVE SYNC & SMART FEATURES)
    ======================================================== */
 
 // --- 1. Dynamic Script Loader ---
@@ -1459,7 +1523,6 @@ window.gapiLoaded = function() {
             checkGmailAuth();
         } catch (error) {
             console.error('GAPI Init Error:', error);
-            // Better Error Parsing
             let errMsg = error.message || JSON.stringify(error);
             if (error.result && error.result.error) errMsg = error.result.error.message;
             showToast('Google API Error: ' + errMsg);
@@ -1535,6 +1598,9 @@ function updateGmailUI(isSignedIn) {
         dom.gmail.btnSignout.style.display = 'none';
         dom.gmail.list.innerHTML = '';
         dom.gmail.empty.style.display = 'block';
+        
+        const countEl = document.getElementById('gmail-count-display');
+        if(countEl) countEl.innerText = "0 Mails";
     }
 }
 
@@ -1559,34 +1625,64 @@ if(refreshBtn) {
 }
 
 if(dom.gmail.loadMore) {
-    dom.gmail.loadMore.addEventListener('click', loadInbox);
+    dom.gmail.loadMore.addEventListener('click', () => loadInbox());
 }
 
-async function loadInbox() {
-    dom.gmail.skeleton.style.display = 'block';
-    dom.gmail.empty.style.display = 'none';
-    dom.gmail.loadMore.style.display = 'none';
+// --- LIVE SYNC & LOAD LOGIC ---
+let autoSyncInterval = null;
+
+window.toggleAutoSync = (checkbox) => {
+    const indicator = document.getElementById('live-indicator');
+    
+    if (checkbox.checked) {
+        showToast("Live Sync Enabled (Checks every 15s)");
+        indicator.style.display = 'block';
+        loadInbox(true); 
+        autoSyncInterval = setInterval(() => {
+            loadInbox(true); // true = silent mode
+        }, 15000); 
+    } else {
+        showToast("Live Sync Disabled");
+        indicator.style.display = 'none';
+        clearInterval(autoSyncInterval);
+    }
+};
+
+async function loadInbox(isSilent = false) {
+    if (!isSilent) {
+        dom.gmail.skeleton.style.display = 'block';
+        dom.gmail.empty.style.display = 'none';
+        dom.gmail.loadMore.style.display = 'none';
+    }
 
     try {
         const searchTerm = dom.gmail.searchInput.value;
-        const requestOptions = { 'userId': 'me', 'maxResults': 15 };
+        const requestOptions = { 'userId': 'me', 'maxResults': 20 };
         
         if (searchTerm.trim().length > 0) requestOptions.q = searchTerm;
         else requestOptions.labelIds = ['INBOX'];
 
-        if (state.gmail.nextPageToken) requestOptions.pageToken = state.gmail.nextPageToken;
+        if (state.gmail.nextPageToken && !isSilent) requestOptions.pageToken = state.gmail.nextPageToken;
 
         const response = await gapi.client.gmail.users.messages.list(requestOptions);
         state.gmail.nextPageToken = response.result.nextPageToken;
         const messages = response.result.messages;
 
-        dom.gmail.skeleton.style.display = 'none';
+        if (!isSilent) dom.gmail.skeleton.style.display = 'none';
 
         if (!messages || messages.length === 0) {
-            if (!state.gmail.nextPageToken && dom.gmail.list.children.length === 0) {
+            if (!isSilent && dom.gmail.list.children.length === 0) {
                 dom.gmail.empty.style.display = 'block';
+                document.getElementById('gmail-count-display').innerText = "0 Mails";
             }
             return;
+        }
+
+        // Silent Sync: Check if top email changed
+        if (isSilent && dom.gmail.list.firstElementChild) {
+            const topMsgId = messages[0].id;
+            const currentTopId = dom.gmail.list.firstElementChild.getAttribute('data-id');
+            if (topMsgId === currentTopId) return; 
         }
 
         const batchPromises = messages.map(msg => 
@@ -1594,18 +1690,19 @@ async function loadInbox() {
         );
         const fullEmails = await Promise.all(batchPromises);
 
+        if (isSilent) dom.gmail.list.innerHTML = ''; 
         fullEmails.forEach(details => renderEmailRow(details.result));
 
         if (state.gmail.nextPageToken) dom.gmail.loadMore.style.display = 'inline-block';
 
+        document.getElementById('gmail-count-display').innerText = `${fullEmails.length} Recent`;
+
     } catch (err) {
-        dom.gmail.skeleton.style.display = 'none';
+        if (!isSilent) dom.gmail.skeleton.style.display = 'none';
         console.error(err);
         if(err.result && err.result.error && err.result.error.code === 401) {
              showToast("Session expired. Please reconnect Gmail.");
              updateGmailUI(false);
-        } else {
-             showToast("Gmail Error: " + (err.message || "Unknown error"));
         }
     }
 }
@@ -1615,7 +1712,9 @@ function renderEmailRow(email) {
     const getHeader = (name) => (headers.find(h => h.name === name) || {}).value || 'Unknown';
     
     const fromRaw = getHeader('From');
-    const from = fromRaw.split('<')[0].replace(/"/g, '').trim();
+    let senderName = fromRaw.split('<')[0].replace(/"/g, '').trim();
+    if (!senderName) senderName = fromRaw.replace(/[<>]/g, '');
+
     const subject = getHeader('Subject');
     const dateObj = new Date(Number(email.internalDate));
     
@@ -1627,21 +1726,91 @@ function renderEmailRow(email) {
     else if (diff < 86400) timeString = dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
     else timeString = dateObj.toLocaleDateString([], {month: 'short', day: 'numeric'});
 
-    const initial = from.charAt(0).toUpperCase();
+    const initial = senderName.charAt(0).toUpperCase();
 
     const li = document.createElement('li');
     li.className = 'email-item';
+    li.setAttribute('data-id', email.id); 
+
     li.innerHTML = `
         <div class="email-avatar">${initial}</div>
         <div class="email-content">
-            <div class="email-subject">${subject}</div>
-            <div class="email-snippet">${email.snippet}</div>
+            <div class="email-sender" style="color:var(--text-main); font-weight:700; font-size:0.95rem; margin-bottom:2px;">${senderName}</div>
+            <div class="email-subject" style="color:var(--text-main); font-size:0.9rem; opacity:0.9;">${subject}</div>
+            <div class="email-snippet" style="font-size:0.85rem;">${email.snippet}</div>
         </div>
-        <div class="email-date">${timeString}</div>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:5px;">
+            <div class="email-date">${timeString}</div>
+             <button class="btn-icon-small" onclick="event.stopPropagation(); syncEmailToCandidate('${email.id}')" title="Sync to Hub">
+                <i class="fa-solid fa-file-import text-cyan"></i>
+             </button>
+        </div>
     `;
     
     li.onclick = () => { showToast("Opened: " + subject.substring(0, 20) + "..."); };
     dom.gmail.list.appendChild(li);
 }
+
+// --- SMART EMAIL SYNC ---
+window.syncEmailToCandidate = async (messageId) => {
+    const candidateName = prompt("Enter the exact FIRST NAME of the candidate:");
+    if (!candidateName) return;
+
+    const candidate = state.candidates.find(c => c.first.toLowerCase() === candidateName.toLowerCase());
+    if (!candidate) return showToast("Candidate not found.");
+
+    showToast("Analyzing email content...");
+
+    try {
+        const response = await gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': messageId });
+        const emailData = response.result;
+        const headers = emailData.payload.headers;
+        
+        const subject = (headers.find(h => h.name === 'Subject') || {}).value || 'No Subject';
+        const snippet = emailData.snippet || '';
+        const fullText = subject + " " + snippet;
+
+        let subType = "General Email";
+        if (fullText.toLowerCase().includes("rtr") || fullText.toLowerCase().includes("right to represent")) {
+            subType = "RTR Submission";
+        } else if (fullText.toLowerCase().includes("rate") || fullText.toLowerCase().includes("confirmation")) {
+            subType = "Rate Confirmation";
+        }
+
+        let detectedTech = candidate.tech;
+        const knownTechs = state.metadata.techs || ["Java", "React", "Python", ".NET", "DevOps"];
+        for (const t of knownTechs) {
+            if (subject.toLowerCase().includes(t.toLowerCase())) {
+                detectedTech = t;
+                break;
+            }
+        }
+
+        const newLogEntry = {
+            date: new Date(Number(emailData.internalDate)).toISOString().split('T')[0],
+            link: `https://mail.google.com/mail/u/0/#inbox/${messageId}`,
+            subject: subject,
+            type: subType,      
+            tech: detectedTech,  
+            recruiter: state.currentUserName,
+            timestamp: Date.now()
+        };
+
+        const currentLogs = candidate.submissionLog || [];
+        currentLogs.push(newLogEntry);
+        currentLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        await db.collection('candidates').doc(candidate.id).update({
+            submissionLog: currentLogs,
+            tech: detectedTech 
+        });
+
+        showToast(`Synced: ${subType} (${detectedTech})`);
+
+    } catch (err) {
+        console.error(err);
+        showToast("Sync Failed: " + err.message);
+    }
+};
 
 document.addEventListener('DOMContentLoaded', init);
