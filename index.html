@@ -6,11 +6,9 @@
   <title>NILEPRISE CRM | Unified Portal</title>
 
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  
   <script src="https://unpkg.com/postal-mime/dist/browser/postal-mime.js"></script>
 
   <link rel="stylesheet" href="style.css">
@@ -112,6 +110,7 @@
     </section>
 
     <section id="dashboard-screen" class="screen">
+      
       <aside class="sidebar glass-panel">
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">PRISE</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
@@ -128,6 +127,7 @@
       </aside>
 
       <main class="main-content">
+        
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;">
             <i class="fa-solid fa-bars"></i>
@@ -210,7 +210,26 @@
                 <i class="fa-solid fa-arrow-right-from-bracket"></i> Disconnect
               </button>
             </div>
+            
             <div class="filters-group modern-filter-row">
+              <div style="display:flex; align-items:center; gap:8px; margin-right:15px; border-right:1px solid rgba(255,255,255,0.1); padding-right:15px;">
+                  <label class="switch" style="position:relative; display:inline-block; width:34px; height:20px;">
+                      <input type="checkbox" id="chk-auto-sync" onchange="toggleAutoSync(this)">
+                      <span class="slider round" style="position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background-color:#ccc; transition:.4s; border-radius:34px;"></span>
+                      <style>
+                          .switch input { opacity: 0; width: 0; height: 0; }
+                          .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+                          input:checked + .slider { background-color: var(--primary); }
+                          input:checked + .slider:before { transform: translateX(14px); }
+                      </style>
+                  </label>
+                  <span style="font-size:0.8rem; color:var(--text-muted);">Live Sync</span>
+                  <div id="live-indicator" style="width:8px; height:8px; border-radius:50%; background:lime; display:none; animation:blink 1s infinite;"></div>
+                  <style>@keyframes blink{50%{opacity:0;}}</style>
+              </div>
+
+              <span id="gmail-count-display" style="margin-right: 15px; color: var(--text-muted); font-size: 0.85rem; font-weight: 600;">0 Mails</span>
+              
               <div class="filter-pill">
                 <i class="fa-solid fa-search"></i>
                 <input type="text" id="gmail-search-input" placeholder="Search Inbox...">
@@ -226,8 +245,7 @@
               <div class="skeleton-row"></div>
             </div>
 
-            <ul id="email-list" class="modern-email-list">
-              </ul>
+            <ul id="email-list" class="modern-email-list"></ul>
 
             <div id="gmail-empty" class="empty-state" style="display:none;">
               <i class="fa-regular fa-folder-open"></i>
@@ -296,7 +314,9 @@
           <div class="table-container glass-panel">
             <div class="table-wrapper">
               <table class="modern-table" id="placement-table">
-                <thead><tr><th>#</th><th>First Name</th><th>Last Name</th><th>Tech</th><th>Location</th><th>Contract</th><th>Assigned</th><th>Actions</th></tr></thead>
+                <thead>
+                  <tr><th>#</th><th>Full Name</th><th>Tech</th><th>Location</th><th>Contract</th><th>Assigned</th><th>Actions</th></tr>
+                </thead>
                 <tbody id="placement-table-body"></tbody>
               </table>
             </div>
