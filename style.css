@@ -1,3 +1,8 @@
+Here is the complete, consolidated `style.css` file.
+
+This version includes every feature we have built: the glassmorphism theme, the unified layout, the specific styles for the new Inbox features (Live Sync toggle, Sender Name), and the updated table headers.
+
+```css
 /* ========================================================
    1. GLOBAL VARIABLES & THEME
    ======================================================== */
@@ -84,6 +89,12 @@ body {
 /* ========================================================
    3. UTILITIES & COMPONENTS
    ======================================================== */
+/* Scrollbar Customization */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+
 /* Glass Panel */
 .glass-panel { 
   background: var(--glass-bg); 
@@ -237,6 +248,7 @@ body {
 .email-item:hover { background-color: rgba(255, 255, 255, 0.05); }
 .email-avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), #8b5cf6); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
 .email-content { overflow: hidden; display: flex; flex-direction: column; justify-content: center; }
+.email-sender { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .email-subject { font-weight: 600; color: var(--text-main); font-size: 0.95rem; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .email-snippet { color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .email-date { font-size: 0.75rem; color: var(--text-muted); text-align: right; }
