@@ -3,16 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>NILEPRISE CRM | Unified Portal</title>
+  <title>NILEPRISE CRM</title>
 
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
-  
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-  
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/postal-mime@2.1.1/dist/browser/postal-mime.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/postal-mime/dist/browser/postal-mime.js"></script>
 
   <link rel="stylesheet" href="style.css">
 </head>
@@ -26,11 +22,15 @@
   </div>
 
   <div id="toast" class="toast">
-    <div class="toast-icon" id="toast-icon-container"><i class="fa-solid fa-circle-check"></i></div>
-    <div class="toast-content"><span class="toast-message" id="toast-msg">Operation completed.</span></div>
+    <div class="toast-icon" id="toast-icon-container">
+      <i class="fa-solid fa-circle-check"></i>
+    </div>
+    <div class="toast-content">
+      <span class="toast-message" id="toast-msg">Operation completed.</span>
+    </div>
   </div>
 
-  <div id="birthday-card" class="birthday-card glass-panel" style="display:none;">
+  <div id="birthday-card" class="birthday-card glass-panel">
     <div class="bday-icon"><i class="fa-solid fa-cake-candles"></i></div>
     <div class="bday-content">
       <h4>Happy Birthday! 🎉</h4>
@@ -39,6 +39,7 @@
   </div>
 
   <input type="file" id="hub-file-input" accept=".eml,.msg" style="display:none;" onchange="handleHubFileSelect(this)">
+
   <input type="file" id="profile-upload-input" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
 
   <div id="app" class="app-container">
@@ -52,27 +53,33 @@
         <div id="form-login" class="auth-form active">
           <h3 class="form-title">Secure Portal Login</h3>
           <div class="input-group">
-            <i class="fa-solid fa-envelope input-icon"></i>
+            <i class="fa-solid fa-envelope"></i>
             <input type="email" id="login-email" placeholder="Official Email ID" autocomplete="email">
           </div>
           <div class="input-group">
-            <i class="fa-solid fa-lock input-icon"></i>
+            <i class="fa-solid fa-lock"></i>
             <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
-            <i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('login-pass', this)"></i>
           </div>
-          <div class="form-actions"><span class="link-text" onclick="switchAuth('forgot')">Forgot Password?</span></div>
+          <div class="form-actions">
+            <span class="link-text" onclick="switchAuth('forgot')">Forgot Password?</span>
+          </div>
           <button id="btn-login-action" class="btn btn-primary btn-block" onclick="handleLogin()">Login</button>
           <p class="switch-text">First time? <span onclick="switchAuth('signup')">Activate Account</span></p>
         </div>
 
         <div id="form-signup" class="auth-form">
           <h3 class="form-title">Activate Account</h3>
-          <div class="input-group"><i class="fa-solid fa-user input-icon"></i><input type="text" id="reg-name" placeholder="Full Name"></div>
-          <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reg-email" placeholder="Official Email ID"></div>
           <div class="input-group">
-            <i class="fa-solid fa-lock input-icon"></i>
+            <i class="fa-solid fa-user"></i>
+            <input type="text" id="reg-name" placeholder="Full Name">
+          </div>
+          <div class="input-group">
+            <i class="fa-solid fa-envelope"></i>
+            <input type="email" id="reg-email" placeholder="Official Email ID">
+          </div>
+          <div class="input-group">
+            <i class="fa-solid fa-lock"></i>
             <input type="password" id="reg-pass" placeholder="Set Password (Min 6 chars)">
-            <i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('reg-pass', this)"></i>
           </div>
           <button id="btn-signup-action" class="btn btn-primary btn-block" onclick="handleSignup()">Register</button>
           <p class="switch-text">Back to <span onclick="switchAuth('login')">Login</span></p>
@@ -80,7 +87,10 @@
 
         <div id="form-forgot" class="auth-form">
           <h3 class="form-title">Reset Password</h3>
-          <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reset-email" placeholder="Official Email ID"></div>
+          <div class="input-group">
+            <i class="fa-solid fa-envelope"></i>
+            <input type="email" id="reset-email" placeholder="Official Email ID">
+          </div>
           <button class="btn btn-primary btn-block" onclick="handleReset()">Send Reset Link</button>
           <p class="switch-text"><span onclick="switchAuth('login')">Back to Login</span></p>
         </div>
@@ -100,75 +110,33 @@
     </section>
 
     <section id="dashboard-screen" class="screen">
-      
-      <aside class="sidebar glass-panel" id="sidebar">
+      <aside class="sidebar glass-panel">
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">PRISE</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
           <button class="nav-item active" data-target="view-dashboard"><i class="fa-solid fa-chart-pie"></i> <span>Overview</span></button>
-          
-          <div class="nav-item" style="cursor: pointer;" onclick="toggleGmailMenu()">
-              <i class="fa-brands fa-google"></i>
-              <span>Gmail</span>
-              <i class="fa-solid fa-chevron-down" id="gmail-toggle-icon" style="margin-left: auto; font-size: 0.8rem;"></i>
-          </div>
-
-          <div id="gmail-sub-menu" style="display: none; padding-left: 10px; border-left: 2px solid rgba(255,255,255,0.1); margin-left: 20px;">
-              <button class="nav-item" data-target="view-inbox" onclick="renderGmailList('Inbox', this)">
-                  <span class="material-icons" style="font-size: 18px;">inbox</span> <span>Inbox</span>
-              </button>
-              <button class="nav-item" onclick="renderGmailList('Starred', this)">
-                  <span class="material-icons" style="font-size: 18px;">star</span> <span>Starred</span>
-              </button>
-              <button class="nav-item" onclick="renderGmailList('Important', this)">
-                  <span class="material-icons" style="font-size: 18px;">label_important</span> <span>Important</span>
-              </button>
-              <button class="nav-item" onclick="renderGmailList('Sent', this)">
-                  <span class="material-icons" style="font-size: 18px;">send</span> <span>Sent</span>
-              </button>
-              
-              <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
-                  <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
-              </div>
-              <div id="categories-submenu" style="display: none; padding-left: 15px;">
-                  <button class="nav-item" onclick="renderGmailList('category:social')"><small>Social</small></button>
-                  <button class="nav-item" onclick="renderGmailList('category:updates')"><small>Updates</small></button>
-                  <button class="nav-item" onclick="renderGmailList('category:promotions')"><small>Promotions</small></button>
-              </div>
-
-              <div class="nav-item" onclick="toggleMore()" id="more-btn" style="font-size: 0.9rem; opacity: 0.8;">
-                  <span class="material-icons" style="font-size: 16px;">expand_more</span> <span>More</span>
-              </div>
-              <div id="more-submenu" style="display: none; padding-left: 15px;">
-                  <button class="nav-item" onclick="renderGmailList('Spam')"><small>Spam</small></button>
-                  <button class="nav-item" onclick="renderGmailList('Trash')"><small>Trash</small></button>
-              </div>
-              
-              <div style="margin-top: 10px;">
-                  <button id="btn-gmail-auth" class="btn-text" style="font-size: 0.8rem;"><i class="fa-solid fa-key"></i> Login</button>
-                  <button id="btn-gmail-signout" class="btn-text-danger" style="display: none; font-size: 0.8rem;"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
-              </div>
-          </div>
           <button class="nav-item" data-target="view-candidates"><i class="fa-solid fa-users"></i> <span>Candidates</span></button>
           <button class="nav-item" data-target="view-hub"><i class="fa-solid fa-id-card"></i> <span>Candidate Hub</span></button>
           <button class="nav-item" data-target="view-employees"><i class="fa-solid fa-address-book"></i> <span>Employees</span></button>
           <button class="nav-item" data-target="view-onboarding"><i class="fa-solid fa-user-check"></i> <span>Onboarding</span></button>
           <button class="nav-item" data-target="view-placements"><i class="fa-solid fa-trophy"></i> <span>Placements</span></button>
-          <button class="nav-item" data-target="view-settings"><i class="fa-solid fa-sliders"></i> <span>Settings</span></button>
+          <button class="nav-item" id="nav-admin" data-target="view-settings" style="display: none;"><i class="fa-solid fa-user-shield"></i> <span>Admin</span></button>
           <button class="nav-item" data-target="view-profile"><i class="fa-solid fa-user-gear"></i> <span>Profile</span></button>
         </nav>
       </aside>
 
       <main class="main-content">
-        
         <header class="top-bar">
-          <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
-          <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
+          <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;">
+            <i class="fa-solid fa-bars"></i>
+          </button>
+          <h2 id="page-title">Dashboard</h2>
           <div class="header-right modern-header-controls">
             <div class="status-widget">
               <div class="pulse-dot"></div><span id="header-updated" class="status-text">Synced</span>
             </div>
             <div class="user-controls-pill">
               <button id="theme-toggle" class="control-icon"><i class="fa-solid fa-circle-half-stroke"></i></button>
+              <button id="change-wallpaper-btn" class="control-icon"><i class="fa-solid fa-image"></i></button>
               <div class="user-info-group">
                 <div class="user-avatar-small"><i class="fa-solid fa-user"></i></div>
                 <span id="display-username" class="user-name">User</span>
@@ -185,60 +153,48 @@
           </div>
           <div class="kpi-grid">
             <div class="kpi-card accent-blue">
-              <div class="kpi-content"><span class="kpi-label">Total Candidates</span><h1 id="stat-total" class="kpi-value">0</h1></div>
+              <div class="kpi-content">
+                <span class="kpi-label">Total Candidates</span>
+                <h1 id="stat-total" class="kpi-value">0</h1>
+                <div class="kpi-trend positive"><b id="stat-active-count">0</b> Active / <b id="stat-inactive-count">0</b> Inactive</div>
+              </div>
               <div class="kpi-icon"><i class="fa-solid fa-users"></i></div>
             </div>
             <div class="kpi-card accent-green">
-              <div class="kpi-content"><span class="kpi-label">Placed</span><h1 id="stat-placed" class="kpi-value">0</h1></div>
+              <div class="kpi-content">
+                <span class="kpi-label">Placed Candidates</span>
+                <h1 id="stat-placed" class="kpi-value">0</h1>
+                <div class="kpi-trend positive">Successfully Placed</div>
+              </div>
               <div class="kpi-icon"><i class="fa-solid fa-handshake"></i></div>
             </div>
             <div class="kpi-card accent-gold">
-              <div class="kpi-content"><span class="kpi-label">Technologies</span><h1 id="stat-tech" class="kpi-value">0</h1></div>
+              <div class="kpi-content">
+                <span class="kpi-label">Technologies</span>
+                <h1 id="stat-tech" class="kpi-value">0</h1>
+                <div class="kpi-trend">Tech Stack</div>
+              </div>
               <div class="kpi-icon"><i class="fa-solid fa-microchip"></i></div>
             </div>
             <div class="kpi-card accent-purple">
-              <div class="kpi-content"><span class="kpi-label">Recruiters</span><h1 id="stat-rec" class="kpi-value">0</h1></div>
+              <div class="kpi-content">
+                <span class="kpi-label">Active Recruiters</span>
+                <h1 id="stat-rec" class="kpi-value">0</h1>
+                <div class="kpi-trend">Team Size</div>
+              </div>
               <div class="kpi-icon"><i class="fa-solid fa-user-tie"></i></div>
             </div>
           </div>
-        </div>
-
-        <div id="view-inbox" class="content-view" style="padding: 0; overflow: hidden;">
-            <div class="gmail-main-area glass-panel" id="gmail-list-view" style="height: 100%;">
-                <div class="gmail-toolbar">
-                    <div class="toolbar-left">
-                        <button class="btn-icon-small" onclick="openComposeModal()" title="Compose"><i class="fa-solid fa-pen"></i></button>
-                        <button class="btn-icon-small" onclick="refreshEmails()" title="Refresh"><span class="material-icons">refresh</span></button>
-                    </div>
-                    <div class="toolbar-search">
-                        <span class="material-icons">search</span>
-                        <input type="text" id="gmail-search-input" placeholder="Search mail..." onkeyup="handleGmailSearch(this.value)">
-                    </div>
-                </div>
-                <div class="gmail-scroll-area" id="gmail-rows-container">
-                    <div id="gmail-empty" class="empty-state" style="display:none; padding: 20px; text-align: center; color: gray;">
-                        <i class="fa-regular fa-folder-open" style="font-size: 2rem;"></i>
-                        <p>No emails found or not connected.</p>
-                    </div>
-                </div>
+          <div class="charts-grid">
+            <div class="chart-container large-chart">
+              <div class="chart-top"><h4>Candidate by Recruiters</h4></div>
+              <div class="canvas-wrapper"><canvas id="chart-recruiter"></canvas></div>
             </div>
-
-            <div class="gmail-main-area glass-panel" id="gmail-detail-view" style="display: none; height: 100%;">
-                <div class="gmail-toolbar">
-                    <button class="btn-icon-small" onclick="backToGmailList()"><span class="material-icons">arrow_back</span></button>
-                    <div class="detail-actions">
-                        <button class="btn-icon-small" title="Import to Hub" onclick="syncCurrentEmailToCandidate()"><span class="material-icons" style="color:var(--primary);">file_download</span></button>
-                    </div>
-                </div>
-                <div class="gmail-detail-content custom-scroll">
-                    <h2 id="detail-subject">...</h2>
-                    <div class="detail-meta">
-                        <h4 id="detail-sender">...</h4>
-                        <span id="detail-date" style="margin-left: auto; color: gray;">...</span>
-                    </div>
-                    <div class="detail-body" id="detail-message" style="margin-top: 20px;"></div>
-                </div>
+            <div class="chart-container small-chart">
+              <div class="chart-top"><h4>Technology Spread</h4></div>
+              <div class="canvas-wrapper"><canvas id="chart-tech"></canvas></div>
             </div>
+          </div>
         </div>
 
         <div id="view-candidates" class="content-view">
@@ -250,20 +206,25 @@
                 <button class="btn-toggle" data-status="Active">Active</button>
                 <button class="btn-toggle" data-status="Inactive">Inactive</button>
               </div>
-              <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="selected-count">0</span>)
-              </button>
+              <button id="btn-delete-selected" class="btn btn-danger" style="display: none;"><i class="fa-solid fa-trash-can"></i> Delete (<span id="selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="search-input" placeholder="Search..."></div>
-              <div class="filter-pill"><i class="fa-solid fa-user-tie"></i><select id="filter-recruiter"><option value="">All Recruiters</option></select><i class="fa-solid fa-chevron-down dropdown-arrow"></i></div>
-              <div class="filter-pill"><i class="fa-solid fa-code"></i><select id="filter-tech"><option value="">All Tech</option></select><i class="fa-solid fa-chevron-down dropdown-arrow"></i></div>
+              <div class="filter-pill">
+                <i class="fa-solid fa-user-tie"></i><select id="filter-recruiter"><option value="">All Recruiters</option></select><i class="fa-solid fa-chevron-down dropdown-arrow"></i>
+              </div>
+              <div class="filter-pill">
+                <i class="fa-solid fa-code"></i><select id="filter-tech"><option value="">All Tech</option></select><i class="fa-solid fa-chevron-down dropdown-arrow"></i>
+              </div>
               <button id="btn-reset-filters" class="btn-circle-refresh"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
           </div>
           <div class="table-container glass-panel">
             <div class="table-wrapper">
-              <table class="modern-table" id="candidates-table"><thead id="table-head"></thead><tbody id="table-body"></tbody></table>
+              <table class="modern-table">
+                <thead id="table-head"></thead>
+                <tbody id="table-body"></tbody>
+              </table>
             </div>
             <div class="footer-count"><small id="cand-footer-count">Showing all records</small></div>
           </div>
@@ -274,9 +235,6 @@
             <div class="left-actions">
               <h3 style="margin:0; margin-right: 15px; color:var(--text-main);"><i class="fa-solid fa-trophy text-gold"></i> Placement Board</h3>
               <button id="btn-add-placement" class="btn btn-primary" onclick="manualAddPlacement()"><i class="fa-solid fa-plus"></i> Add Placement</button>
-              <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="place-selected-count">0</span>)
-              </button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="date-filter-pill" style="margin-right: 10px;">
@@ -285,9 +243,8 @@
               </div>
               <div class="modern-glass-pill" style="display: flex; gap: 10px; align-items: center;">
                 <input type="month" id="placement-month-picker" class="modern-input" style="width: auto; cursor:pointer;" onchange="renderPlacementTable()">
-                <select id="placement-year-picker" class="modern-select" style="display:none; width: 100px; padding: 5px;" onchange="renderPlacementTable()">
-                  <option value="2024">2024</option><option value="2025">2025</option><option value="2026">2026</option>
-                </select>
+                <select id="placement-year-picker" class="modern-select" style="display:none; width: 100px; padding: 5px; border-radius: 5px; background: rgba(0,0,0,0.3); color: white; border: 1px solid rgba(255,255,255,0.2);" onchange="renderPlacementTable()">
+                  </select>
                 <button class="btn-circle-refresh" onclick="renderPlacementTable()" title="Refresh"><i class="fa-solid fa-rotate-right"></i></button>
               </div>
             </div>
@@ -295,7 +252,7 @@
           <div class="table-container glass-panel">
             <div class="table-wrapper">
               <table class="modern-table" id="placement-table">
-                <thead><tr><th>#</th><th>First Name</th><th>Last Name</th><th>Tech</th><th>Location</th><th>Contract</th><th>Assigned</th><th>Actions</th></tr></thead>
+                <thead></thead>
                 <tbody id="placement-table-body"></tbody>
               </table>
             </div>
@@ -311,11 +268,11 @@
                 <div id="hub-range-label" class="hub-date-display"><i class="fa-regular fa-calendar"></i> Loading...</div>
               </div>
               <div class="hub-controls">
-                <div class="custom-date-wrapper"><input type="date" id="hub-date-picker" class="hub-date-input" onchange="updateHubStats(null, this.value)"></div>
+                <div class="custom-date-wrapper"><input type="date" id="hub-date-picker" class="hub-date-input"></div>
                 <div class="date-filter-pill">
-                  <button class="filter-btn active" data-filter="daily" onclick="updateHubStats('daily', null)">Daily</button>
-                  <button class="filter-btn" data-filter="weekly" onclick="updateHubStats('weekly', null)">Weekly</button>
-                  <button class="filter-btn" data-filter="monthly" onclick="updateHubStats('monthly', null)">Monthly</button>
+                  <button class="filter-btn active" data-filter="daily">Daily</button>
+                  <button class="filter-btn" data-filter="weekly">Weekly</button>
+                  <button class="filter-btn" data-filter="monthly">Monthly</button>
                 </div>
               </div>
             </div>
@@ -327,14 +284,18 @@
           </div>
           <div class="toolbar glass-panel">
             <div class="filters-group modern-filter-row">
+              <div class="filter-pill"><i class="fa-solid fa-user-tie"></i><select id="hub-filter-recruiter"><option value="">All Recruiters</option></select><i class="fa-solid fa-chevron-down dropdown-arrow"></i></div>
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="hub-search-input" placeholder="Search Candidate..."></div>
             </div>
           </div>
           <div class="table-container glass-panel">
             <div class="table-wrapper">
-              <table class="modern-table" id="hub-table"><thead id="hub-table-head"></thead><tbody id="hub-table-body"></tbody></table>
+              <table class="modern-table" id="hub-table">
+                <thead id="hub-table-head"></thead>
+                <tbody id="hub-table-body"></tbody>
+              </table>
             </div>
-            <div class="footer-count"><small id="hub-footer-count">Showing records</small></div>
+            <div class="footer-count"><small id="hub-footer-count">Showing all records</small></div>
           </div>
         </div>
 
@@ -342,9 +303,7 @@
           <div class="toolbar glass-panel">
             <div class="left-actions">
               <button id="btn-add-employee" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i> Insert Row</button>
-              <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="emp-selected-count">0</span>)
-              </button>
+              <button id="btn-delete-employee" class="btn btn-danger" style="display: none;"><i class="fa-solid fa-trash-can"></i> Delete (<span id="emp-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="emp-search-input" placeholder="Search Employee..."></div>
@@ -352,9 +311,12 @@
           </div>
           <div class="table-container glass-panel">
             <div class="table-wrapper">
-              <table class="modern-table" id="employee-table"><thead id="employee-table-head"></thead><tbody id="employee-table-body"></tbody></table>
+              <table class="modern-table" id="employee-table">
+                <thead id="employee-table-head"></thead>
+                <tbody id="employee-table-body"></tbody>
+              </table>
             </div>
-            <div class="footer-count"><small id="emp-footer-count">Showing records</small></div>
+            <div class="footer-count"><small id="emp-footer-count">Showing all records</small></div>
           </div>
         </div>
 
@@ -362,9 +324,7 @@
           <div class="toolbar glass-panel">
             <div class="left-actions">
               <button id="btn-add-onboarding" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i> Insert Row</button>
-              <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="onboarding-selected-count">0</span>)
-              </button>
+              <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;"><i class="fa-solid fa-trash-can"></i> Delete (<span id="onboarding-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="onb-search-input" placeholder="Search Name..."></div>
@@ -372,19 +332,22 @@
           </div>
           <div class="table-container glass-panel">
             <div class="table-wrapper">
-              <table class="modern-table" id="onboarding-table"><thead id="onboarding-table-head"></thead><tbody id="onboarding-table-body"></tbody></table>
+              <table class="modern-table" id="onboarding-table">
+                <thead id="onboarding-table-head"></thead>
+                <tbody id="onboarding-table-body"></tbody>
+              </table>
             </div>
-            <div class="footer-count"><small id="onb-footer-count">Showing records</small></div>
+            <div class="footer-count"><small id="onb-footer-count">Showing all records</small></div>
           </div>
         </div>
 
         <div id="view-settings" class="content-view">
           <h2 style="margin-bottom: 20px; color: var(--primary);">Settings</h2>
           <div class="glass-panel setting-card">
-            <h3>Appearance</h3>
-            <div class="setting-item">
-              <h4>Dark Mode</h4>
-              <label class="switch"><input type="checkbox" id="setting-theme-toggle" checked onchange="handleSettingsTheme(this)"><span class="slider round"></span></label>
+            <h3><i class="fa-solid fa-database"></i> Data Management</h3>
+            <div class="setting-actions" style="display:flex; flex-direction:column; gap:10px;">
+              <button class="btn btn-primary btn-block" onclick="exportData()"><i class="fa-solid fa-download"></i> Export CSV</button>
+              <button id="btn-seed-data" class="btn btn-block" style="border:1px solid var(--primary); color:var(--primary); background:transparent;"><i class="fa-solid fa-database"></i> Generate Demo Data (25)</button>
             </div>
           </div>
         </div>
@@ -397,17 +360,21 @@
                 <div class="avatar-wrapper">
                   <img id="profile-main-img" src="" class="avatar-img" style="display:none;">
                   <div id="profile-main-icon" class="avatar-placeholder"><i class="fa-solid fa-user"></i></div>
+                  <div id="avatar-loading" class="avatar-loading" style="display:none;"><div class="spinner"></div></div>
                   <button class="avatar-edit-btn" onclick="triggerPhotoUpload()"><i class="fa-solid fa-camera"></i></button>
                 </div>
               </div>
               <div class="identity-info">
                 <h2 id="prof-name-display">User Name</h2>
+                <div class="role-badge" id="prof-role-display">Employee</div>
                 <p class="identity-email" id="prof-email-display-sidebar">user@nileprise.com</p>
               </div>
               <div class="identity-actions">
                 <button id="btn-delete-photo" class="btn-text-danger" onclick="deleteProfilePhoto()" style="display: none;"><i class="fa-solid fa-trash"></i> Remove Photo</button>
               </div>
-              <div class="save-container"><button class="btn btn-primary btn-block btn-lg" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></div>
+              <div class="save-container">
+                <button class="btn btn-primary btn-block btn-lg" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button>
+              </div>
             </div>
             <div class="profile-editor-card glass-panel">
               <div id="tab-personal" class="tab-content active">
@@ -433,7 +400,9 @@
 
   <div id="delete-modal" class="modal-overlay">
     <div class="glass-panel modal-box" style="max-width: 400px; text-align: center;">
-      <div class="icon-box" style="margin: 0 auto 20px; background: rgba(239,68,68,0.2); color: var(--danger); width: 60px; height: 60px; border-radius: 50%; font-size: 1.5rem; display:flex; align-items:center; justify-content:center;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+      <div class="icon-box" style="margin: 0 auto 20px; background: rgba(239,68,68,0.2); color: var(--danger); width: 60px; height: 60px; border-radius: 50%; font-size: 1.5rem; display:flex; align-items:center; justify-content:center;">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+      </div>
       <h3 style="margin-bottom: 10px;">Confirm Deletion</h3>
       <p style="color: var(--text-muted); margin-bottom: 30px;">Permanently delete <span id="del-count" style="color: #fff; font-weight: bold;">0</span> items?</p>
       <div style="display: flex; gap: 10px; justify-content: center;">
@@ -443,27 +412,20 @@
     </div>
   </div>
 
-  <div id="crm-compose-modal" class="modal-overlay" style="z-index: 3000;">
-    <div class="glass-panel modal-box compose-box">
-      <div class="compose-header"><h3>New Message</h3><div class="window-controls"><button class="btn-icon-small" onclick="closeComposeModal()"><i class="fa-solid fa-xmark"></i></button></div></div>
-      <div class="compose-body">
-        <div class="compose-field"><input type="text" id="compose-to" placeholder="To"></div>
-        <div class="compose-field"><input type="text" id="compose-subject" placeholder="Subject"></div>
-        <textarea id="compose-message" class="compose-editor" placeholder="Write your message here..."></textarea>
+  <div id="email-viewer-modal" class="modal-overlay" style="z-index: 2000;">
+    <div class="glass-panel modal-box email-box">
+      <div class="email-modal-header">
+        <h3 class="email-subject" id="viewer-subject">Loading...</h3>
+        <button class="btn-icon-small" onclick="closeEmailViewer()"><i class="fa-solid fa-times"></i></button>
       </div>
-      <div class="compose-footer">
-        <button class="btn btn-primary" onclick="sendCrmEmail()">Send <i class="fa-solid fa-paper-plane"></i></button>
-        <div class="compose-tools"><button class="btn-icon-small"><i class="fa-solid fa-paperclip"></i></button><button class="btn-icon-small"><i class="fa-solid fa-link"></i></button></div>
-        <button class="btn-icon-small text-danger" onclick="closeComposeModal()"><i class="fa-solid fa-trash"></i></button>
+      <div class="email-meta-row">
+        <div id="viewer-from" class="email-meta-item"><b>From:</b> <span>...</span></div>
+        <div id="viewer-to" class="email-meta-item"><b>To:</b> <span>...</span></div>
+        <div id="viewer-date" class="email-meta-item" style="margin-left:auto; opacity:0.7;">...</div>
       </div>
-    </div>
-  </div>
-
-  <div id="create-label-modal" class="modal-overlay" style="z-index: 3001;">
-    <div class="glass-panel modal-box">
-      <h3 class="form-title">New Label</h3>
-      <input type="text" id="new-label-name" class="compose-input" placeholder="Label Name" style="margin-bottom:20px; border-bottom:1px solid #ccc;">
-      <div class="form-actions"><button class="btn" onclick="closeCreateLabelModal()">Cancel</button><button class="btn btn-primary" onclick="createLabel()">Create</button></div>
+      <div class="email-body-wrapper">
+        <iframe id="viewer-iframe" sandbox="allow-same-origin"></iframe>
+      </div>
     </div>
   </div>
 
@@ -471,22 +433,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+
   <script src="script.js"></script>
-  <script>
-      // Toggle logic for Gmail Menu
-      function toggleGmailMenu() {
-          const menu = document.getElementById('gmail-sub-menu');
-          const icon = document.getElementById('gmail-toggle-icon');
-          if (menu.style.display === 'none') {
-              menu.style.display = 'block';
-              icon.classList.remove('fa-chevron-down');
-              icon.classList.add('fa-chevron-up');
-          } else {
-              menu.style.display = 'none';
-              icon.classList.remove('fa-chevron-up');
-              icon.classList.add('fa-chevron-down');
-          }
-      }
-  </script>
 </body>
 </html>
