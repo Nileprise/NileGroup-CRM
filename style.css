@@ -118,6 +118,37 @@ body {
 .btn-circle-refresh { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.05); color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.3s ease; }
 .btn-circle-refresh:hover { background: var(--primary); color: white; transform: rotate(180deg); box-shadow: 0 0 15px var(--primary-glow); border-color: var(--primary); }
 
+/* Insert Row Button specific style */
+.btn-insert {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  transition: transform 0.2s;
+}
+.btn-insert:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+}
+
+/* Hover Primary Utility */
+.hover-primary {
+  transition: color 0.2s;
+  color: var(--text-muted);
+}
+.hover-primary:hover {
+  color: var(--primary);
+  transform: scale(1.1);
+}
+
 /* Text Utilities */
 .text-cyan { color: var(--primary); } 
 .text-gold { color: var(--accent); } 
@@ -283,7 +314,7 @@ body.light-mode .kpi-value { background: none; -webkit-text-fill-color: var(--te
    7. TABLE STYLES (AUTO-FIT ROWS & COLUMNS)
    ======================================================== */
 .toolbar { display: flex; justify-content: space-between; margin-bottom: 20px; gap: 15px; flex-wrap: wrap; }
-.left-actions { display: flex; align-items: center; gap: 10px; }
+.left-actions { display: flex; align-items: center; gap: 15px; }
 
 /* Modern Filters */
 .modern-filter-row { display: flex; align-items: center; gap: 12px; justify-content: flex-end; flex: 1; flex-wrap: wrap; margin-bottom: 15px; }
@@ -293,34 +324,172 @@ body.light-mode .kpi-value { background: none; -webkit-text-fill-color: var(--te
 .filter-pill select { -webkit-appearance: none; -moz-appearance: none; appearance: none; background-image: none !important; background-color: transparent !important; padding-right: 30px !important; position: relative; z-index: 2; width: 100%; cursor: pointer; }
 .dropdown-arrow { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted); font-size: 0.75rem; z-index: 1; }
 
-.status-toggles { display: flex; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 30px; border: 1px solid var(--glass-border); }
-.btn-toggle { background: transparent; border: none; color: var(--text-muted); padding: 6px 15px; border-radius: 20px; font-size: 0.85rem; cursor: pointer; transition: 0.3s; }
-.btn-toggle.active { background: var(--primary); color: white; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+/* Gray Toggle Pill Container */
+.status-toggles {
+  display: flex;
+  background: rgba(255, 255, 255, 0.1); /* Light gray transparent */
+  padding: 4px;
+  border-radius: 30px;
+  border: 1px solid var(--glass-border);
+}
+
+/* Toggle buttons */
+.btn-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted); /* Light gray text */
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+.btn-toggle:hover {
+  color: var(--text-main);
+}
+.btn-toggle.active {
+  background: var(--primary);
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
 
 /* Table Setup - Auto Fit */
 .table-container { flex: 1; background: transparent; border: none; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 0; min-height: 0; position: relative; z-index: 1; box-shadow: none; }
-.table-wrapper { flex: 1; overflow: auto; position: relative; scrollbar-width: thin; scrollbar-color: var(--primary) rgba(0,0,0,0.1); padding-right: 5px; }
 
-.modern-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0 6px; table-layout: auto; }
-.modern-table thead tr { background: transparent !important; box-shadow: none !important; }
-.modern-table th { text-transform: uppercase; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; color: var(--text-muted); background: var(--bg-app) !important; padding: 12px 15px; border: none; border-right: 1px solid var(--glass-border); position: sticky; top: 0; z-index: 100; text-align: left; white-space: nowrap; }
+/* 1. Ensure the wrapper allows scrolling */
+.table-wrapper {
+  flex: 1;
+  overflow: auto; /* Enables scrollbars for both directions */
+  position: relative;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable; 
+  padding-right: 5px;
+  max-width: 100%;
+}
+
+.modern-table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; }
+
+/* 2. GENERAL STICKY HEADER (Top Row) */
+.modern-table th {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 100;
+  background: var(--bg-sidebar) !important; 
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding: 12px 15px;
+  border-bottom: 2px solid var(--glass-border); 
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); 
+  white-space: nowrap;
+  
+  /* Resizing Logic */
+  resize: horizontal; 
+  overflow: auto;
+  min-width: 100px;
+}
+
+/* 3. STICKY FIRST COLUMN (Left Side) */
+.modern-table td:first-child {
+  position: sticky !important;
+  left: 0 !important;
+  z-index: 101; 
+  background: var(--bg-sidebar) !important;
+  border-right: 1px solid var(--glass-border);
+}
+
+/* 4. THE "SUPER STICKY" CORNER (Add Column Header) */
+.modern-table th:first-child {
+  position: sticky !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 105 !important;
+  background: var(--bg-sidebar) !important;
+  border-right: 1px solid var(--glass-border);
+  border-bottom: 2px solid var(--glass-border);
+}
+
+/* Row Styling */
 .modern-table tbody tr { transition: transform 0.2s, box-shadow 0.2s; position: relative; }
 .modern-table tbody tr:hover { transform: translateY(-2px); z-index: 50; }
 .modern-table td { padding: 8px 15px; height: 45px; text-align: left; white-space: nowrap; background: var(--glass-bg); vertical-align: middle; border-top: 1px solid var(--glass-border); border-bottom: 1px solid var(--glass-border); border-right: 1px solid var(--glass-border); color: var(--text-main); font-size: 0.9rem; }
-.modern-table td:first-child { border-left: 1px solid var(--glass-border); border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
-.modern-table td:last-child { border-right: 1px solid var(--glass-border); border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
 .modern-table tbody tr:hover td { border-color: rgba(255, 255, 255, 0.3); background: var(--glass-bg); }
 .selected-row td { background: rgba(6, 182, 212, 0.15) !important; border-color: var(--primary) !important; }
 
-/* Sticky Columns */
-#candidates-table th:nth-child(2), #candidates-table td:nth-child(2) { width: 40px; left: 0; position: sticky; z-index: 20; background: var(--bg-app); text-align: center; }
+/* Alignment Icons */
+.align-icon {
+  margin-left: 8px;
+  font-size: 0.8rem;
+  opacity: 0.3;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.align-icon:hover {
+  opacity: 1;
+  color: var(--primary);
+  transform: scale(1.2);
+}
+.align-icon.active { 
+  opacity: 1; 
+  color: var(--primary); 
+}
 
 .footer-count { padding: 15px 20px; font-size: 0.85rem; color: var(--text-muted); background: var(--glass-bg); border-radius: 12px; margin-top: 10px; display: flex; justify-content: space-between; border: 1px solid var(--glass-border); }
 
-/* Inputs in Table */
-.inline-input-active { width: 90%; height: 34px; background: var(--bg-app) !important; color: #fff !important; border: 1px solid var(--primary); padding: 0 10px; border-radius: 6px; font-size: 0.85rem; box-shadow: 0 0 10px var(--primary-glow); }
-.date-input-modern { background: rgba(255,255,255,0.05); border: 1px solid transparent; color: var(--text-main); border-radius: 6px; padding: 4px; font-size: 0.85rem; width: 100%; cursor: pointer; text-align: center; }
-.status-select { height: 30px; border-radius: 6px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 0 10px; font-weight: 800; border: none; }
+/* --- UPDATED TABLE INPUT STYLES --- */
+.inline-input-active {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app) !important; 
+  color: var(--text-main) !important; 
+  border: 2px solid var(--primary);
+  padding: 0 10px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  position: relative; 
+  z-index: 1000; 
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+  outline: none;
+}
+
+.date-input-modern {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-main); 
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 0.85rem;
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+.date-input-modern:focus {
+  background: var(--bg-app);
+  border-color: var(--primary);
+  color: var(--text-main);
+  outline: none;
+  box-shadow: 0 0 10px var(--primary-glow);
+}
+
+.status-select {
+  height: 30px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 10px;
+  font-weight: 800;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-sidebar); 
+  color: var(--text-main);       
+  cursor: pointer;
+}
 .status-select.active { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
 .status-select.inactive { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
 
@@ -346,8 +515,10 @@ body.light-mode .kpi-value { background: none; -webkit-text-fill-color: var(--te
 
 /* --- STATUS BADGES --- */
 .status-badge { padding: 5px 12px; border-radius: 6px; font-weight: 800; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; transition: all 0.2s; width: 100px; justify-content: space-between; }
-.status-badge.active { background: rgba(239, 68, 68, 0.15); color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
-.status-badge.inactive { background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); }
+/* Active = Green */
+.status-badge.active { background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); }
+/* Inactive = Red */
+.status-badge.inactive { background: rgba(239, 68, 68, 0.15); color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
 
 /* --- ACTION DROPDOWN MENU --- */
 .action-dropdown-container { position: relative; }
