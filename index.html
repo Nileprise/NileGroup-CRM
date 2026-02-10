@@ -124,14 +124,17 @@
               <button class="nav-item" onclick="renderGmailList('Sent', this)">
                   <span class="material-icons" style="font-size: 18px;">send</span> <span>Sent</span>
               </button>
+              <button class="nav-item" onclick="renderGmailList('Drafts', this)">
+                  <span class="material-icons" style="font-size: 18px;">drafts</span> <span>Drafts</span>
+              </button>
              
               <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
                   <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
               </div>
               <div id="categories-submenu" style="display: none; padding-left: 15px;">
-                  <button class="nav-item" onclick="renderGmailList('category:social')"><small>Social</small></button>
-                  <button class="nav-item" onclick="renderGmailList('category:updates')"><small>Updates</small></button>
-                  <button class="nav-item" onclick="renderGmailList('category:promotions')"><small>Promotions</small></button>
+                  <button class="nav-item" onclick="renderGmailList('Social')"><small>Social</small></button>
+                  <button class="nav-item" onclick="renderGmailList('Updates')"><small>Updates</small></button>
+                  <button class="nav-item" onclick="renderGmailList('Promotions')"><small>Promotions</small></button>
               </div>
 
               <div class="nav-item" onclick="toggleMore()" id="more-btn" style="font-size: 0.9rem; opacity: 0.8;">
