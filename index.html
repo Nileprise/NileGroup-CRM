@@ -99,12 +99,12 @@
     </section>
 
     <section id="dashboard-screen" class="screen">
-      
+     
       <aside class="sidebar glass-panel" id="sidebar">
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">PRISE</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
           <button class="nav-item active" data-target="view-dashboard"><i class="fa-solid fa-chart-pie"></i> <span>Overview</span></button>
-          
+         
           <div class="nav-item" style="cursor: pointer;" onclick="toggleGmailMenu()">
               <i class="fa-brands fa-google"></i>
               <span>Gmail</span>
@@ -124,7 +124,7 @@
               <button class="nav-item" onclick="renderGmailList('Sent', this)">
                   <span class="material-icons" style="font-size: 18px;">send</span> <span>Sent</span>
               </button>
-              
+             
               <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
                   <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
               </div>
@@ -145,7 +145,7 @@
                       <small>Create label</small>
                   </div>
               </div>
-              
+             
               <div style="margin-top: 15px; padding-left: 5px; color: gray; font-size: 10px; font-weight: bold; display:flex; justify-content:space-between; padding-right:10px;">
                   <span>LABELS</span>
                   <span id="manage-indicator" style="display:none; color:var(--danger); cursor:pointer;" onclick="toggleManageMode()">Done</span>
@@ -169,7 +169,7 @@
       </aside>
 
       <main class="main-content">
-        
+       
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
           <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
@@ -200,10 +200,10 @@
                 <h1 id="stat-total" class="kpi-value">0</h1>
                 <div class="kpi-subtext">
                   <span class="text-success" style="margin-right: 15px;">
-                    <i class="fa-solid fa-circle-check"></i> <span id="stat-active">0</span> Active
+                     <span id="stat-active">0</span> Active
                   </span>
                   <span class="text-danger">
-                    <i class="fa-solid fa-circle-xmark"></i> <span id="stat-inactive">0</span> Inactive
+                     <span id="stat-inactive">0</span> Inactive
                   </span>
                 </div>
               </div>
@@ -284,13 +284,18 @@
         <div id="view-candidates" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
+              <button class="btn-insert" onclick="createNewRow('candidates')">
+                <i class="fa-solid fa-plus"></i> Insert Row
+              </button>
+              
               <div class="status-toggles">
                 <button class="btn-toggle active" data-status="">All</button>
                 <button class="btn-toggle" data-status="Active">Active</button>
                 <button class="btn-toggle" data-status="Inactive">Inactive</button>
               </div>
+          
               <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="selected-count">0</span>)
+                <i class="fa-solid fa-trash-can"></i> (<span id="selected-count">0</span>)
               </button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -311,9 +316,12 @@
         <div id="view-placements" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <h3 style="margin:0; margin-right: 15px; color:var(--text-main);"><i class="fa-solid fa-trophy text-gold"></i> Placement Board</h3>
+              <button class="btn-insert" onclick="manualAddPlacement()">
+                <i class="fa-solid fa-plus"></i> Insert Row
+              </button>
+          
               <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="place-selected-count">0</span>)
+                <i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)
               </button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -363,6 +371,15 @@
             </div>
           </div>
           <div class="toolbar glass-panel">
+            <div class="left-actions">
+              <button class="btn-insert" onclick="createNewRow('candidates')">
+                <i class="fa-solid fa-plus"></i> Insert Row
+              </button>
+              
+              <button id="btn-delete-hub" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('hub')">
+                <i class="fa-solid fa-trash-can"></i> (<span id="hub-selected-count">0</span>)
+              </button>
+            </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="hub-search-input" placeholder="Search Candidate..."></div>
             </div>
@@ -378,8 +395,12 @@
         <div id="view-employees" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
+              <button class="btn-insert" onclick="createNewRow('employees')">
+                <i class="fa-solid fa-plus"></i> Insert Row
+              </button>
+              
               <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="emp-selected-count">0</span>)
+                <i class="fa-solid fa-trash-can"></i> (<span id="emp-selected-count">0</span>)
               </button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -397,8 +418,12 @@
         <div id="view-onboarding" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
+              <button class="btn-insert" onclick="createNewRow('onboarding')">
+                <i class="fa-solid fa-plus"></i> Insert Row
+              </button>
+          
               <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')">
-                  <i class="fa-solid fa-trash-can"></i> Delete (<span id="onboarding-selected-count">0</span>)
+                <i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)
               </button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -515,7 +540,7 @@
   <div id="add-column-modal" class="modal-overlay">
     <div class="glass-panel modal-box">
       <h3 style="margin-bottom: 15px; color: var(--text-main);">Add New Column</h3>
-      
+     
       <div class="input-group-modern">
         <label>Column Name</label>
         <input type="text" id="new-col-name" class="modal-input" placeholder="e.g. Visa Status, Skype ID">
