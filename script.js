@@ -50,7 +50,7 @@ const DEFAULT_LABELS = [
 ];
 
 const state = {
-    user: null, userRole: null, currentUserName: null,
+    user: null, userRole: null, currentUserName: null, userProfileId: null,
     candidates: [], onboarding: [], employees: [],
     
     // Labels State
@@ -96,6 +96,15 @@ const state = {
 let recChartInstance = null;
 let techChartInstance = null;
 
+// Debounce Utility for Auto-Save
+let debounceTimer;
+function debounce(func, delay) {
+    return (...args) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => func.apply(this, args), delay);
+    };
+}
+
 /* ==========================================================================
    3. INITIALIZATION
    ========================================================================== */
@@ -105,6 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupFilterListeners();
     loadGoogleScripts(); 
     renderLabels(); 
+    setupProfileAutoSave(); 
     
     auth.onAuthStateChanged(user => {
         if (user) {
@@ -118,6 +128,9 @@ document.addEventListener('DOMContentLoaded', () => {
             initRealtimeListeners();
             startAutoLogoutTimer();
             checkGmailAuth(); 
+            
+            // Load Profile Data
+            loadCurrentUserProfile(user.email);
         } else {
             switchScreen('auth');
             stopAutoLogoutTimer();
@@ -199,12 +212,31 @@ function setupUIListeners() {
             localStorage.setItem('np_theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
         };
     }
+
+    // Logout Functionality
+    const logoutBtn = document.getElementById('btn-logout');
+    if (logoutBtn) {
+        logoutBtn.onclick = () => {
+            if (confirm("Are you sure you want to logout?")) {
+                firebase.auth().signOut().then(() => showToast("Logged out"));
+            }
+        };
+    }
 }
 
 function setupFilterListeners() {
-    document.getElementById('search-input').addEventListener('input', (e) => { state.filters.text = e.target.value.toLowerCase(); renderCandidateTable(); });
-    document.getElementById('filter-recruiter').addEventListener('change', (e) => { state.filters.recruiter = e.target.value; renderCandidateTable(); });
-    document.getElementById('filter-tech').addEventListener('change', (e) => { state.filters.tech = e.target.value; renderCandidateTable(); });
+    document.getElementById('search-input').addEventListener('input', (e) => {
+        state.filters.text = e.target.value.toLowerCase();
+        renderCandidateTable();
+    });
+    document.getElementById('filter-recruiter').addEventListener('change', (e) => {
+        state.filters.recruiter = e.target.value;
+        renderCandidateTable();
+    });
+    document.getElementById('filter-tech').addEventListener('change', (e) => {
+        state.filters.tech = e.target.value;
+        renderCandidateTable();
+    });
 
     const toggles = document.querySelectorAll('.btn-toggle');
     toggles.forEach(btn => {
@@ -227,17 +259,50 @@ function setupFilterListeners() {
         showToast("Filters reset");
     });
 
-    document.getElementById('hub-search-input').addEventListener('input', (e) => { state.hubFilters.text = e.target.value.toLowerCase(); renderHubTable(); });
-    document.getElementById('emp-search-input').addEventListener('input', (e) => { state.empFilters.text = e.target.value.toLowerCase(); renderEmployeeTable(); });
-    document.getElementById('onb-search-input').addEventListener('input', (e) => { state.onbFilters.text = e.target.value.toLowerCase(); renderOnboardingTable(); });
+    document.getElementById('hub-search-input').addEventListener('input', (e) => {
+        state.hubFilters.text = e.target.value.toLowerCase();
+        renderHubTable();
+    });
+    document.getElementById('emp-search-input').addEventListener('input', (e) => {
+        state.empFilters.text = e.target.value.toLowerCase();
+        renderEmployeeTable();
+    });
+    document.getElementById('onb-search-input').addEventListener('input', (e) => {
+        state.onbFilters.text = e.target.value.toLowerCase();
+        renderOnboardingTable();
+    });
 
     const gSearch = document.getElementById('gmail-search-input');
-    if(gSearch) { gSearch.addEventListener('keydown', (e) => { if(e.key === 'Enter') renderGmailList(state.gmail.currentLabel); }); }
+    if(gSearch) {
+        gSearch.addEventListener('keydown', (e) => {
+            if(e.key === 'Enter') {
+                renderGmailList(state.gmail.currentLabel); 
+            }
+        });
+    }
 }
 
 /* ==========================================================================
-   5. LABEL MANAGEMENT LOGIC
+   5. LABEL MANAGEMENT
    ========================================================================== */
+window.fetchGmailLabels = async () => {
+    if (!gapi.client.getToken()) return;
+    try {
+        const response = await gapi.client.gmail.users.labels.list({ 'userId': 'me' });
+        const allLabels = response.result.labels;
+        const userLabels = allLabels.filter(l => l.type === 'user');
+        const fetchedLabels = userLabels.map(l => ({
+            name: l.name,
+            id: l.id,
+            color: (l.color && l.color.backgroundColor) ? l.color.backgroundColor : '#607d8b',
+            type: 'api' 
+        }));
+        if (fetchedLabels.length > 0) { state.labels = fetchedLabels; } 
+        else { state.labels = [...DEFAULT_LABELS]; }
+        renderLabels();
+    } catch (e) { console.error("Error fetching labels:", e); }
+};
+
 window.renderLabels = () => {
     const container = document.getElementById('dynamic-labels-container');
     if(!container) return;
@@ -252,11 +317,13 @@ window.renderLabels = () => {
         const indent = isSub ? 'padding-left: 20px;' : '';
 
         div.innerHTML = `
-            <div class="label-left" style="${indent}" onclick="renderGmailList('${l.name}')">
+            <div class="label-left" style="${indent}" onclick="renderGmailList('${l.id || l.name}')">
                 <span class="material-icons" style="color: ${l.color}; font-size:16px;">label</span>
                 <span id="label-text-${index}" class="label-text" title="${l.name}">${displayName}</span>
             </div>
-            <div class="label-more-btn" id="btn-more-${index}" onclick="event.stopPropagation(); toggleLabelMenu(${index})"><span class="material-icons" style="font-size: 16px;">more_horiz</span></div>
+            <div class="label-more-btn" id="btn-more-${index}" onclick="event.stopPropagation(); toggleLabelMenu(${index})">
+                <span class="material-icons" style="font-size: 16px;">more_horiz</span>
+            </div>
             <div id="label-menu-${index}" class="label-dropdown" onclick="event.stopPropagation()">
                 <div style="font-size: 10px; color: grey; padding-left: 8px;">LABEL COLOR</div>
                 <div class="label-color-grid">
@@ -268,7 +335,10 @@ window.renderLabels = () => {
                     <div class="color-swatch" style="background:#ff9800" onclick="updateLabelColor(${index}, '#ff9800')"></div>
                     <div class="color-swatch" style="background:#f44336" onclick="updateLabelColor(${index}, '#f44336')"></div>
                     <div class="color-swatch" style="background:#607d8b" onclick="updateLabelColor(${index}, '#607d8b')"></div>
-                    <label class="color-swatch custom-add" title="Custom Color"><input type="color" style="opacity:0; width:100%; height:100%; cursor:pointer;" onchange="updateLabelColor(${index}, this.value)"><i class="fa-solid fa-plus"></i></label>
+                    <label class="color-swatch custom-add" title="Custom Color">
+                        <input type="color" style="opacity:0; width:100%; height:100%; cursor:pointer;" onchange="updateLabelColor(${index}, this.value)">
+                        <i class="fa-solid fa-plus"></i>
+                    </label>
                 </div>
                 <div class="label-menu-item" onclick="triggerLabelEdit(${index})"><i class="fa-solid fa-pen"></i> Edit Name</div>
                 <div class="label-menu-item" onclick="triggerSubLabel(${index})"><i class="fa-solid fa-code-branch"></i> Add Sub-label</div>
@@ -317,34 +387,56 @@ function loadGoogleScripts() {
     s1.onload = () => gapi.load('client', async () => { try { await gapi.client.init({ apiKey: G_API_KEY, discoveryDocs: [G_DISCOVERY_DOC] }); state.gmail.gapiInited = true; checkGmailAuth(); } catch(e) { console.error(e); } });
     document.body.appendChild(s1);
     const s2 = document.createElement('script'); s2.src = "https://accounts.google.com/gsi/client";
-    s2.onload = () => { state.gmail.tokenClient = google.accounts.oauth2.initTokenClient({ client_id: G_CLIENT_ID, scope: G_SCOPES, callback: (resp) => { if(resp.error) return; updateGmailUI(true); renderGmailList(); } }); state.gmail.gisInited = true; checkGmailAuth(); };
+    s2.onload = () => { state.gmail.tokenClient = google.accounts.oauth2.initTokenClient({ client_id: G_CLIENT_ID, scope: G_SCOPES, callback: (resp) => { if(resp.error) return; updateGmailUI(true); renderGmailList('INBOX'); fetchGmailLabels(); } }); state.gmail.gisInited = true; checkGmailAuth(); };
     document.body.appendChild(s2);
 }
-function checkGmailAuth() { if (state.gmail.gapiInited && state.gmail.gisInited && gapi.client.getToken()) updateGmailUI(true); }
+function checkGmailAuth() { if (state.gmail.gapiInited && state.gmail.gisInited && gapi.client.getToken()) { updateGmailUI(true); fetchGmailLabels(); } }
 function updateGmailUI(isSignedIn) { const btnAuth = document.getElementById('btn-gmail-auth'); const btnSignout = document.getElementById('btn-gmail-signout'); if(btnAuth) btnAuth.style.display = isSignedIn ? 'none' : 'inline-flex'; if(btnSignout) btnSignout.style.display = isSignedIn ? 'inline-flex' : 'none'; }
 if(document.getElementById('btn-gmail-auth')) document.getElementById('btn-gmail-auth').onclick = () => state.gmail.tokenClient.requestAccessToken({prompt: ''});
 if(document.getElementById('btn-gmail-signout')) document.getElementById('btn-gmail-signout').onclick = () => { const t = gapi.client.getToken(); if(t) google.accounts.oauth2.revoke(t.access_token); gapi.client.setToken(''); updateGmailUI(false); document.getElementById('gmail-rows-container').innerHTML = ''; };
 
 window.renderGmailList = async (label = 'Inbox', navElement = null) => {
-    state.gmail.currentLabel = label;
+    const labelMap = { 
+        'Inbox': 'INBOX', 'Sent': 'SENT', 'Drafts': 'DRAFT', 'Trash': 'TRASH', 'Spam': 'SPAM', 
+        'Starred': 'STARRED', 'Important': 'IMPORTANT', 
+        'Social': 'CATEGORY_SOCIAL', 'Updates': 'CATEGORY_UPDATES', 'Promotions': 'CATEGORY_PROMOTIONS' 
+    };
+    const apiLabelId = labelMap[label] || label;
+    state.gmail.currentLabel = apiLabelId;
     document.getElementById('gmail-list-view').style.display = 'flex';
     document.getElementById('gmail-detail-view').style.display = 'none';
     const container = document.getElementById('gmail-rows-container');
     container.innerHTML = '<div style="padding:20px; text-align:center; color:#ccc;">Loading...</div>';
-    if (!gapi.client.getToken()) { container.innerHTML = ''; if(document.getElementById('gmail-empty')) document.getElementById('gmail-empty').style.display = 'block'; return; }
+    
+    if (!gapi.client.getToken()) { 
+        container.innerHTML = ''; 
+        if(document.getElementById('gmail-empty')) document.getElementById('gmail-empty').style.display = 'block'; 
+        return; 
+    }
     document.getElementById('gmail-empty').style.display = 'none';
+    
     try {
         let request = { 'userId': 'me', 'maxResults': 20 };
         const qInput = document.getElementById('gmail-search-input');
-        if (qInput && qInput.value && document.activeElement === qInput) request.q = qInput.value;
-        else if (['Inbox','Sent','Starred','Important','Trash','Spam'].includes(label)) request.labelIds = [label.toUpperCase()];
-        else if (label.startsWith('category:')) request.q = `category:${label.replace('category:', '')}`;
-        else request.q = `label:${label}`; 
+        if (qInput && qInput.value && document.activeElement === qInput) { 
+            request.q = qInput.value; 
+        } else { 
+            request.labelIds = [apiLabelId]; 
+        }
+        
         const resp = await gapi.client.gmail.users.messages.list(request);
         const messages = resp.result.messages;
         container.innerHTML = ''; 
-        if (!messages || messages.length === 0) { container.innerHTML = '<div style="padding:40px; text-align:center; color:#94a3b8;">No emails found.</div>'; return; }
-        const batch = messages.map(msg => gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': msg.id, 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date'] }));
+        
+        if (!messages || messages.length === 0) { 
+            container.innerHTML = '<div style="padding:40px; text-align:center; color:#94a3b8;">No emails found.</div>'; 
+            return; 
+        }
+        
+        const batch = messages.map(msg => gapi.client.gmail.users.messages.get({ 
+            'userId': 'me', 'id': msg.id, 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date'] 
+        }));
+        
         const results = await Promise.all(batch);
         results.forEach(r => {
             const email = r.result;
@@ -355,13 +447,23 @@ window.renderGmailList = async (label = 'Inbox', navElement = null) => {
             const date = new Date(Number(email.internalDate)).toLocaleDateString();
             const snippet = email.snippet;
             const isUnread = email.labelIds.includes('UNREAD');
+            
             const div = document.createElement('div');
             div.className = `gmail-row ${isUnread ? 'unread' : 'read'}`;
             div.onclick = () => openGmailDetail(email.id);
-            div.innerHTML = `<div onclick="event.stopPropagation()"><input type="checkbox" class="gmail-checkbox"></div><div><span class="material-icons star-icon">star_border</span></div><div class="row-sender">${fromName}</div><div class="row-subject">${subject} <span style="color:var(--text-muted); margin-left:5px; font-weight:normal;"> - ${snippet.substring(0, 40)}...</span></div><div class="email-date">${date}</div>`;
+            div.innerHTML = `
+                <div onclick="event.stopPropagation()"><input type="checkbox" class="gmail-checkbox"></div>
+                <div><span class="material-icons star-icon">star_border</span></div>
+                <div class="row-sender">${fromName}</div>
+                <div class="row-subject">${subject} <span style="color:var(--text-muted); margin-left:5px; font-weight:normal;"> - ${snippet.substring(0, 40)}...</span></div>
+                <div class="email-date">${date}</div>
+            `;
             container.appendChild(div);
         });
-    } catch (err) { console.error("Gmail Error:", err); container.innerHTML = `<div style="padding:20px; color:#ef4444;">Error loading emails. (Check Console)</div>`; }
+    } catch (err) { 
+        console.error("Gmail Error:", err); 
+        container.innerHTML = `<div style="padding:20px; color:#ef4444;">Error loading emails. (Check Console)</div>`; 
+    }
 };
 
 window.openGmailDetail = async (id) => {
@@ -377,11 +479,32 @@ window.openGmailDetail = async (id) => {
         document.getElementById('detail-sender').innerText = headers.find(h => h.name === 'From')?.value || '';
         document.getElementById('detail-date').innerText = new Date(Number(email.internalDate)).toLocaleString();
         let body = "";
-        const findBody = (parts) => { if(!parts) return null; let htmlPart = parts.find(p => p.mimeType === 'text/html'); if(htmlPart) return htmlPart.body.data; let textPart = parts.find(p => p.mimeType === 'text/plain'); if(textPart) return textPart.body.data; for(let part of parts) { if(part.parts) { const res = findBody(part.parts); if(res) return res; } } return null; }
+        const findBody = (parts) => { 
+            if(!parts) return null; 
+            let htmlPart = parts.find(p => p.mimeType === 'text/html'); 
+            if(htmlPart) return htmlPart.body.data; 
+            let textPart = parts.find(p => p.mimeType === 'text/plain'); 
+            if(textPart) return textPart.body.data; 
+            for(let part of parts) { 
+                if(part.parts) { 
+                    const res = findBody(part.parts); 
+                    if(res) return res; 
+                } 
+            } 
+            return null; 
+        }
         body = email.payload.body.data ? email.payload.body.data : findBody(email.payload.parts);
-        if(body) { const decoded = atob(body.replace(/-/g, '+').replace(/_/g, '/')); document.getElementById('detail-message').innerHTML = decoded; } else { document.getElementById('detail-message').innerHTML = "<i>[Message body empty]</i>"; }
-    } catch (err) { document.getElementById('detail-message').innerText = "Error loading content."; }
+        if(body) { 
+            const decoded = atob(body.replace(/-/g, '+').replace(/_/g, '/')); 
+            document.getElementById('detail-message').innerHTML = decoded; 
+        } else { 
+            document.getElementById('detail-message').innerHTML = "<i>[Message body empty]</i>"; 
+        }
+    } catch (err) { 
+        document.getElementById('detail-message').innerText = "Error loading content."; 
+    }
 };
+
 window.backToGmailList = () => { document.getElementById('gmail-detail-view').style.display = 'none'; document.getElementById('gmail-list-view').style.display = 'flex'; };
 window.refreshEmails = () => renderGmailList(state.gmail.currentLabel);
 window.handleGmailSearch = (q) => { };
@@ -389,16 +512,13 @@ window.syncCurrentEmailToCandidate = async () => { if(!state.gmail.currentEmailI
 window.toggleCategories = () => { const sub = document.getElementById('categories-submenu'); if (sub.style.display === 'none') sub.style.display = 'block'; else sub.style.display = 'none'; };
 window.toggleMore = () => { const sub = document.getElementById('more-submenu'); if (sub.style.display === 'none') sub.style.display = 'block'; else sub.style.display = 'none'; };
 
-/* ==========================================================================
-   7. COMPOSE & SEND
-   ========================================================================== */
 function createMimeMessage(to, subject, body) { const email = [`To: ${to}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/html; charset=utf-8", "", body].join("\n"); return btoa(unescape(encodeURIComponent(email))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 window.openComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'flex'; };
 window.closeComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'none'; };
 window.sendCrmEmail = async () => { const to = document.getElementById('compose-to').value.trim(); const subject = document.getElementById('compose-subject').value; const body = document.getElementById('compose-message').value; if(!to || !subject) return showToast("Recipient and Subject required"); const sendBtn = document.querySelector('.compose-footer .btn-primary'); const originalText = sendBtn.innerHTML; sendBtn.innerHTML = 'Sending...'; sendBtn.disabled = true; try { if (!state.gmail.gapiInited || !gapi.client.getToken()) throw new Error("Gmail not connected."); const raw = createMimeMessage(to, subject, body.replace(/\n/g, '<br>')); await gapi.client.gmail.users.messages.send({ 'userId': 'me', 'resource': { 'raw': raw } }); showToast("Email Sent!"); closeComposeModal(); const candidate = state.candidates.find(c => (c.gmail && c.gmail.includes(to)) || (c.email && c.email.includes(to))); if(candidate) { let logs = candidate.submissionLog || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: subject, type: 'Outbound Email', tech: candidate.tech||'General', recruiter: state.currentUserName, timestamp: Date.now() }); await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs }); showToast("Logged to Hub"); } document.getElementById('compose-to').value = ''; document.getElementById('compose-subject').value = ''; document.getElementById('compose-message').value = ''; } catch (err) { showToast("Send Failed: " + err.message); } finally { sendBtn.innerHTML = originalText; sendBtn.disabled = false; } };
 
 /* ==========================================================================
-   8. REALTIME LISTENERS & DROPDOWN HELPERS
+   8. REALTIME LISTENERS & DROPDOWNS
    ========================================================================== */
 function initRealtimeListeners() {
     db.collection('candidates').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
@@ -421,83 +541,21 @@ function initRealtimeListeners() {
 }
 
 function loadCustomColumns() { db.collection('settings').doc('table_config').onSnapshot(doc => { if(doc.exists) { const data = doc.data(); if(data.candidates) state.customColumns.candidates = data.candidates; if(data.employees) state.customColumns.employees = data.employees; if(data.onboarding) state.customColumns.onboarding = data.onboarding; if(data.placements) state.customColumns.placements = data.placements; renderCandidateTable(); renderEmployeeTable(); renderOnboardingTable(); renderPlacementTable(); } }); }
+function renderDropdowns() { const ids = ['filter-recruiter', 'filter-tech']; ids.forEach(id => { const el = document.getElementById(id); if(!el) return; const currentVal = el.value; let opts = ""; if(id.includes('tech')) opts = state.metadata.techs.map(t => `<option value="${t}">${t}</option>`).join(''); else opts = state.metadata.recruiters.map(r => `<option value="${r.value}">${r.display}</option>`).join(''); el.innerHTML = `<option value="">${id.includes('tech')?"All Tech":"All Recruiters"}</option>${opts}`; el.value = currentVal; }); }
 
-function renderDropdowns() {
-    const ids = ['filter-recruiter', 'filter-tech'];
-    ids.forEach(id => {
-        const el = document.getElementById(id); if(!el) return;
-        const currentVal = el.value;
-        let opts = "";
-        if(id.includes('tech')) opts = state.metadata.techs.map(t => `<option value="${t}">${t}</option>`).join('');
-        else opts = state.metadata.recruiters.map(r => `<option value="${r.value}">${r.display}</option>`).join('');
-        el.innerHTML = `<option value="">${id.includes('tech')?"All Tech":"All Recruiters"}</option>${opts}`;
-        el.value = currentVal;
-    });
-}
+window.generateRecruiterDropdown = (currentVal, id, collection) => { const list = state.metadata.recruiters || []; const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`; };
+window.updateRecruiter = (id, collection, val) => { db.collection(collection).doc(id).update({ recruiter: val }).then(() => showToast("Recruiter Saved")); };
+window.generateTechDropdown = (currentVal, id, collection) => { const list = state.metadata.techs || []; if(currentVal && !list.includes(currentVal)) list.push(currentVal); list.sort(); const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`; };
+window.updateTech = (id, collection, val) => { db.collection(collection).doc(id).update({ tech: val }).then(() => showToast("Tech Saved")); };
 
-// Recruiter Dropdown Generator
-window.generateRecruiterDropdown = (currentVal, id, collection) => {
-    const list = state.metadata.recruiters || [];
-    const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join('');
-    return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`;
-};
-window.updateRecruiter = (id, collection, val) => { db.collection(collection).doc(id).update({ recruiter: val }); };
+function getFilteredData(data, filters) { let subset = data; if (state.userRole === 'Employee' && state.currentUserName) { subset = subset.filter(item => item.recruiter === state.currentUserName); } return subset.filter(item => { const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text); const matchesRec = filters.recruiter ? item.recruiter === filters.recruiter : true; const matchesTech = filters.tech ? item.tech === filters.tech : true; const matchesStatus = filters.status ? item.status === filters.status : true; return matchesText && matchesRec && matchesTech && matchesStatus; }); }
 
-// Tech Dropdown Generator
-window.generateTechDropdown = (currentVal, id, collection) => {
-    const list = state.metadata.techs || [];
-    if(currentVal && !list.includes(currentVal)) list.push(currentVal);
-    list.sort();
-    const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join('');
-    return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`;
-};
-window.updateTech = (id, collection, val) => { db.collection(collection).doc(id).update({ tech: val }); };
+function renderDashboardCharts() { const recCounts = {}; const techCounts = {}; state.candidates.forEach(c => { const r = c.recruiter || 'Unknown'; recCounts[r] = (recCounts[r] || 0) + 1; const t = c.tech || 'Other'; techCounts[t] = (techCounts[t] || 0) + 1; }); const recLabels = Object.keys(recCounts); const recData = Object.values(recCounts); const techLabels = Object.keys(techCounts); const techData = Object.values(techCounts); const ctxRec = document.getElementById('chart-recruiter'); if (ctxRec) { if (recChartInstance) recChartInstance.destroy(); recChartInstance = new Chart(ctxRec, { type: 'bar', data: { labels: recLabels, datasets: [{ label: 'Candidates', data: recData, backgroundColor: 'rgba(6, 182, 212, 0.6)', borderColor: '#06b6d4', borderWidth: 1, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } } } }); } const ctxTech = document.getElementById('chart-tech'); if (ctxTech) { if (techChartInstance) techChartInstance.destroy(); techChartInstance = new Chart(ctxTech, { type: 'doughnut', data: { labels: techLabels, datasets: [{ data: techData, backgroundColor: ['rgba(6,182,212,0.7)', 'rgba(245,158,11,0.7)', 'rgba(139,92,246,0.7)', 'rgba(34,197,94,0.7)', 'rgba(239,68,68,0.7)'], borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } } }); } }
+function updateDashboardStats() { const data = state.candidates; document.getElementById('stat-total').innerText = data.length; const activeCount = data.filter(c => c.status === 'Active').length; const inactiveCount = data.filter(c => c.status === 'Inactive').length; document.getElementById('stat-active').innerText = activeCount; document.getElementById('stat-inactive').innerText = inactiveCount; document.getElementById('stat-placed').innerText = data.filter(c => c.status === 'Placed').length; const t = new Set(data.map(c => c.tech).filter(Boolean)); document.getElementById('stat-tech').innerText = t.size; const r = new Set(data.map(c => c.recruiter).filter(Boolean)); document.getElementById('stat-rec').innerText = r.size; }
 
-function getFilteredData(data, filters) {
-    let subset = data;
-    if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName);
-    return subset.filter(item => {
-        const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text);
-        const matchesRec = filters.recruiter ? item.recruiter === filters.recruiter : true;
-        const matchesTech = filters.tech ? item.tech === filters.tech : true;
-        const matchesStatus = filters.status ? item.status === filters.status : true;
-        return matchesText && matchesRec && matchesTech && matchesStatus;
-    });
-}
-
-/* ==========================================================================
-   9. DASHBOARD CHARTS & STATS
-   ========================================================================== */
-function renderDashboardCharts() {
-    const recCounts = {}; const techCounts = {};
-    state.candidates.forEach(c => { const r = c.recruiter || 'Unknown'; recCounts[r] = (recCounts[r] || 0) + 1; const t = c.tech || 'Other'; techCounts[t] = (techCounts[t] || 0) + 1; });
-    const recLabels = Object.keys(recCounts); const recData = Object.values(recCounts);
-    const techLabels = Object.keys(techCounts); const techData = Object.values(techCounts);
-    const ctxRec = document.getElementById('chart-recruiter');
-    if (ctxRec) { if (recChartInstance) recChartInstance.destroy(); recChartInstance = new Chart(ctxRec, { type: 'bar', data: { labels: recLabels, datasets: [{ label: 'Candidates', data: recData, backgroundColor: 'rgba(6, 182, 212, 0.6)', borderColor: '#06b6d4', borderWidth: 1, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } } } }); }
-    const ctxTech = document.getElementById('chart-tech');
-    if (ctxTech) { if (techChartInstance) techChartInstance.destroy(); techChartInstance = new Chart(ctxTech, { type: 'doughnut', data: { labels: techLabels, datasets: [{ data: techData, backgroundColor: ['rgba(6,182,212,0.7)', 'rgba(245,158,11,0.7)', 'rgba(139,92,246,0.7)', 'rgba(34,197,94,0.7)', 'rgba(239,68,68,0.7)'], borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } } }); }
-}
-
-function updateDashboardStats() {
-    const data = state.candidates;
-    document.getElementById('stat-total').innerText = data.length;
-    const activeCount = data.filter(c => c.status === 'Active').length;
-    const inactiveCount = data.filter(c => c.status === 'Inactive').length;
-    const elActive = document.getElementById('stat-active');
-    const elInactive = document.getElementById('stat-inactive');
-    if(elActive) elActive.innerText = activeCount;
-    if(elInactive) elInactive.innerText = inactiveCount;
-    document.getElementById('stat-placed').innerText = data.filter(c => c.status === 'Placed').length;
-    const t = new Set(data.map(c => c.tech).filter(Boolean));
-    document.getElementById('stat-tech').innerText = t.size;
-    const r = new Set(data.map(c => c.recruiter).filter(Boolean));
-    document.getElementById('stat-rec').innerText = r.size;
-}
-
-/* ==========================================================================
-   10. ALIGNMENT LOGIC
-   ========================================================================== */
+/* ========================================================
+   10. ALIGNMENT & TABLE RENDERERS
+   ======================================================== */
 if(!state.alignments) state.alignments = { candidates: {}, employees: {}, onboarding: {}, placements: {}, hub: {} };
 window.cycleAlign = (context, index) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context][index] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context][index] = next; refreshView(context); };
 window.cycleAlignAll = (context) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context]['global'] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context]['global'] = next; for(let i=3; i<50; i++) { state.alignments[context][i] = next; } refreshView(context); showToast(`All columns aligned ${next}`); };
@@ -505,9 +563,6 @@ function refreshView(context) { if(context==='candidates') renderCandidateTable(
 function applyAlignStyles(context, tableId) { const config = state.alignments[context] || {}; const rules = Object.keys(config).map(idx => { if(idx === 'global') return ''; const val = config[idx]; if(!val || val === 'left') return ''; return `#${tableId} th:nth-child(${idx}), #${tableId} td:nth-child(${idx}) { text-align: ${val} !important; }`; }).join('\n'); let style = document.getElementById(`align-style-${context}`); if(!style) { style = document.createElement('style'); style.id = `align-style-${context}`; document.head.appendChild(style); } style.innerHTML = rules; }
 function thAlign(title, context, idx) { const dir = state.alignments[context][idx] || 'left'; const icon = dir === 'left' ? 'fa-align-left' : (dir === 'center' ? 'fa-align-center' : 'fa-align-right'); const style = dir !== 'left' ? 'color:var(--primary); opacity:1;' : ''; return `<div style="display:flex; align-items:center; justify-content:space-between; width:100%;"><span>${title}</span><i class="fa-solid ${icon} align-icon" style="${style}" onclick="event.stopPropagation(); cycleAlign('${context}', ${idx})"></i></div>`; }
 
-/* ==========================================================================
-   11. TABLE RENDERERS (Updated)
-   ========================================================================== */
 function renderCandidateTable() {
     const filtered = getFilteredData(state.candidates, state.filters);
     const tbody = document.getElementById('table-body');
@@ -515,10 +570,8 @@ function renderCandidateTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(c => state.selection.cand.has(c.id));
     let colIdx = 17; 
     const customHeaders = (state.customColumns.candidates || []).map(col => `<th>${thAlign(col.name, 'candidates', colIdx++)}</th>`).join('');
-
     thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates', 3)}</th><th>${thAlign('First Name', 'candidates', 4)}</th><th>${thAlign('Last Name', 'candidates', 5)}</th><th>${thAlign('Mobile', 'candidates', 6)}</th><th>${thAlign('WhatsApp', 'candidates', 7)}</th><th>${thAlign('Tech', 'candidates', 8)}</th><th>${thAlign('Recruiter', 'candidates', 9)}</th><th style="width: 140px;">${thAlign('Status', 'candidates', 10)}</th><th>${thAlign('Assigned', 'candidates', 11)}</th><th>${thAlign('Gmail', 'candidates', 12)}</th><th>${thAlign('LinkedIn', 'candidates', 13)}</th><th>${thAlign('Resume', 'candidates', 14)}</th><th>${thAlign('Track', 'candidates', 15)}</th><th>${thAlign('Comments', 'candidates', 16)}</th>${customHeaders}</tr>`;
     document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} records`;
-
     tbody.innerHTML = filtered.map((c, i) => {
         const isSel = state.selection.cand.has(c.id) ? 'checked' : '';
         const rowClass = state.selection.cand.has(c.id) ? 'selected-row' : '';
@@ -529,92 +582,41 @@ function renderCandidateTable() {
         const linkedinIcon = c.linkedin ? `<a href="${c.linkedin}" target="_blank"><i class="fa-brands fa-linkedin icon-linkedin link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" onclick="inlineUrlEdit('${c.id}', 'linkedin', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
         const resumeIcon = c.resume ? `<a href="${c.resume}" target="_blank"><i class="fa-solid fa-file-lines icon-resume link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" onclick="inlineUrlEdit('${c.id}', 'resume', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
         const trackIcon = c.track ? `<a href="${c.track}" target="_blank"><i class="fa-solid fa-location-crosshairs icon-track link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" onclick="inlineUrlEdit('${c.id}', 'track', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
-
-        return `<tr class="${rowClass}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
-            <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td>
-            <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td>
-            <td>${i+1}</td>
-            <td id="fname-${c.id}" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td>
-            <td onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td>
-            <td onclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td>
-            <td onclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td>
-            <td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td>
-            <td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td>
-            <td style="overflow:visible;">
-                <div class="action-dropdown-container">
-                    <div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div>
-                    <div id="menu-${c.id}" class="custom-dropdown-menu">
-                        <div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div>
-                        <div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div>
-                        <div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div>
-                    </div>
-                </div>
-            </td>
-            <td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>
-            <td style="text-align:center;">${gmailIcon}</td><td style="text-align:center;">${linkedinIcon}</td><td style="text-align:center;">${resumeIcon}</td><td style="text-align:center;">${trackIcon}</td>
-            <td onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||'-'}</td>
-            ${customCells}
-        </tr>`;
+        return `<tr class="${rowClass}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td><td>${i+1}</td><td id="fname-${c.id}" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td><td onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td><td onclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td><td onclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td><td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td><td style="overflow:visible;"><div class="action-dropdown-container"><div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div><div id="menu-${c.id}" class="custom-dropdown-menu"><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div><div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div></div></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td><td style="text-align:center;">${gmailIcon}</td><td style="text-align:center;">${linkedinIcon}</td><td style="text-align:center;">${resumeIcon}</td><td style="text-align:center;">${trackIcon}</td><td onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||'-'}</td>${customCells}</tr>`;
     }).join('');
     applyAlignStyles('candidates', 'candidates-table');
 }
 
 function renderEmployeeTable() {
-    let filtered = state.employees;
-    if (state.userRole === 'Employee') filtered = filtered.filter(e => e.officialEmail === state.user.email);
-    filtered = filtered.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
+    let filtered = state.employees; if (state.userRole === 'Employee') filtered = filtered.filter(e => e.officialEmail === state.user.email); filtered = filtered.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
     const isAllChecked = filtered.length > 0 && filtered.every(e => state.selection.emp.has(e.id));
-    let colIdx = 12;
-    const customHeaders = (state.customColumns.employees || []).map(col => `<th>${thAlign(col.name, 'employees', colIdx++)}</th>`).join('');
-
+    let colIdx = 12; const customHeaders = (state.customColumns.employees || []).map(col => `<th>${thAlign(col.name, 'employees', colIdx++)}</th>`).join('');
     document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees', 3)}</th><th>${thAlign('First Name', 'employees', 4)}</th><th>${thAlign('Last Name', 'employees', 5)}</th><th>${thAlign('Date of Birth', 'employees', 6)}</th><th>${thAlign('Designation', 'employees', 7)}</th><th>${thAlign('Work Mobile', 'employees', 8)}</th><th>${thAlign('Personal Mobile', 'employees', 9)}</th><th>${thAlign('Official Email', 'employees', 10)}</th><th>${thAlign('Personal Email', 'employees', 11)}</th>${customHeaders}</tr>`;
     document.getElementById('emp-footer-count').innerText = `Showing ${filtered.length} records`;
-
-    document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => {
-        const isSel = state.selection.emp.has(c.id) ? 'checked' : '';
-        const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'employees', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td onclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || '-'}</td>`; }).join('');
-        return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||'-'}</td><td onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||'-'}</td><td onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||'-'}</td><td onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||'-'}</td><td onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||'-'}</td>${customCells}</tr>`;
-    }).join('');
+    document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.emp.has(c.id) ? 'checked' : ''; const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'employees', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td onclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || '-'}</td>`; }).join(''); return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||'-'}</td><td onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||'-'}</td><td onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||'-'}</td><td onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||'-'}</td><td onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||'-'}</td>${customCells}</tr>`; }).join('');
     applyAlignStyles('employees', 'employee-table');
 }
 
 function renderOnboardingTable() {
     const filtered = state.onboarding.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.onbFilters.text));
     const isAllChecked = filtered.length > 0 && filtered.every(o => state.selection.onb.has(o.id));
-    let colIdx = 12;
-    const customHeaders = (state.customColumns.onboarding || []).map(col => `<th>${thAlign(col.name, 'onboarding', colIdx++)}</th>`).join('');
-
+    let colIdx = 12; const customHeaders = (state.customColumns.onboarding || []).map(col => `<th>${thAlign(col.name, 'onboarding', colIdx++)}</th>`).join('');
     document.getElementById('onboarding-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('onboarding')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('onboarding')"></i></div></th><th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'onboarding', 3)}</th><th>${thAlign('First Name', 'onboarding', 4)}</th><th>${thAlign('Last Name', 'onboarding', 5)}</th><th>${thAlign('Date of Birth', 'onboarding', 6)}</th><th>${thAlign('Recruiter', 'onboarding', 7)}</th><th>${thAlign('Mobile', 'onboarding', 8)}</th><th>${thAlign('Status', 'onboarding', 9)}</th><th>${thAlign('Assigned', 'onboarding', 10)}</th><th>${thAlign('Comments', 'onboarding', 11)}</th>${customHeaders}</tr>`;
     document.getElementById('onb-footer-count').innerText = `Showing ${filtered.length} records`;
-
-    document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => {
-        const isSel = state.selection.onb.has(c.id) ? 'checked' : '';
-        const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'onboarding', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td onclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || '-'}</td>`; }).join('');
-        return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)"><option value="Onboarding" ${c.status==='Onboarding'?'selected':''}>Onboarding</option><option value="Completed" ${c.status==='Completed'?'selected':''}>Completed</option></select></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||'-'}</td>${customCells}</tr>`;
-    }).join('');
+    document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.onb.has(c.id) ? 'checked' : ''; const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'onboarding', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td onclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || '-'}</td>`; }).join(''); return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)"><option value="Onboarding" ${c.status==='Onboarding'?'selected':''}>Onboarding</option><option value="Completed" ${c.status==='Completed'?'selected':''}>Completed</option></select></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||'-'}</td>${customCells}</tr>`; }).join('');
     applyAlignStyles('onboarding', 'onboarding-table');
 }
 
 function renderPlacementTable() {
-    const mVal = document.getElementById('placement-month-picker').value;
-    const yVal = document.getElementById('placement-year-picker').value;
-    let placed = state.candidates.filter(c => c.status === 'Placed');
-    placed = placed.filter(c => { if(!c.assigned) return false; return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); });
+    const mVal = document.getElementById('placement-month-picker').value; const yVal = document.getElementById('placement-year-picker').value;
+    let placed = state.candidates.filter(c => c.status === 'Placed'); placed = placed.filter(c => { if(!c.assigned) return false; return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); });
     if(!state.selection.place) state.selection.place = new Set();
     const isAllChecked = placed.length > 0 && placed.every(p => state.selection.place.has(p.id));
-    const thead = document.querySelector('#placement-table thead');
-    let colIdx = 11;
+    const thead = document.querySelector('#placement-table thead'); let colIdx = 11;
     const customHeaders = (state.customColumns.placements || []).map(col => `<th>${thAlign(col.name, 'placements', colIdx++)}</th>`).join('');
-
     if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:60px;">${thAlign('#', 'placements', 3)}</th><th>${thAlign('First Name', 'placements', 4)}</th><th>${thAlign('Last Name', 'placements', 5)}</th><th>${thAlign('Tech', 'placements', 6)}</th><th>${thAlign('Location', 'placements', 7)}</th><th>${thAlign('Contract', 'placements', 8)}</th><th>${thAlign('Assigned', 'placements', 9)}</th><th>${thAlign('Actions', 'placements', 10)}</th>${customHeaders}</tr>`;
     document.getElementById('placement-footer-count').innerText = `Showing ${placed.length} records`;
-    
-    document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => {
-        const isSel = state.selection.place.has(c.id) ? 'checked' : '';
-        const rowClass = state.selection.place.has(c.id) ? 'selected-row' : '';
-        const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'candidates', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'candidates', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td onclick="inlineEdit('${c.id}', '${col.key}', 'candidates', this)">${val || '-'}</td>`; }).join('');
-        return `<tr class="${rowClass}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);">${c.first}</td><td style="font-weight:600; color:var(--text-main);">${c.last}</td><td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)" class="text-cyan">${c.tech}</td><td onclick="inlineEdit('${c.id}', 'location', 'candidates', this)">${c.location||'Add'}</td><td onclick="inlineEdit('${c.id}', 'contract', 'candidates', this)">${c.contract||'Add'}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`;
-    }).join('');
+    document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'candidates', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'candidates', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td onclick="inlineEdit('${c.id}', '${col.key}', 'candidates', this)">${val || '-'}</td>`; }).join(''); return `<tr class="${rowClass}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);">${c.first}</td><td style="font-weight:600; color:var(--text-main);">${c.last}</td><td onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)" class="text-cyan">${c.tech}</td><td onclick="inlineEdit('${c.id}', 'location', 'candidates', this)">${c.location||'Add'}</td><td onclick="inlineEdit('${c.id}', 'contract', 'candidates', this)">${c.contract||'Add'}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
     applyAlignStyles('placements', 'placement-table');
 }
 
@@ -625,15 +627,12 @@ function renderHubTable() {
     const { start, end } = state.hub.range;
     const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
     const activeCandidates = data.filter(c => (c.submissionLog || []).some(isInRange) || (c.screeningLog || []).some(isInRange) || (c.interviewLog || []).some(isInRange));
-
     if(!state.selection.hub) state.selection.hub = new Set();
     const isAllChecked = activeCandidates.length > 0 && activeCandidates.every(c => state.selection.hub.has(c.id));
-
     document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column (to Candidates)"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:60px;">${thAlign('#', 'hub', 3)}</th><th style="width:150px;">${thAlign('Candidate Name', 'hub', 4)}</th><th style="width:150px;">${thAlign('Recruiter', 'hub', 5)}</th><th style="width:120px;">${thAlign('Technology', 'hub', 6)}</th><th style="text-align:center;">${thAlign('Submission', 'hub', 7)}</th><th style="text-align:center;">${thAlign('Screenings', 'hub', 8)}</th><th style="text-align:center;">${thAlign('Interview', 'hub', 9)}</th><th style="text-align:right;">${thAlign('Date', 'hub', 10)}</th></tr>`;
     document.getElementById('hub-footer-count').innerText = `Showing ${activeCandidates.length} active records`;
     const tbody = document.getElementById('hub-table-body');
     if (activeCandidates.length === 0) { tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:20px; opacity:0.6;">No activity found for this period.</td></tr>`; return; }
-
     tbody.innerHTML = activeCandidates.map((c, i) => {
         const sub = (c.submissionLog||[]).filter(isInRange).length;
         const scr = (c.screeningLog||[]).filter(isInRange).length;
@@ -645,7 +644,6 @@ function renderHubTable() {
         const isExpanded = state.hub.expandedRowId === c.id;
         const activeStyle = isExpanded ? 'background: rgba(6, 182, 212, 0.1); border-left: 3px solid var(--primary);' : '';
         const caret = isExpanded ? '<i class="fa-solid fa-chevron-down"></i>' : '<i class="fa-solid fa-chevron-right"></i>';
-
         let html = `<tr style="cursor:pointer; ${activeStyle}" class="${state.selection.hub.has(c.id) ? 'selected-row' : ''}" draggable="true" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondrop="handleDrop(event)"><td class="drag-handle-cell" onclick="event.stopPropagation()"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td onclick="event.stopPropagation()"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'hub')"></td><td style="opacity:0.7;" onclick="toggleHubRow('${c.id}')">${caret}</td><td style="font-weight:600; color:var(--text-main);" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first} ${c.last}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td><td>${generateTechDropdown(c.tech, c.id, 'candidates')}</td><td class="text-cyan" style="font-weight:bold; font-size:1.1rem; text-align:center;" onclick="toggleHubRow('${c.id}')">${sub}</td><td class="text-gold" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${scr}</td><td class="text-purple" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${int}</td><td style="font-size:0.8rem; color:var(--text-muted); text-align:right;" onclick="toggleHubRow('${c.id}')">${displayDate}</td></tr>`;
         if(isExpanded) {
              const renderTimeline = (list, type) => {
@@ -664,7 +662,7 @@ function renderHubTable() {
 }
 
 /* ========================================================
-   12. DATA MANIPULATION & DELETE
+   12. DATA MANIPULATION & DELETE (Robust)
    ======================================================== */
 window.toggleSelect = (id, type) => { if(!state.selection[type]) state.selection[type] = new Set(); if(state.selection[type].has(id)) state.selection[type].delete(id); else state.selection[type].add(id); updateSelectButtons(type); refreshViewForType(type); };
 window.toggleSelectAll = (type, box) => {
@@ -679,17 +677,7 @@ window.toggleSelectAll = (type, box) => {
     updateSelectButtons(type); refreshViewForType(type);
 };
 function refreshViewForType(type) { if(type==='cand') renderCandidateTable(); else if(type==='emp') renderEmployeeTable(); else if(type==='onb') renderOnboardingTable(); else if(type==='hub') renderHubTable(); else if(type==='place') renderPlacementTable(); }
-
-function updateSelectButtons(type) {
-    let btn, countSpan;
-    if(type === 'cand') { btn = document.getElementById('btn-delete-selected'); countSpan = document.getElementById('selected-count'); }
-    else if(type === 'emp') { btn = document.getElementById('btn-delete-employee'); countSpan = document.getElementById('emp-selected-count'); }
-    else if(type === 'onb') { btn = document.getElementById('btn-delete-onboarding'); countSpan = document.getElementById('onboarding-selected-count'); }
-    else if(type === 'place') { btn = document.getElementById('btn-delete-placement'); countSpan = document.getElementById('place-selected-count'); }
-    else if(type === 'hub') { btn = document.getElementById('btn-delete-hub'); countSpan = document.getElementById('hub-selected-count'); }
-    if (!btn) return;
-    if (state.selection[type] && state.selection[type].size > 0 && state.userRole !== 'Employee') { btn.style.display = 'inline-flex'; btn.style.opacity = '1'; if(countSpan) countSpan.innerText = state.selection[type].size; } else { btn.style.display = 'none'; if(countSpan) countSpan.innerText = '0'; }
-}
+function updateSelectButtons(type) { let btn, countSpan; if(type === 'cand') { btn = document.getElementById('btn-delete-selected'); countSpan = document.getElementById('selected-count'); } else if(type === 'emp') { btn = document.getElementById('btn-delete-employee'); countSpan = document.getElementById('emp-selected-count'); } else if(type === 'onb') { btn = document.getElementById('btn-delete-onboarding'); countSpan = document.getElementById('onboarding-selected-count'); } else if(type === 'place') { btn = document.getElementById('btn-delete-placement'); countSpan = document.getElementById('place-selected-count'); } else if(type === 'hub') { btn = document.getElementById('btn-delete-hub'); countSpan = document.getElementById('hub-selected-count'); } if (!btn) return; if (state.selection[type] && state.selection[type].size > 0 && state.userRole !== 'Employee') { btn.style.display = 'inline-flex'; btn.style.opacity = '1'; if(countSpan) countSpan.innerText = state.selection[type].size; } else { btn.style.display = 'none'; if(countSpan) countSpan.innerText = '0'; } }
 
 window.executeDelete = async () => {
     const type = state.pendingDelete.type;
@@ -701,14 +689,7 @@ window.executeDelete = async () => {
     const ids = Array.from(state.selection[type]);
     const batch = db.batch();
     ids.forEach(id => batch.delete(db.collection(col).doc(id)));
-    try {
-        await batch.commit();
-        state.selection[type].clear();
-        updateSelectButtons(type);
-        const masterBox = document.getElementById(`select-all-${type}`);
-        if(masterBox) masterBox.checked = false;
-        showToast("Items deleted successfully");
-    } catch(e) { console.error(e); showToast("Delete Failed: " + e.message); } 
+    try { await batch.commit(); state.selection[type].clear(); updateSelectButtons(type); const masterBox = document.getElementById(`select-all-${type}`); if(masterBox) masterBox.checked = false; showToast("Items deleted successfully"); } catch(e) { console.error(e); showToast("Delete Failed: " + e.message); } 
     finally { confirmBtn.innerText = originalText; confirmBtn.disabled = false; closeDeleteModal(); refreshViewForType(type); }
 };
 
@@ -760,11 +741,12 @@ function showToast(msg) { const t = document.getElementById('toast'); document.g
 function cleanError(msg) { return msg.replace('Firebase: ', '').replace('Error ', '').replace('(auth/', '').replace(').', '').replace(/-/g, ' ').toUpperCase(); }
 window.handleLogin = () => { const e = document.getElementById('login-email').value, p = document.getElementById('login-pass').value; if(!e || !p) return; auth.signInWithEmailAndPassword(e, p).catch(err => alert("Login Failed: " + err.message)); };
 window.handleSignup = () => { const n = document.getElementById('reg-name').value, e = document.getElementById('reg-email').value, p = document.getElementById('reg-pass').value; auth.createUserWithEmailAndPassword(e, p).then(cred => { cred.user.updateProfile({displayName: n}); db.collection('users').doc(e).set({firstName: n, email: e, role: 'Employee', createdAt: Date.now()}); cred.user.sendEmailVerification(); showToast("Verification Sent"); switchAuth('login'); }).catch(err => showToast(cleanError(err.message))); };
+
 window.inlineEdit = (id, field, col, el) => { const val = el.innerText; el.innerHTML = `<input type="text" class="inline-input-active" value="${val}" onblur="saveInline(this, '${id}', '${field}', '${col}', '${val}')">`; el.querySelector('input').focus(); };
-window.saveInline = (input, id, field, col, oldVal) => { const newVal = input.value; input.parentElement.innerText = newVal; if(newVal !== oldVal) db.collection(col).doc(id).update({[field]: newVal}).catch(()=>input.parentElement.innerText = oldVal); };
-window.updateStatus = (id, col, val) => db.collection(col).doc(id).update({status: val});
-window.inlineDateEdit = (id, field, col, val) => db.collection(col).doc(id).update({[field]: val});
-window.inlineUrlEdit = (id, field, col, el) => { if(el.querySelector('input')) return; el.innerHTML = ''; const input = document.createElement('input'); input.type = 'url'; input.placeholder = 'Paste Link...'; input.className = 'url-input-active'; const save = () => { let newVal = input.value.trim(); if(newVal && !newVal.startsWith('http')) newVal = 'https://' + newVal; db.collection(col).doc(id).update({ [field]: newVal }); }; input.addEventListener('blur', save); input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); }); el.appendChild(input); input.focus(); };
+window.saveInline = (input, id, field, col, oldVal) => { const newVal = input.value; input.parentElement.innerText = newVal; if(newVal !== oldVal) db.collection(col).doc(id).update({[field]: newVal}).then(() => showToast("Saved")).catch(()=>input.parentElement.innerText = oldVal); };
+window.updateStatus = (id, col, val) => db.collection(col).doc(id).update({status: val}).then(() => showToast("Status Saved"));
+window.inlineDateEdit = (id, field, col, val) => db.collection(col).doc(id).update({[field]: val}).then(() => showToast("Date Saved"));
+window.inlineUrlEdit = (id, field, col, el) => { if(el.querySelector('input')) return; el.innerHTML = ''; const input = document.createElement('input'); input.type = 'url'; input.placeholder = 'Paste Link...'; input.className = 'url-input-active'; const save = () => { let newVal = input.value.trim(); if(newVal && !newVal.startsWith('http')) newVal = 'https://' + newVal; db.collection(col).doc(id).update({ [field]: newVal }).then(() => showToast("Link Saved")); }; input.addEventListener('blur', save); input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); }); el.appendChild(input); input.focus(); };
 window.toggleRowMenu = (id) => { document.querySelectorAll('.custom-dropdown-menu').forEach(el => { if(el.id !== `menu-${id}`) el.classList.remove('show'); }); const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.toggle('show'); document.addEventListener('click', function closeMenu(e) { if (!e.target.closest('.action-dropdown-container')) { if(menu) menu.classList.remove('show'); document.removeEventListener('click', closeMenu); } }); };
 window.updateStatusAndClose = (id, status) => { updateStatus(id, 'candidates', status); const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show'); };
 window.editCustomStatus = async (id) => { const currentStatus = state.candidates.find(c => c.id === id)?.status || ""; const newStatus = prompt("Enter new status detail:", currentStatus); if (newStatus && newStatus.trim() !== "") { await db.collection('candidates').doc(id).update({ status: newStatus.trim() }); showToast("Status updated"); } const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show'); };
@@ -772,11 +754,54 @@ window.triggerRowEdit = (id) => { const el = document.getElementById(`fname-${id
 window.deleteSingleCandidate = async (id) => { if(confirm("Permanently remove this candidate?")) { try { await db.collection('candidates').doc(id).delete(); showToast("Candidate Removed"); } catch(e) { showToast("Error removing candidate"); } } };
 window.triggerHubNote = async (candId, logType) => { const note = prompt("Enter note/subject for this activity:"); if(!note) return; const candidate = state.candidates.find(c => c.id === candId); if(!candidate) return; let logs = candidate[logType] || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: note, recruiter: state.currentUserName, timestamp: Date.now(), type: 'Manual Entry' }); await db.collection('candidates').doc(candId).update({ [logType]: logs }); showToast("Activity Logged"); };
 window.deleteHubLog = async (candId, logType, index) => { if(!confirm("Remove this log entry?")) return; const candidate = state.candidates.find(c => c.id === candId); let logs = candidate[logType] || []; logs.splice(index, 1); await db.collection('candidates').doc(candId).update({ [logType]: logs }); showToast("Log Removed"); }
-function updateUserProfile(user, hardcodedData) { const name = hardcodedData ? hardcodedData.name : (user.displayName || 'Staff Member'); document.getElementById('display-username').innerText = name; document.getElementById('prof-name-display').innerText = name; document.getElementById('prof-email-display-sidebar').innerText = user.email; document.getElementById('prof-office-email').value = user.email; if(hardcodedData) document.getElementById('prof-designation').value = hardcodedData.role; }
+
+function updateUserProfile(user, hardcodedData) {
+    const name = hardcodedData ? hardcodedData.name : (user.displayName || 'Staff Member');
+    document.getElementById('display-username').innerText = name;
+    document.getElementById('prof-name-display').innerText = name;
+    document.getElementById('prof-email-display-sidebar').innerText = user.email;
+    document.getElementById('prof-office-email').value = user.email;
+    if(hardcodedData) document.getElementById('prof-designation').value = hardcodedData.role;
+}
+
+window.loadCurrentUserProfile = async (email) => {
+    try {
+        const snap = await db.collection('employees').where('officialEmail', '==', email).limit(1).get();
+        if(!snap.empty) {
+            const doc = snap.docs[0];
+            state.userProfileId = doc.id;
+            const data = doc.data();
+            if(document.getElementById('prof-first')) document.getElementById('prof-first').value = data.first || '';
+            if(document.getElementById('prof-last')) document.getElementById('prof-last').value = data.last || '';
+            if(document.getElementById('prof-dob')) document.getElementById('prof-dob').value = data.dob || '';
+            if(document.getElementById('prof-work-mobile')) document.getElementById('prof-work-mobile').value = data.workMobile || '';
+            if(document.getElementById('prof-personal-mobile')) document.getElementById('prof-personal-mobile').value = data.personalMobile || '';
+            if(document.getElementById('prof-personal-email')) document.getElementById('prof-personal-email').value = data.personalEmail || '';
+        } else { console.warn("No employee profile found for email:", email); }
+    } catch(e) { console.error("Profile load error", e); }
+};
+
+window.setupProfileAutoSave = () => {
+    const fields = ['prof-first', 'prof-last', 'prof-dob', 'prof-work-mobile', 'prof-personal-mobile', 'prof-personal-email'];
+    fields.forEach(id => {
+        const el = document.getElementById(id);
+        if(!el) return;
+        el.addEventListener('input', debounce((e) => { saveProfileField(id, e.target.value); }, 800));
+    });
+};
+
+window.saveProfileField = (elementId, value) => {
+    if(!state.userProfileId) return;
+    const map = { 'prof-first': 'first', 'prof-last': 'last', 'prof-dob': 'dob', 'prof-work-mobile': 'workMobile', 'prof-personal-mobile': 'personalMobile', 'prof-personal-email': 'personalEmail' };
+    const dbField = map[elementId];
+    if(dbField) { db.collection('employees').doc(state.userProfileId).update({ [dbField]: value }).then(() => showToast("Saved")); }
+};
+
+window.saveProfileData = () => showToast("All changes saved automatically.");
 window.triggerPhotoUpload = () => document.getElementById('profile-upload-input').click();
 window.handlePhotoUpload = (input) => { if (input.files && input.files[0]) { const reader = new FileReader(); reader.onload = function(e) { const img = document.getElementById('profile-main-img'); const icon = document.getElementById('profile-main-icon'); img.src = e.target.result; img.style.display = 'block'; icon.style.display = 'none'; document.getElementById('btn-delete-photo').style.display = 'inline-block'; showToast("Photo updated (Local Preview)"); }; reader.readAsDataURL(input.files[0]); } };
 window.deleteProfilePhoto = () => { document.getElementById('profile-main-img').style.display = 'none'; document.getElementById('profile-main-icon').style.display = 'flex'; document.getElementById('btn-delete-photo').style.display = 'none'; };
-window.saveProfileData = () => showToast("Profile Saved!");
+
 let inactivityTimer;
 function startAutoLogoutTimer() { const TIMEOUT_DURATION = 10 * 60 * 1000; function resetTimer() { if (!firebase.auth().currentUser) return; clearTimeout(inactivityTimer); inactivityTimer = setTimeout(() => { firebase.auth().signOut().then(() => { showToast("Session expired"); switchScreen('auth'); }); }, TIMEOUT_DURATION); } ['mousemove', 'keydown', 'click'].forEach(e => document.addEventListener(e, resetTimer)); resetTimer(); }
 function stopAutoLogoutTimer() { clearTimeout(inactivityTimer); }
