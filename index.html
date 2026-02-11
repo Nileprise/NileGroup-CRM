@@ -186,7 +186,7 @@
                 <div class="user-avatar-small"><i class="fa-solid fa-user"></i></div>
                 <span id="display-username" class="user-name">User</span>
               </div>
-              <button id="btn-logout" class="control-icon danger-hover"><i class="fa-solid fa-power-off"></i></button>
+              <button id="btn-logout" class="control-icon danger-hover" title="Logout"><i class="fa-solid fa-power-off"></i></button>
             </div>
           </div>
         </header>
@@ -258,12 +258,7 @@
                         <input type="text" id="gmail-search-input" placeholder="Search mail..." onkeyup="handleGmailSearch(this.value)">
                     </div>
                 </div>
-                <div class="gmail-scroll-area" id="gmail-rows-container">
-                    <div id="gmail-empty" class="empty-state" style="display:none; padding: 20px; text-align: center; color: gray;">
-                        <i class="fa-regular fa-folder-open" style="font-size: 2rem;"></i>
-                        <p>No emails found or not connected.</p>
-                    </div>
-                </div>
+                <div class="gmail-scroll-area" id="gmail-rows-container"></div>
             </div>
 
             <div class="gmail-main-area glass-panel" id="gmail-detail-view" style="display: none; height: 100%;">
@@ -344,7 +339,7 @@
           <div class="table-container glass-panel">
             <div class="table-wrapper">
               <table class="modern-table" id="placement-table">
-                <thead></thead> <tbody id="placement-table-body"></tbody>
+                <thead id="placement-table-head"></thead> <tbody id="placement-table-body"></tbody>
               </table>
             </div>
             <div class="footer-count"><small id="placement-footer-count">Showing 0 records</small></div>
@@ -375,7 +370,7 @@
           </div>
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('candidates')">
+              <button class="btn-insert" onclick="createNewRow('hub')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
               
@@ -570,10 +565,10 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+  
   <script src="script.js"></script>
   
   <script>
-      // Toggle logic for Main Gmail Menu in Sidebar
       function toggleGmailMenu() {
           const menu = document.getElementById('gmail-sub-menu');
           const icon = document.getElementById('gmail-toggle-icon');
@@ -585,6 +580,17 @@
               menu.style.display = 'none';
               icon.classList.remove('fa-chevron-up');
               icon.classList.add('fa-chevron-down');
+          }
+      }
+      
+      // Global toggle function for Settings dark mode
+      function handleSettingsTheme(checkbox) {
+          if (checkbox.checked) {
+              document.body.classList.remove('light-mode');
+              localStorage.setItem('np_theme', 'dark');
+          } else {
+              document.body.classList.add('light-mode');
+              localStorage.setItem('np_theme', 'light');
           }
       }
   </script>
