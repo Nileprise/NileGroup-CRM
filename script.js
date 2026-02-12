@@ -344,39 +344,118 @@ function createMimeMessage(to, subject, body) { const email = [`To: ${to}`, `Sub
    6. REALTIME LISTENERS & ISOLATED DATA LOGIC
    ========================================================================== */
 function initRealtimeListeners() {
-    db.collection('candidates').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
-        state.candidates = []; const techs = new Set();
-        snap.forEach(doc => { const d = doc.data(); state.candidates.push({ id: doc.id, ...d }); if (d.tech) techs.add(d.tech); });
+    let candQuery = db.collection('candidates');
+    let hubQuery = db.collection('hub');
+    
+    // SECURITY FIX: If user is Employee, ONLY fetch data assigned to them.
+    // Managers/Admins get everything.
+    if (state.userRole === 'Employee') {
+        // NOTE: This requires a Composite Index in Firestore (See console for link)
+        candQuery = candQuery.where('recruiter', '==', state.currentUserName);
+        
+        // If your rules restrict Hub reading, filter this too:
+        // hubQuery = hubQuery.where('recruiter', '==', state.currentUserName);
+    }
+
+    // 1. CANDIDATES LISTENER
+    candQuery.orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
+        state.candidates = []; 
+        const techs = new Set();
+        
+        snap.forEach(doc => { 
+            const d = doc.data(); 
+            state.candidates.push({ id: doc.id, ...d }); 
+            if (d.tech) techs.add(d.tech); 
+        });
+        
         state.metadata.techs = Array.from(techs).sort();
-        state.candidates.sort((a, b) => { const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; return aOrder - bOrder; });
-        renderCandidateTable(); renderDropdowns(); updateDashboardStats(); renderDashboardCharts();
+        
+        // Client-side sort for Drag & Drop order
+        state.candidates.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        
+        renderCandidateTable(); 
+        renderDropdowns(); 
+        updateDashboardStats(); 
+        renderDashboardCharts();
+    }, (error) => {
+        console.error("Candidate Listener Error:", error);
+        if(error.code === 'permission-denied') {
+            showToast("Access Denied: Check permissions.", "error");
+        }
     });
     
-    // Hub ISOLATION: Hub now has its own database collection
-    db.collection('hub').orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
+    // 2. HUB LISTENER
+    hubQuery.orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
         state.hubData = [];
         snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
-        state.hubData.sort((a, b) => { const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; return aOrder - bOrder; });
+        
+        state.hubData.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        
         updateHubStats(state.hub.filterType, state.hub.date);
     });
 
+    // 3. EMPLOYEES (Staff Directory)
     db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
-        state.employees = []; snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
-        state.employees.sort((a, b) => { const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; return aOrder - bOrder; });
-        const recruiters = new Set(); state.employees.forEach(e => { if(e.first) recruiters.add(e.first.trim()); });
-        state.metadata.recruiters = Array.from(recruiters).map(r => ({value:r, display:r})).sort((a,b)=>a.value.localeCompare(b.value));
-        renderEmployeeTable(); renderDropdowns(); updateDashboardStats();
+        state.employees = []; 
+        snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
+        
+        state.employees.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        
+        // Extract Recruiters for Dropdown
+        const recruiters = new Set(); 
+        state.employees.forEach(e => { if(e.first) recruiters.add(e.first.trim()); });
+        state.metadata.recruiters = Array.from(recruiters)
+            .map(r => ({value:r, display:r}))
+            .sort((a,b)=>a.value.localeCompare(b.value));
+            
+        renderEmployeeTable(); 
+        renderDropdowns(); 
+        updateDashboardStats();
     });
+
+    // 4. ONBOARDING (HR Only - Usually)
     db.collection('onboarding').orderBy('createdAt', 'desc').onSnapshot(snap => { 
-        state.onboarding = []; snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() })); 
-        state.onboarding.sort((a, b) => { const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; return aOrder - bOrder; });
+        state.onboarding = []; 
+        snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() })); 
+        state.onboarding.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
         renderOnboardingTable(); 
+    }, (error) => {
+        // Silent fail for employees who shouldn't see onboarding
+        console.log("Onboarding access restricted"); 
     });
+
+    // 5. PLACEMENTS (Managers Only)
     db.collection('placements').orderBy('createdAt', 'desc').onSnapshot(snap => {
-        state.placements = []; snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
-        state.placements.sort((a, b) => { const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; return aOrder - bOrder; });
-        renderPlacementTable(); updateDashboardStats();
+        state.placements = []; 
+        snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
+        state.placements.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        renderPlacementTable(); 
+        updateDashboardStats();
+    }, (error) => {
+        // Silent fail for employees
+        console.log("Placement access restricted"); 
     });
+
     loadCustomColumns();
 }
 
@@ -390,6 +469,7 @@ window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collec
 
 function getFilteredData(data, filters) { 
     let subset = data; 
+    // Additional client-side filter for safety, though query handles it now
     if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName); 
     return subset.filter(item => { 
         if (item.status === 'Placed') return false; 
