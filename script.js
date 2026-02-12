@@ -23,9 +23,13 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 const storage = firebase.storage();
 
-// ENABLE FIRESTORE LOCAL CACHE
-db.enablePersistence().catch((err) => {
-    console.warn("Firebase Persistence Error (Data might take a second to load on refresh):", err.code);
+// FIX: ENABLE MULTI-TAB PERSISTENCE
+db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+    if (err.code == 'failed-precondition') {
+        console.warn("Persistence failed: Multiple tabs open without sync enabled.");
+    } else if (err.code == 'unimplemented') {
+        console.warn("Persistence is not available in this browser.");
+    }
 });
 
 /* ==========================================================================
