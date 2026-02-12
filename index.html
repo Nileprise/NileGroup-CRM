@@ -50,15 +50,18 @@
 
         <div id="form-login" class="auth-form active">
           <h3 class="form-title">Secure Portal Login</h3>
+          
           <div class="input-group">
             <i class="fa-solid fa-envelope input-icon"></i>
             <input type="email" id="login-email" placeholder="Official Email ID" autocomplete="email">
           </div>
+          
           <div class="input-group">
             <i class="fa-solid fa-lock input-icon"></i>
             <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
             <i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('login-pass', this)"></i>
           </div>
+
           <div class="form-actions"><span class="link-text" onclick="switchAuth('forgot')">Forgot Password?</span></div>
           <button id="btn-login-action" class="btn btn-primary btn-block" onclick="handleLogin()">Login</button>
           <p class="switch-text">First time? <span onclick="switchAuth('signup')">Activate Account</span></p>
@@ -68,11 +71,13 @@
           <h3 class="form-title">Activate Account</h3>
           <div class="input-group"><i class="fa-solid fa-user input-icon"></i><input type="text" id="reg-name" placeholder="Full Name"></div>
           <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reg-email" placeholder="Official Email ID"></div>
+          
           <div class="input-group">
             <i class="fa-solid fa-lock input-icon"></i>
             <input type="password" id="reg-pass" placeholder="Set Password (Min 6 chars)">
             <i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('reg-pass', this)"></i>
           </div>
+
           <button id="btn-signup-action" class="btn btn-primary btn-block" onclick="handleSignup()">Register</button>
           <p class="switch-text">Back to <span onclick="switchAuth('login')">Login</span></p>
         </div>
@@ -99,12 +104,12 @@
     </section>
 
     <section id="dashboard-screen" class="screen">
-     
+      
       <aside class="sidebar glass-panel" id="sidebar">
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">PRISE</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
           <button class="nav-item active" data-target="view-dashboard"><i class="fa-solid fa-chart-pie"></i> <span>Overview</span></button>
-         
+          
           <div class="nav-item" style="cursor: pointer;" onclick="toggleGmailMenu()">
               <i class="fa-brands fa-google"></i>
               <span>Gmail</span>
@@ -127,7 +132,7 @@
               <button class="nav-item" onclick="renderGmailList('Drafts', this)">
                   <span class="material-icons" style="font-size: 18px;">drafts</span> <span>Drafts</span>
               </button>
-             
+              
               <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
                   <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
               </div>
@@ -148,7 +153,7 @@
                       <small>Create label</small>
                   </div>
               </div>
-             
+              
               <div style="margin-top: 15px; padding-left: 5px; color: gray; font-size: 10px; font-weight: bold; display:flex; justify-content:space-between; padding-right:10px;">
                   <span>LABELS</span>
                   <span id="manage-indicator" style="display:none; color:var(--danger); cursor:pointer;" onclick="toggleManageMode()">Done</span>
@@ -172,7 +177,7 @@
       </aside>
 
       <main class="main-content">
-       
+        
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
           <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
@@ -202,12 +207,8 @@
                 <span class="kpi-label">Total Candidates</span>
                 <h1 id="stat-total" class="kpi-value">0</h1>
                 <div class="kpi-subtext">
-                  <span class="text-success" style="margin-right: 15px;">
-                     <span id="stat-active">0</span> Active
-                  </span>
-                  <span class="text-danger">
-                     <span id="stat-inactive">0</span> Inactive
-                  </span>
+                  <span class="text-success" style="margin-right: 15px;"><span id="stat-active">0</span> Active</span>
+                  <span class="text-danger"><span id="stat-inactive">0</span> Inactive</span>
                 </div>
               </div>
               <div class="kpi-icon"><i class="fa-solid fa-users"></i></div>
@@ -231,17 +232,13 @@
               <div class="chart-top">
                   <h4><i class="fa-solid fa-chart-column text-cyan"></i> Candidates by Recruiter</h4>
               </div>
-              <div class="canvas-wrapper">
-                  <canvas id="chart-recruiter"></canvas>
-              </div>
+              <div class="canvas-wrapper"><canvas id="chart-recruiter"></canvas></div>
             </div>
             <div class="chart-container small-chart">
               <div class="chart-top">
                   <h4><i class="fa-solid fa-chart-pie text-gold"></i> Technology Spread</h4>
               </div>
-              <div class="canvas-wrapper">
-                  <canvas id="chart-tech"></canvas>
-              </div>
+              <div class="canvas-wrapper"><canvas id="chart-tech"></canvas></div>
             </div>
           </div>
         </div>
@@ -467,6 +464,7 @@
               </div>
               <div class="save-container"><button class="btn btn-primary btn-block btn-lg" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></div>
             </div>
+            
             <div class="profile-editor-card glass-panel">
               <div id="tab-personal" class="tab-content active">
                 <h3 class="tab-title">Basic Information</h3>
@@ -479,6 +477,23 @@
                   <div class="input-group-modern full-width"><label>Personal Email</label><div class="input-wrapper"><i class="fa-regular fa-envelope"></i><input type="email" id="prof-personal-email"></div></div>
                   <div class="input-group-modern"><label>Official Email <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-envelope"></i><input type="email" id="prof-office-email" readonly></div></div>
                   <div class="input-group-modern"><label>Designation <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-id-badge"></i><input type="text" id="prof-designation" readonly></div></div>
+                </div>
+
+                <div style="margin-top: 30px; border-top: 1px solid var(--glass-border); padding-top: 20px;">
+                  <h3 class="tab-title"><i class="fa-solid fa-laptop-medical"></i> Active Sessions</h3>
+                  <div class="glass-panel" style="background: rgba(0,0,0,0.2); padding: 0;">
+                    <table class="modern-table" style="width:100%;">
+                      <thead>
+                        <tr>
+                          <th style="background: transparent;">Device</th>
+                          <th style="background: transparent;">Location (IP)</th>
+                          <th style="background: transparent;">Last Active</th>
+                          <th style="background: transparent; text-align: right;">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody id="session-list-body"></tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -538,12 +553,10 @@
   <div id="add-column-modal" class="modal-overlay">
     <div class="glass-panel modal-box">
       <h3 style="margin-bottom: 15px; color: var(--text-main);">Add New Column</h3>
-     
       <div class="input-group-modern">
         <label>Column Name</label>
         <input type="text" id="new-col-name" class="modal-input" placeholder="e.g. Visa Status, Skype ID">
       </div>
-
       <div class="input-group-modern">
         <label>Data Type</label>
         <select id="new-col-type" class="modal-input" style="background: rgba(255,255,255,0.05); color:white;">
@@ -553,7 +566,6 @@
           <option value="number">Number</option>
         </select>
       </div>
-
       <div class="modal-actions">
         <button class="btn-text" onclick="closeColumnModal()">Cancel</button>
         <button class="btn-primary" onclick="executeAddColumn()">Add Column</button>
@@ -583,7 +595,6 @@
           }
       }
       
-      // Global toggle function for Settings dark mode
       function handleSettingsTheme(checkbox) {
           if (checkbox.checked) {
               document.body.classList.remove('light-mode');
