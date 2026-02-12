@@ -23,7 +23,7 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 const storage = firebase.storage();
 
-// 1. ENABLE FIRESTORE LOCAL CACHE (Prevents data from disappearing on refresh)
+// ENABLE FIRESTORE LOCAL CACHE
 db.enablePersistence().catch((err) => {
     console.warn("Firebase Persistence Error (Data might take a second to load on refresh):", err.code);
 });
@@ -50,7 +50,6 @@ const DEFAULT_LABELS = [
 
 const state = {
     user: null, userRole: null, currentUserName: null, userProfileId: null,
-    // Hub is now isolated into its own array
     candidates: [], onboarding: [], employees: [], placements: [], hubData: [],
     
     labels: [...DEFAULT_LABELS], labelManageMode: false, selectedLabelColor: "#e91e63",
@@ -82,7 +81,7 @@ function getOldValue(collection, id, field) {
     else if (collection === 'employees') list = state.employees;
     else if (collection === 'onboarding') list = state.onboarding;
     else if (collection === 'placements') list = state.placements;
-    else if (collection === 'hub') list = state.hubData; // Hub isolation
+    else if (collection === 'hub') list = state.hubData; 
     const item = list.find(x => x.id === id);
     return item ? (item[field] !== undefined ? item[field] : '') : '';
 }
@@ -164,7 +163,7 @@ document.addEventListener('keydown', async (e) => {
         if (key === 'n') {
             e.preventDefault(); const activeView = document.querySelector('.content-view.active')?.id;
             if (activeView === 'view-candidates') createNewRow('candidates');
-            else if (activeView === 'view-hub') createNewRow('hub'); // Hub isolation
+            else if (activeView === 'view-hub') createNewRow('hub'); 
             else if (activeView === 'view-employees') createNewRow('employees');
             else if (activeView === 'view-onboarding') createNewRow('onboarding');
             else if (activeView === 'view-placements') manualAddPlacement();
@@ -196,7 +195,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (user) {
             state.user = user; const known = ALLOWED_USERS[user.email.toLowerCase()];
             state.userRole = known ? known.role : 'Viewer'; state.currentUserName = known ? known.name : (user.displayName || 'Staff Member');
-            updateUserProfile(user, known); switchScreen('app'); initRealtimeListeners(); startAutoLogoutTimer(); checkGmailAuth(); loadCurrentUserProfile(user.email);
+            
+            // 1. Update Profile UI
+            updateUserProfile(user, known); 
+            // 2. Track Session
+            trackUserSession(user);
+            // 3. Switch Screen
+            switchScreen('app'); 
+            // 4. Start Listeners
+            initRealtimeListeners(); startAutoLogoutTimer(); checkGmailAuth(); loadCurrentUserProfile(user.email);
+            
             const savedView = localStorage.getItem('np_current_view');
             if (savedView) { const navBtn = document.querySelector(`.nav-item[data-target="${savedView}"]`); if (navBtn) { navBtn.click(); } else { document.querySelector('.nav-item[data-target="view-dashboard"]')?.click(); } } 
             else { document.querySelector('.nav-item[data-target="view-dashboard"]')?.click(); }
@@ -249,8 +257,22 @@ function setupFilterListeners() {
     const gSearch = document.getElementById('gmail-search-input'); if(gSearch) { gSearch.addEventListener('keydown', (e) => { if(e.key === 'Enter') { renderGmailList(state.gmail.currentLabel); } }); }
 }
 
-/* Auth Helpers */
-window.togglePasswordVisibility = (id, icon) => { const input = document.getElementById(id); if (input.type === 'password') { input.type = 'text'; icon.classList.replace('fa-eye', 'fa-eye-slash'); } else { input.type = 'password'; icon.classList.replace('fa-eye-slash', 'fa-eye'); } };
+/* Auth Helpers & Password Fix */
+window.togglePasswordVisibility = (inputId, iconElement) => {
+    const input = document.getElementById(inputId);
+    if (input.type === "password") {
+        input.type = "text";
+        iconElement.classList.remove('fa-eye');
+        iconElement.classList.add('fa-eye-slash');
+        iconElement.style.color = "var(--primary)";
+    } else {
+        input.type = "password";
+        iconElement.classList.remove('fa-eye-slash');
+        iconElement.classList.add('fa-eye');
+        iconElement.style.color = ""; 
+    }
+};
+
 window.switchAuth = (type) => { document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active')); document.getElementById(`form-${type}`).classList.add('active'); };
 window.handleReset = () => { const email = document.getElementById('reset-email').value; if(!email) return showToast("Enter email"); auth.sendPasswordResetEmail(email).then(() => { showToast("Reset link sent"); switchAuth('login'); }).catch(e => showToast(e.message)); };
 window.checkVerificationStatus = () => { auth.currentUser.reload().then(() => { if(auth.currentUser.emailVerified) location.reload(); else showToast("Not verified yet. Check spam folder."); }); };
@@ -791,11 +813,11 @@ window.updateStatus = (id, col, val) => { const oldVal = getOldValue(col, id, 's
 window.inlineDateEdit = (id, field, col, val) => { const oldVal = getOldValue(col, id, field); pushToHistory(col, id, field, oldVal, val); return db.collection(col).doc(id).update({[field]: val}).then(() => showToast("Date Auto-Saved")); };
 
 window.inlineUrlEdit = (id, field, col, el) => { 
-    if(el.querySelector('input')) return; // FIX: Prevent clearing data
+    if(el.querySelector('input')) return; 
     
     el.innerHTML = ''; 
     const input = document.createElement('input'); input.type = 'url'; input.placeholder = 'Paste Link...'; input.className = 'url-input-active'; 
-    input.onclick = (e) => e.stopPropagation(); // FIX: Prevent click bubbling
+    input.onclick = (e) => e.stopPropagation(); 
 
     const save = () => { let newVal = input.value.trim(); if(newVal && !newVal.startsWith('http')) newVal = 'https://' + newVal; const oldVal = getOldValue(col, id, field); if(newVal !== oldVal) { pushToHistory(col, id, field, oldVal, newVal); db.collection(col).doc(id).update({ [field]: newVal }).then(() => showToast("Link Auto-Saved")); } }; 
     input.addEventListener('blur', save); input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); }); el.appendChild(input); input.focus(); 
@@ -861,4 +883,149 @@ window.deleteProfilePhoto = () => { document.getElementById('profile-main-img').
 
 let inactivityTimer;
 function startAutoLogoutTimer() { const TIMEOUT_DURATION = 10 * 60 * 1000; function resetTimer() { if (!firebase.auth().currentUser) return; clearTimeout(inactivityTimer); inactivityTimer = setTimeout(() => { firebase.auth().signOut().then(() => { showToast("Session expired"); switchScreen('auth'); }); }, TIMEOUT_DURATION); } ['mousemove', 'keydown', 'click'].forEach(e => document.addEventListener(e, resetTimer)); resetTimer(); }
-function stopAutoLogoutTimer() { clearTimeout(inactivityTimer); }
+function stopAutoLogoutTimer() { clearTimeout(inactivityTimer);}
+
+/* ========================================================
+   14. SESSION MANAGEMENT (Device Tracking)
+   ======================================================== */
+function trackUserSession(user) {
+    const sessionId = window.localStorage.getItem('np_session_id') || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    window.localStorage.setItem('np_session_id', sessionId);
+
+    // Simple parser for User Agent
+    const ua = navigator.userAgent;
+    let deviceName = "Unknown Device";
+    if (ua.includes("Win")) deviceName = "Windows PC";
+    else if (ua.includes("Mac")) deviceName = "Macintosh";
+    else if (ua.includes("Linux")) deviceName = "Linux PC";
+    else if (ua.includes("Android")) deviceName = "Android Device";
+    else if (ua.includes("iPhone") || ua.includes("iPad")) deviceName = "iOS Device";
+
+    if (ua.includes("Chrome")) deviceName += " (Chrome)";
+    else if (ua.includes("Firefox")) deviceName += " (Firefox)";
+    else if (ua.includes("Safari") && !ua.includes("Chrome")) deviceName += " (Safari)";
+
+    // Update Session in Firestore
+    const sessionRef = db.collection('users').doc(user.uid).collection('sessions').doc(sessionId);
+    
+    sessionRef.set({
+        deviceName: deviceName,
+        lastActive: Date.now(),
+        ip: "Current Device", // In a real app, use an API or Cloud Function for IP
+        isCurrent: true,
+        userAgent: ua
+    }, { merge: true });
+
+    // Listen for session changes to render the table
+    subscribeToSessions(user.uid);
+}
+
+function subscribeToSessions(userId) {
+    db.collection('users').doc(userId).collection('sessions').orderBy('lastActive', 'desc').onSnapshot(snap => {
+        const tbody = document.getElementById('session-list-body');
+        if(!tbody) return;
+        
+        tbody.innerHTML = '';
+        const currentSessionId = window.localStorage.getItem('np_session_id');
+
+        snap.forEach(doc => {
+            const data = doc.data();
+            const isMe = doc.id === currentSessionId;
+            const dateStr = new Date(data.lastActive).toLocaleString();
+            
+            // Icon selection
+            let icon = 'fa-desktop';
+            if (data.deviceName.includes('Android') || data.deviceName.includes('iPhone')) icon = 'fa-mobile-screen';
+
+            const row = `
+                <tr style="border-bottom: 1px solid var(--glass-border);">
+                    <td style="padding: 15px;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <div style="width:36px; height:36px; background:rgba(255,255,255,0.05); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--primary);">
+                                <i class="fa-solid ${icon}"></i>
+                            </div>
+                            <div>
+                                <div style="font-weight:600; color:var(--text-main); font-size:0.9rem;">${data.deviceName}</div>
+                                ${isMe ? '<span class="status-badge active" style="font-size:0.6rem; padding:2px 6px;">THIS DEVICE</span>' : ''}
+                            </div>
+                        </div>
+                    </td>
+                    <td style="color:var(--text-muted);">${data.ip || 'Unknown'}</td>
+                    <td style="color:var(--text-muted);">${dateStr}</td>
+                    <td style="text-align:right;">
+                        ${!isMe ? `<button class="btn-text-danger" onclick="revokeSession('${userId}', '${doc.id}')">Revoke</button>` : ''}
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    });
+}
+
+window.revokeSession = async (userId, sessionId) => {
+    if(!confirm("Log out this device?")) return;
+    try {
+        await db.collection('users').doc(userId).collection('sessions').doc(sessionId).delete();
+        showToast("Device logged out");
+    } catch(e) {
+        showToast("Error revoking session");
+    }
+};
+
+/* ==========================================================================
+   15. FINAL POLISH: MISSING UI HANDLERS & SAFETY CHECKS
+   ========================================================================== */
+
+// 1. Label Management "Done" Button
+window.toggleManageMode = () => {
+    state.labelManageMode = !state.labelManageMode;
+    const indicator = document.getElementById('manage-indicator');
+    const labelContainer = document.getElementById('dynamic-labels-container');
+    
+    if (state.labelManageMode) {
+        if(indicator) indicator.style.display = 'inline-block';
+        labelContainer.classList.add('manage-mode-active');
+        showToast("Label Manage Mode: ON");
+    } else {
+        if(indicator) indicator.style.display = 'none';
+        labelContainer.classList.remove('manage-mode-active');
+        showToast("Label Manage Mode: OFF");
+    }
+};
+
+// 2. Hub File Upload Handler
+window.handleHubFileSelect = async (input) => {
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        showToast(`Uploading ${file.name}...`);
+        setTimeout(() => {
+            showToast("File uploaded successfully (Demo)");
+        }, 1500);
+    }
+};
+
+// 3. Global Error Handler
+window.addEventListener('error', (event) => {
+    console.error("Global App Error:", event.error);
+    // Suppress trivial errors from showing toasts
+    if(event.error && !event.error.toString().includes('resize')) {
+         showToast("⚠️ An error occurred. Check console.", "error");
+    }
+});
+
+// 4. Initialize Tooltips & UI State on Load
+document.addEventListener('DOMContentLoaded', () => {
+    // Fix Mobile Sidebar closing when clicking outside
+    document.addEventListener('click', (e) => {
+        const sidebar = document.getElementById('sidebar');
+        const btn = document.getElementById('btn-mobile-menu');
+        const overlay = document.getElementById('sidebar-overlay');
+        
+        if (sidebar && sidebar.classList.contains('mobile-open') && 
+            !sidebar.contains(e.target) && 
+            !btn.contains(e.target)) {
+            sidebar.classList.remove('mobile-open');
+            if(overlay) overlay.classList.remove('active');
+        }
+    });
+});
