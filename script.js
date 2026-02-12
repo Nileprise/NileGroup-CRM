@@ -1,7 +1,6 @@
 /* ==========================================================================
    1. CONFIGURATION (FIREBASE + GMAIL API)
    ========================================================================== */
-// CRITICAL: Replace these keys with your own in a production environment.
 const firebaseConfig = {
     apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
     authDomain: "nile-group-crm.firebaseapp.com",
@@ -23,7 +22,7 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 const storage = firebase.storage();
 
-// FIX: ENABLE MULTI-TAB PERSISTENCE
+// ENABLE MULTI-TAB PERSISTENCE
 db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
     if (err.code == 'failed-precondition') {
         console.warn("Persistence failed: Multiple tabs open without sync enabled.");
@@ -33,19 +32,9 @@ db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
 });
 
 /* ==========================================================================
-   2. STATE & ACCESS CONTROL
+   2. STATE MANAGEMENT
    ========================================================================== */
-const ALLOWED_USERS = {
-    'ali@nileprise.com': { name: 'Asif', role: 'Employee' },
-    'mdi@nileprise.com': { name: 'Ikram', role: 'Employee' },
-    'mmr@nileprise.com': { name: 'Manikanta', role: 'Employee' },
-    'maj@nileprise.com': { name: 'Mazher', role: 'Employee' },
-    'msa@nileprise.com': { name: 'Shoeb', role: 'Employee' },
-    'fma@nileprise.com': { name: 'Fayaz', role: 'Manager' },
-    'an@nileprise.com': { name: 'Akhil', role: 'Manager' },
-    'aman@nileprise.com': { name: 'Sanketh', role: 'Manager' },
-    'careers@nileprise.com': { name: 'Nikhil Rapolu', role: 'Admin' },
-};
+// NOTE: ALLOWED_USERS list removed. Roles are now fetched dynamically from Firestore.
 
 const DEFAULT_LABELS = [
     { name: "Ajay", color: "#e91e63" }, { name: "Asif", color: "#9c27b0" }, { name: "Ikram", color: "#2196f3" },
@@ -195,18 +184,41 @@ document.addEventListener('DOMContentLoaded', () => {
     const hubCalendar = document.getElementById('hub-date-picker');
     if(hubCalendar) hubCalendar.value = state.hub.date;
 
-    auth.onAuthStateChanged(user => {
+    auth.onAuthStateChanged(async user => {
         if (user) {
-            state.user = user; const known = ALLOWED_USERS[user.email.toLowerCase()];
-            state.userRole = known ? known.role : 'Viewer'; state.currentUserName = known ? known.name : (user.displayName || 'Staff Member');
+            state.user = user;
             
-            // 1. Update Profile UI
-            updateUserProfile(user, known); 
-            // 2. Track Session
+            // --- PRODUCTION: FETCH ROLE FROM DB ---
+            try {
+                const userDoc = await db.collection('users').doc(user.uid).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    state.userRole = userData.role || 'Employee';
+                    state.currentUserName = userData.name || user.displayName || 'Staff';
+                    // Sync Profile UI
+                    updateUserProfile(user, userData);
+                } else {
+                    // Fallback for new users
+                    state.userRole = 'Employee';
+                    state.currentUserName = user.displayName || 'New User';
+                    // Create default user doc to prevent future errors
+                    await db.collection('users').doc(user.uid).set({
+                        email: user.email,
+                        name: state.currentUserName,
+                        role: 'Employee',
+                        createdAt: Date.now()
+                    }, {merge: true});
+                }
+            } catch(err) {
+                console.error("User Profile Fetch Error:", err);
+                state.userRole = 'Employee'; // Fail-safe
+            }
+
+            // 1. Track Live Session
             trackUserSession(user);
-            // 3. Switch Screen
+            // 2. Switch Screen
             switchScreen('app'); 
-            // 4. Start Listeners
+            // 3. Start Listeners (Now with correct role)
             initRealtimeListeners(); startAutoLogoutTimer(); checkGmailAuth(); loadCurrentUserProfile(user.email);
             
             const savedView = localStorage.getItem('np_current_view');
@@ -387,8 +399,9 @@ function initRealtimeListeners() {
         renderDashboardCharts();
     }, (error) => {
         console.error("Candidate Listener Error:", error);
+        // If error is permission-denied, it usually means the query doesn't match the rules
         if(error.code === 'permission-denied') {
-            showToast("Access Denied: Check permissions.", "error");
+            showToast("⚠️ Access Denied: You may not have permission to view these records.", "error");
         }
     });
     
@@ -473,7 +486,7 @@ window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collec
 
 function getFilteredData(data, filters) { 
     let subset = data; 
-    // Additional client-side filter for safety, though query handles it now
+    // Client-side filter for extra safety
     if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName); 
     return subset.filter(item => { 
         if (item.status === 'Placed') return false; 
