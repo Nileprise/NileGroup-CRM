@@ -33,8 +33,20 @@ db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
 });
 
 /* ==========================================================================
-   2. STATE MANAGEMENT
+   2. STATE & ACCESS CONTROL
    ========================================================================== */
+const ALLOWED_USERS = {
+    'ali@nileprise.com': { name: 'Asif', role: 'Employee' },
+    'mdi@nileprise.com': { name: 'Ikram', role: 'Employee' },
+    'mmr@nileprise.com': { name: 'Manikanta', role: 'Employee' },
+    'maj@nileprise.com': { name: 'Mazher', role: 'Employee' },
+    'msa@nileprise.com': { name: 'Shoeb', role: 'Employee' },
+    'fma@nileprise.com': { name: 'Fayaz', role: 'Manager' },
+    'an@nileprise.com': { name: 'Akhil', role: 'Manager' },
+    'aman@nileprise.com': { name: 'Sanketh', role: 'Manager' },
+    'careers@nileprise.com': { name: 'Nikhil Rapolu', role: 'Admin' },
+};
+
 const DEFAULT_LABELS = [
     { name: "Ajay", color: "#e91e63" }, { name: "Asif", color: "#9c27b0" }, { name: "Ikram", color: "#2196f3" },
     { name: "Manikanta", color: "#4caf50" }, { name: "Shoeb", color: "#ff9800" }
@@ -183,40 +195,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const hubCalendar = document.getElementById('hub-date-picker');
     if(hubCalendar) hubCalendar.value = state.hub.date;
 
-    auth.onAuthStateChanged(async user => {
+    auth.onAuthStateChanged(user => {
         if (user) {
-            state.user = user;
+            state.user = user; const known = ALLOWED_USERS[user.email.toLowerCase()];
+            state.userRole = known ? known.role : 'Viewer'; state.currentUserName = known ? known.name : (user.displayName || 'Staff Member');
             
-            // --- LIVE PRODUCTION: FETCH ROLE DYNAMICALLY ---
-            try {
-                const userDoc = await db.collection('users').doc(user.uid).get();
-                if (userDoc.exists) {
-                    const userData = userDoc.data();
-                    state.userRole = userData.role || 'Employee';
-                    state.currentUserName = userData.name || user.displayName || 'Staff';
-                    updateUserProfile(user, userData);
-                } else {
-                    // Fail-safe: Create default doc if missing
-                    state.userRole = 'Employee';
-                    state.currentUserName = user.displayName || 'New User';
-                    await db.collection('users').doc(user.uid).set({
-                        email: user.email,
-                        name: state.currentUserName,
-                        role: 'Employee',
-                        createdAt: Date.now()
-                    }, {merge: true});
-                }
-            } catch(err) {
-                console.error("User Profile Fetch Error:", err);
-                state.userRole = 'Employee';
-            }
-
+            // 1. Update Profile UI
+            updateUserProfile(user, known); 
+            // 2. Track Session
             trackUserSession(user);
+            // 3. Switch Screen
             switchScreen('app'); 
-            initRealtimeListeners(); 
-            startAutoLogoutTimer(); 
-            checkGmailAuth(); 
-            loadCurrentUserProfile(user.email);
+            // 4. Start Listeners
+            initRealtimeListeners(); startAutoLogoutTimer(); checkGmailAuth(); loadCurrentUserProfile(user.email);
             
             const savedView = localStorage.getItem('np_current_view');
             if (savedView) { const navBtn = document.querySelector(`.nav-item[data-target="${savedView}"]`); if (navBtn) { navBtn.click(); } else { document.querySelector('.nav-item[data-target="view-dashboard"]')?.click(); } } 
@@ -396,9 +387,8 @@ function initRealtimeListeners() {
         renderDashboardCharts();
     }, (error) => {
         console.error("Candidate Listener Error:", error);
-        // If error is permission-denied, it usually means the query doesn't match the rules
         if(error.code === 'permission-denied') {
-            showToast("⚠️ Access Denied: You may not have permission to view these records.", "error");
+            showToast("Access Denied: Check permissions.", "error");
         }
     });
     
@@ -483,7 +473,7 @@ window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collec
 
 function getFilteredData(data, filters) { 
     let subset = data; 
-    // Client-side filter for extra safety
+    // Additional client-side filter for safety, though query handles it now
     if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName); 
     return subset.filter(item => { 
         if (item.status === 'Placed') return false; 
@@ -986,6 +976,7 @@ function trackUserSession(user) {
     const sessionId = window.localStorage.getItem('np_session_id') || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     window.localStorage.setItem('np_session_id', sessionId);
 
+    // Simple parser for User Agent
     const ua = navigator.userAgent;
     let deviceName = "Unknown Device";
     if (ua.includes("Win")) deviceName = "Windows PC";
@@ -998,16 +989,18 @@ function trackUserSession(user) {
     else if (ua.includes("Firefox")) deviceName += " (Firefox)";
     else if (ua.includes("Safari") && !ua.includes("Chrome")) deviceName += " (Safari)";
 
+    // Update Session in Firestore
     const sessionRef = db.collection('users').doc(user.uid).collection('sessions').doc(sessionId);
     
     sessionRef.set({
         deviceName: deviceName,
         lastActive: Date.now(),
-        ip: "Current Device", 
+        ip: "Current Device", // In a real app, use an API or Cloud Function for IP
         isCurrent: true,
         userAgent: ua
     }, { merge: true });
 
+    // Listen for session changes to render the table
     subscribeToSessions(user.uid);
 }
 
@@ -1024,6 +1017,7 @@ function subscribeToSessions(userId) {
             const isMe = doc.id === currentSessionId;
             const dateStr = new Date(data.lastActive).toLocaleString();
             
+            // Icon selection
             let icon = 'fa-desktop';
             if (data.deviceName.includes('Android') || data.deviceName.includes('iPhone')) icon = 'fa-mobile-screen';
 
@@ -1097,6 +1091,7 @@ window.handleHubFileSelect = async (input) => {
 // 3. Global Error Handler
 window.addEventListener('error', (event) => {
     console.error("Global App Error:", event.error);
+    // Suppress trivial errors from showing toasts
     if(event.error && !event.error.toString().includes('resize')) {
          showToast("⚠️ An error occurred. Check console.", "error");
     }
