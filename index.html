@@ -7,6 +7,7 @@
 
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   
@@ -27,14 +28,6 @@
   <div id="toast" class="toast">
     <div class="toast-icon" id="toast-icon-container"><i class="fa-solid fa-circle-check"></i></div>
     <div class="toast-content"><span class="toast-message" id="toast-msg">Operation completed.</span></div>
-  </div>
-
-  <div id="birthday-card" class="birthday-card glass-panel" style="display:none;">
-    <div class="bday-icon"><i class="fa-solid fa-cake-candles"></i></div>
-    <div class="bday-content">
-      <h4>Happy Birthday! 🎉</h4>
-      <div id="bday-names" class="bday-names"></div>
-    </div>
   </div>
 
   <input type="file" id="hub-file-input" accept=".eml,.msg,.pdf,.docx" style="display:none;" onchange="handleHubFileSelect(this)">
@@ -64,22 +57,6 @@
 
           <div class="form-actions"><span class="link-text" onclick="switchAuth('forgot')">Forgot Password?</span></div>
           <button id="btn-login-action" class="btn btn-primary btn-block" onclick="handleLogin()">Login</button>
-          <p class="switch-text">First time? <span onclick="switchAuth('signup')">Activate Account</span></p>
-        </div>
-
-        <div id="form-signup" class="auth-form">
-          <h3 class="form-title">Activate Account</h3>
-          <div class="input-group"><i class="fa-solid fa-user input-icon"></i><input type="text" id="reg-name" placeholder="Full Name"></div>
-          <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reg-email" placeholder="Official Email ID"></div>
-          
-          <div class="input-group">
-            <i class="fa-solid fa-lock input-icon"></i>
-            <input type="password" id="reg-pass" placeholder="Set Password (Min 6 chars)">
-            <i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('reg-pass', this)"></i>
-          </div>
-
-          <button id="btn-signup-action" class="btn btn-primary btn-block" onclick="handleSignup()">Register</button>
-          <p class="switch-text">Back to <span onclick="switchAuth('login')">Login</span></p>
         </div>
 
         <div id="form-forgot" class="auth-form">
@@ -91,20 +68,8 @@
       </div>
     </section>
 
-    <section id="verify-screen" class="screen">
-      <div class="glass-panel auth-box">
-        <h3 class="form-title">Verify Your Email</h3>
-        <p class="subtitle">Link sent to <span id="verify-email-display" class="text-cyan"></span></p>
-        <button class="btn btn-primary btn-block" onclick="checkVerificationStatus()">I Have Verified</button>
-        <div style="margin-top:20px; display:flex; justify-content:space-between;">
-          <span class="link-text" onclick="resendVerificationEmail()">Resend Email</span>
-          <span class="link-text text-danger" onclick="firebase.auth().signOut()">Logout</span>
-        </div>
-      </div>
-    </section>
-
     <section id="dashboard-screen" class="screen">
-      
+     
       <aside class="sidebar glass-panel" id="sidebar">
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">PRISE</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
@@ -120,39 +85,9 @@
               <button class="nav-item" data-target="view-inbox" onclick="renderGmailList('Inbox', this)">
                   <span class="material-icons" style="font-size: 18px;">inbox</span> <span>Inbox</span>
               </button>
-              <button class="nav-item" onclick="renderGmailList('Starred', this)">
-                  <span class="material-icons" style="font-size: 18px;">star</span> <span>Starred</span>
-              </button>
-              <button class="nav-item" onclick="renderGmailList('Important', this)">
-                  <span class="material-icons" style="font-size: 18px;">label_important</span> <span>Important</span>
-              </button>
               <button class="nav-item" onclick="renderGmailList('Sent', this)">
                   <span class="material-icons" style="font-size: 18px;">send</span> <span>Sent</span>
               </button>
-              <button class="nav-item" onclick="renderGmailList('Drafts', this)">
-                  <span class="material-icons" style="font-size: 18px;">drafts</span> <span>Drafts</span>
-              </button>
-              
-              <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
-                  <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
-              </div>
-              <div id="categories-submenu" style="display: none; padding-left: 15px;">
-                  <button class="nav-item" onclick="renderGmailList('Social')"><small>Social</small></button>
-                  <button class="nav-item" onclick="renderGmailList('Updates')"><small>Updates</small></button>
-                  <button class="nav-item" onclick="renderGmailList('Promotions')"><small>Promotions</small></button>
-              </div>
-
-              <div class="nav-item" onclick="toggleMore()" id="more-btn" style="font-size: 0.9rem; opacity: 0.8;">
-                  <span class="material-icons" style="font-size: 16px;">expand_more</span> <span>More</span>
-              </div>
-              <div id="more-submenu" style="display: none; padding-left: 15px;">
-                  <button class="nav-item" onclick="renderGmailList('Spam')"><small>Spam</small></button>
-                  <button class="nav-item" onclick="renderGmailList('Trash')"><small>Trash</small></button>
-                  <div class="sidebarOption nav-item" onclick="openCreateLabelModal()">
-                      <span class="material-icons" style="font-size:16px;">add</span>
-                      <small>Create label</small>
-                  </div>
-              </div>
               
               <div style="margin-top: 15px; padding-left: 5px; color: gray; font-size: 10px; font-weight: bold; display:flex; justify-content:space-between; padding-right:10px;">
                   <span>LABELS</span>
@@ -171,13 +106,12 @@
           <button class="nav-item" data-target="view-employees"><i class="fa-solid fa-address-book"></i> <span>Employees</span></button>
           <button class="nav-item" data-target="view-onboarding"><i class="fa-solid fa-user-check"></i> <span>Onboarding</span></button>
           <button class="nav-item" data-target="view-placements"><i class="fa-solid fa-trophy"></i> <span>Placements</span></button>
-          <button class="nav-item" data-target="view-settings"><i class="fa-solid fa-sliders"></i> <span>Settings</span></button>
           <button class="nav-item" data-target="view-profile"><i class="fa-solid fa-user-gear"></i> <span>Profile</span></button>
         </nav>
       </aside>
 
       <main class="main-content">
-        
+       
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
           <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
@@ -199,7 +133,6 @@
         <div id="view-dashboard" class="content-view active">
           <div class="dashboard-header-row">
             <div><h2 style="margin:0;">Executive Overview</h2></div>
-            <div class="date-badge"><i class="fa-regular fa-calendar"></i> <span id="current-date-display">Live</span></div>
           </div>
           <div class="kpi-grid">
             <div class="kpi-card accent-blue">
@@ -288,7 +221,7 @@
                 <button class="btn-toggle" data-status="Active">Active</button>
                 <button class="btn-toggle" data-status="Inactive">Inactive</button>
               </div>
-          
+         
               <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="selected-count">0</span>)
               </button>
@@ -314,7 +247,7 @@
               <button class="btn-insert" onclick="manualAddPlacement()">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-          
+         
               <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)
               </button>
@@ -416,7 +349,7 @@
               <button class="btn-insert" onclick="createNewRow('onboarding')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-          
+              
               <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)
               </button>
@@ -430,17 +363,6 @@
               <table class="modern-table" id="onboarding-table"><thead id="onboarding-table-head"></thead><tbody id="onboarding-table-body"></tbody></table>
             </div>
             <div class="footer-count"><small id="onb-footer-count">Showing records</small></div>
-          </div>
-        </div>
-
-        <div id="view-settings" class="content-view">
-          <h2 style="margin-bottom: 20px; color: var(--primary);">Settings</h2>
-          <div class="glass-panel setting-card">
-            <h3>Appearance</h3>
-            <div class="setting-item">
-              <h4>Dark Mode</h4>
-              <label class="switch"><input type="checkbox" id="setting-theme-toggle" checked onchange="handleSettingsTheme(this)"><span class="slider round"></span></label>
-            </div>
           </div>
         </div>
 
@@ -464,7 +386,7 @@
               </div>
               <div class="save-container"><button class="btn btn-primary btn-block btn-lg" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></div>
             </div>
-            
+           
             <div class="profile-editor-card glass-panel">
               <div id="tab-personal" class="tab-content active">
                 <h3 class="tab-title">Basic Information</h3>
@@ -592,16 +514,6 @@
               menu.style.display = 'none';
               icon.classList.remove('fa-chevron-up');
               icon.classList.add('fa-chevron-down');
-          }
-      }
-      
-      function handleSettingsTheme(checkbox) {
-          if (checkbox.checked) {
-              document.body.classList.remove('light-mode');
-              localStorage.setItem('np_theme', 'dark');
-          } else {
-              document.body.classList.add('light-mode');
-              localStorage.setItem('np_theme', 'light');
           }
       }
   </script>
