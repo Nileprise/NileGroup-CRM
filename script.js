@@ -39,7 +39,7 @@ const ALLOWED_USERS = {
     'ali@nileprise.com': { name: 'Asif', role: 'Employee' },
     'mdi@nileprise.com': { name: 'Ikram', role: 'Employee' },
     'mmr@nileprise.com': { name: 'Manikanta', role: 'Employee' },
-    'maj@nileprise.com': { name: 'Mazher', role: 'Employee' },
+    'vaj@nileprise.com': { name: 'Ajay', role: 'Employee' },
     'msa@nileprise.com': { name: 'Shoeb', role: 'Employee' },
     'fma@nileprise.com': { name: 'Fayaz', role: 'Manager' },
     'an@nileprise.com': { name: 'Akhil', role: 'Manager' },
@@ -199,15 +199,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (user) {
             state.user = user; const known = ALLOWED_USERS[user.email.toLowerCase()];
             state.userRole = known ? known.role : 'Viewer'; state.currentUserName = known ? known.name : (user.displayName || 'Staff Member');
-           
+            
             // 1. Update Profile UI
             updateUserProfile(user, known); 
-            // 2. Track Session -> DELETED AS REQUESTED
+            // 2. Track Session
+            trackUserSession(user);
             // 3. Switch Screen
             switchScreen('app'); 
-            // 4. Start Listeners (SECURITY FIX: RBAC)
+            // 4. Start Listeners
             initRealtimeListeners(); startAutoLogoutTimer(); checkGmailAuth(); loadCurrentUserProfile(user.email);
-           
+            
             const savedView = localStorage.getItem('np_current_view');
             if (savedView) { const navBtn = document.querySelector(`.nav-item[data-target="${savedView}"]`); if (navBtn) { navBtn.click(); } else { document.querySelector('.nav-item[data-target="view-dashboard"]')?.click(); } } 
             else { document.querySelector('.nav-item[data-target="view-dashboard"]')?.click(); }
@@ -221,14 +222,6 @@ document.addEventListener('DOMContentLoaded', () => {
 function switchScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); const target = document.getElementById(id === 'app' ? 'dashboard-screen' : id + '-screen'); if(target) target.classList.add('active'); }
 
 function setupUIListeners() {
-    // SYNC TABS: Listen for storage changes
-    window.addEventListener('storage', (e) => {
-        if (e.key === 'np_current_view') {
-            const navBtn = document.querySelector(`.nav-item[data-target="${e.newValue}"]`);
-            if (navBtn) navBtn.click();
-        }
-    });
-
     document.querySelectorAll('.nav-item').forEach(btn => {
         btn.addEventListener('click', (e) => {
             if(btn.onclick && btn.onclick.toString().includes('toggle')) return;
@@ -253,19 +246,7 @@ function setupUIListeners() {
     const mobileBtn = document.getElementById('btn-mobile-menu'); if(mobileBtn) { mobileBtn.onclick = () => { document.querySelector('.sidebar').classList.toggle('mobile-open'); document.getElementById('sidebar-overlay').classList.toggle('active'); }; }
     const overlay = document.getElementById('sidebar-overlay'); if(overlay) { overlay.onclick = () => { document.querySelector('.sidebar').classList.remove('mobile-open'); document.getElementById('sidebar-overlay').classList.remove('active'); }; }
     const themeToggle = document.getElementById('theme-toggle'); if(themeToggle) { themeToggle.onclick = () => { document.body.classList.toggle('light-mode'); localStorage.setItem('np_theme', document.body.classList.contains('light-mode') ? 'light' : 'dark'); }; }
-    
-    // SECURITY FIX: SECURE LOGOUT
-    const logoutBtn = document.getElementById('btn-logout'); 
-    if (logoutBtn) { 
-        logoutBtn.onclick = async () => { 
-            if (confirm("Are you sure you want to logout?")) { 
-                localStorage.removeItem('np_session_id'); // Clear Session ID
-                state.candidates = []; state.hubData = []; state.placements = []; // Clear Memory
-                await firebase.auth().signOut();
-                window.location.reload(); // FORCE RELOAD to clear Firestore Cache
-            } 
-        }; 
-    }
+    const logoutBtn = document.getElementById('btn-logout'); if (logoutBtn) { logoutBtn.onclick = () => { if (confirm("Are you sure you want to logout?")) { firebase.auth().signOut().then(() => showToast("Logged out")); } }; }
 }
 
 function setupFilterListeners() {
@@ -280,12 +261,22 @@ function setupFilterListeners() {
     const gSearch = document.getElementById('gmail-search-input'); if(gSearch) { gSearch.addEventListener('keydown', (e) => { if(e.key === 'Enter') { renderGmailList(state.gmail.currentLabel); } }); }
 }
 
-/* Auth Helpers */
+/* Auth Helpers & Password Fix */
 window.togglePasswordVisibility = (inputId, iconElement) => {
     const input = document.getElementById(inputId);
-    if (input.type === "password") { input.type = "text"; iconElement.classList.remove('fa-eye'); iconElement.classList.add('fa-eye-slash'); iconElement.style.color = "var(--primary)"; } 
-    else { input.type = "password"; iconElement.classList.remove('fa-eye-slash'); iconElement.classList.add('fa-eye'); iconElement.style.color = ""; }
+    if (input.type === "password") {
+        input.type = "text";
+        iconElement.classList.remove('fa-eye');
+        iconElement.classList.add('fa-eye-slash');
+        iconElement.style.color = "var(--primary)";
+    } else {
+        input.type = "password";
+        iconElement.classList.remove('fa-eye-slash');
+        iconElement.classList.add('fa-eye');
+        iconElement.style.color = ""; 
+    }
 };
+
 window.switchAuth = (type) => { document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active')); document.getElementById(`form-${type}`).classList.add('active'); };
 window.handleReset = () => { const email = document.getElementById('reset-email').value; if(!email) return showToast("Enter email"); auth.sendPasswordResetEmail(email).then(() => { showToast("Reset link sent"); switchAuth('login'); }).catch(e => showToast(e.message)); };
 window.checkVerificationStatus = () => { auth.currentUser.reload().then(() => { if(auth.currentUser.emailVerified) location.reload(); else showToast("Not verified yet. Check spam folder."); }); };
@@ -354,27 +345,20 @@ window.toggleCategories = () => { const sub = document.getElementById('categorie
 function createMimeMessage(to, subject, body) { const email = [`To: ${to}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/html; charset=utf-8", "", body].join("\n"); return btoa(unescape(encodeURIComponent(email))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); } window.openComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'flex'; }; window.closeComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'none'; }; window.sendCrmEmail = async () => { const to = document.getElementById('compose-to').value.trim(); const subject = document.getElementById('compose-subject').value; const body = document.getElementById('compose-message').value; if(!to || !subject) return showToast("Recipient and Subject required"); const sendBtn = document.querySelector('.compose-footer .btn-primary'); const originalText = sendBtn.innerHTML; sendBtn.innerHTML = 'Sending...'; sendBtn.disabled = true; try { if (!state.gmail.gapiInited || !gapi.client.getToken()) throw new Error("Gmail not connected."); const raw = createMimeMessage(to, subject, body.replace(/\n/g, '<br>')); await gapi.client.gmail.users.messages.send({ 'userId': 'me', 'resource': { 'raw': raw } }); showToast("Email Sent!"); closeComposeModal(); const candidate = state.candidates.find(c => (c.gmail && c.gmail.includes(to)) || (c.email && c.email.includes(to))); if(candidate) { let logs = candidate.submissionLog || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: subject, type: 'Outbound Email', tech: candidate.tech||'General', recruiter: state.currentUserName, timestamp: Date.now() }); await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs }); showToast("Logged to Hub"); } document.getElementById('compose-to').value = ''; document.getElementById('compose-subject').value = ''; document.getElementById('compose-message').value = ''; } catch (err) { showToast("Send Failed: " + err.message); } finally { sendBtn.innerHTML = originalText; sendBtn.disabled = false; } };
 
 /* ==========================================================================
-   6. REALTIME LISTENERS & ISOLATED DATA LOGIC (SECURE RBAC)
+   6. REALTIME LISTENERS & ISOLATED DATA LOGIC
    ========================================================================== */
 function initRealtimeListeners() {
     let candQuery = db.collection('candidates');
     let hubQuery = db.collection('hub');
     
-    // SECURITY FIX: ROLE-BASED ACCESS CONTROL
+    // SECURITY FIX: If user is Employee, ONLY fetch data assigned to them.
+    // Managers/Admins get everything.
     if (state.userRole === 'Employee') {
-        const mappedName = ALLOWED_USERS[state.user.email.toLowerCase()] 
-            ? ALLOWED_USERS[state.user.email.toLowerCase()].name 
-            : null;
-
-        if (mappedName) {
-            // Only fetch data assigned to this recruiter
-            candQuery = candQuery.where('recruiter', '==', mappedName);
-            hubQuery = hubQuery.where('recruiter', '==', mappedName);
-        } else {
-            console.warn("User email not mapped. Viewing restricted.");
-            candQuery = candQuery.where('recruiter', '==', 'NON_EXISTENT');
-            hubQuery = hubQuery.where('recruiter', '==', 'NON_EXISTENT');
-        }
+        // NOTE: This requires a Composite Index in Firestore (See console for link)
+        candQuery = candQuery.where('recruiter', '==', state.currentUserName);
+        
+        // If your rules restrict Hub reading, filter this too:
+        // hubQuery = hubQuery.where('recruiter', '==', state.currentUserName);
     }
 
     // 1. CANDIDATES LISTENER
@@ -389,6 +373,8 @@ function initRealtimeListeners() {
         });
         
         state.metadata.techs = Array.from(techs).sort();
+        
+        // Client-side sort for Drag & Drop order
         state.candidates.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
@@ -401,37 +387,37 @@ function initRealtimeListeners() {
         renderDashboardCharts();
     }, (error) => {
         console.error("Candidate Listener Error:", error);
-        if(error.code === 'permission-denied') showToast("Access Denied: Check permissions.", "error");
+        if(error.code === 'permission-denied') {
+            showToast("Access Denied: Check permissions.", "error");
+        }
     });
     
     // 2. HUB LISTENER
     hubQuery.orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
         state.hubData = [];
         snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
+        
         state.hubData.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
             return aOrder - bOrder; 
         });
+        
         updateHubStats(state.hub.filterType, state.hub.date);
     });
 
-    // 3. EMPLOYEES (SECURE FILTERING)
-    let empQuery = db.collection('employees').orderBy('createdAt', 'desc');
-    if (state.userRole === 'Employee') {
-        // Employee can ONLY see their own profile
-        empQuery = empQuery.where('officialEmail', '==', state.user.email);
-    }
-
-    empQuery.onSnapshot(snap => {
+    // 3. EMPLOYEES (Staff Directory)
+    db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.employees = []; 
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
+        
         state.employees.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
             return aOrder - bOrder; 
         });
         
+        // Extract Recruiters for Dropdown
         const recruiters = new Set(); 
         state.employees.forEach(e => { if(e.first) recruiters.add(e.first.trim()); });
         state.metadata.recruiters = Array.from(recruiters)
@@ -443,7 +429,7 @@ function initRealtimeListeners() {
         updateDashboardStats();
     });
 
-    // 4. ONBOARDING (HR Only)
+    // 4. ONBOARDING (HR Only - Usually)
     db.collection('onboarding').orderBy('createdAt', 'desc').onSnapshot(snap => { 
         state.onboarding = []; 
         snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() })); 
@@ -453,25 +439,26 @@ function initRealtimeListeners() {
             return aOrder - bOrder; 
         });
         renderOnboardingTable(); 
-    }, (error) => { console.log("Onboarding access restricted"); });
+    }, (error) => {
+        // Silent fail for employees who shouldn't see onboarding
+        console.log("Onboarding access restricted"); 
+    });
 
-    // 5. PLACEMENTS (SECURE FILTERING)
-    if (state.userRole !== 'Employee') {
-        db.collection('placements').orderBy('createdAt', 'desc').onSnapshot(snap => {
-            state.placements = []; 
-            snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
-            state.placements.sort((a, b) => { 
-                const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
-                const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
-                return aOrder - bOrder; 
-            });
-            renderPlacementTable(); 
-            updateDashboardStats();
+    // 5. PLACEMENTS (Managers Only)
+    db.collection('placements').orderBy('createdAt', 'desc').onSnapshot(snap => {
+        state.placements = []; 
+        snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
+        state.placements.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
         });
-    } else {
-        state.placements = [];
-        renderPlacementTable();
-    }
+        renderPlacementTable(); 
+        updateDashboardStats();
+    }, (error) => {
+        // Silent fail for employees
+        console.log("Placement access restricted"); 
+    });
 
     loadCustomColumns();
 }
@@ -683,8 +670,7 @@ function renderPlacementTable() {
 }
 
 function renderHubTable() {
-    let data = state.hubData; 
-    // SECURITY FILTER: Handled by listener, but safe to keep client-side check
+    let data = state.hubData; // HUB ISOLATION
     if(state.userRole === 'Employee' && state.currentUserName) data = data.filter(c => c.recruiter === state.currentUserName);
     if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
     const { start, end } = state.hub.range; const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
@@ -809,13 +795,6 @@ function refreshViewForType(type) { if(type==='cand') renderCandidateTable(); el
 function updateSelectButtons(type) { let btn, countSpan; if(type === 'cand') { btn = document.getElementById('btn-delete-selected'); countSpan = document.getElementById('selected-count'); } else if(type === 'emp') { btn = document.getElementById('btn-delete-employee'); countSpan = document.getElementById('emp-selected-count'); } else if(type === 'onb') { btn = document.getElementById('btn-delete-onboarding'); countSpan = document.getElementById('onboarding-selected-count'); } else if(type === 'place') { btn = document.getElementById('btn-delete-placement'); countSpan = document.getElementById('place-selected-count'); } else if(type === 'hub') { btn = document.getElementById('btn-delete-hub'); countSpan = document.getElementById('hub-selected-count'); } if (!btn) return; if (state.selection[type] && state.selection[type].size > 0 && state.userRole !== 'Employee') { btn.style.display = 'inline-flex'; btn.style.opacity = '1'; if(countSpan) countSpan.innerText = state.selection[type].size; } else { btn.style.display = 'none'; if(countSpan) countSpan.innerText = '0'; } }
 
 window.executeDelete = async () => {
-    // SECURITY GUARD
-    if (state.userRole === 'Employee') {
-        showToast("⛔ Access Denied: You do not have permission to delete.");
-        closeDeleteModal();
-        return;
-    }
-
     const type = state.pendingDelete.type; closeDeleteModal(); if(!type) return; 
     let col = (type==='cand') ? 'candidates' : (type==='hub' ? 'hub' : (type==='place' ? 'placements' : (type==='emp'?'employees':'onboarding')));
     const ids = Array.from(state.selection[type]);
@@ -826,10 +805,7 @@ window.executeDelete = async () => {
     try { await batch.commit(); } catch(e) { console.error("Background deletion error:", e); showToast("Delete Failed: " + e.message); }
 };
 
-window.deletePlacement = async (id) => { 
-    if (state.userRole === 'Employee') return showToast("⛔ Access Denied");
-    if(confirm("Remove this placement?")) { await db.collection('placements').doc(id).delete(); showToast("Placement removed"); } 
-};
+window.deletePlacement = async (id) => { if(confirm("Remove this placement?")) { await db.collection('placements').doc(id).delete(); showToast("Placement removed"); } };
 
 /* ========================================================
    11. AUTO-SAVE DRAG & DROP (Fractional Indexing)
@@ -880,12 +856,6 @@ window.createNewRow = async (type) => {
 };
 
 window.manualAddPlacement = async () => {
-    // SECURITY GUARD
-    if (state.userRole === 'Employee') {
-        showToast("⛔ Access Denied: Managers only.");
-        return;
-    }
-
     const ts = Date.now() + Math.random();
     let defaultDate = new Date().toISOString().split('T')[0];
     const mVal = document.getElementById('placement-month-picker')?.value;
@@ -945,12 +915,6 @@ window.triggerHubNote = async (candId, logType) => { const note = prompt("Enter 
 window.deleteHubLog = async (candId, logType, index) => { if(!confirm("Remove this log entry?")) return; const candidate = state.hubData.find(c => c.id === candId); let logs = candidate[logType] || []; logs.splice(index, 1); await db.collection('hub').doc(candId).update({ [logType]: logs }); showToast("Log Removed"); }
 
 window.moveToPlacements = async (id) => {
-    // SECURITY GUARD
-    if (state.userRole === 'Employee') {
-        showToast("⛔ Authorization Required: Ask a Manager to move this candidate.");
-        return;
-    }
-
     const cand = state.candidates.find(c => c.id === id); if(!cand) return;
     const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show');
     document.querySelector(`tr[data-id="${id}"]`)?.remove(); // Optimistic UI
@@ -1005,9 +969,98 @@ let inactivityTimer;
 function startAutoLogoutTimer() { const TIMEOUT_DURATION = 10 * 60 * 1000; function resetTimer() { if (!firebase.auth().currentUser) return; clearTimeout(inactivityTimer); inactivityTimer = setTimeout(() => { firebase.auth().signOut().then(() => { showToast("Session expired"); switchScreen('auth'); }); }, TIMEOUT_DURATION); } ['mousemove', 'keydown', 'click'].forEach(e => document.addEventListener(e, resetTimer)); resetTimer(); }
 function stopAutoLogoutTimer() { clearTimeout(inactivityTimer);}
 
+/* ========================================================
+   14. SESSION MANAGEMENT (Device Tracking)
+   ======================================================== */
+function trackUserSession(user) {
+    const sessionId = window.localStorage.getItem('np_session_id') || `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    window.localStorage.setItem('np_session_id', sessionId);
+
+    // Simple parser for User Agent
+    const ua = navigator.userAgent;
+    let deviceName = "Unknown Device";
+    if (ua.includes("Win")) deviceName = "Windows PC";
+    else if (ua.includes("Mac")) deviceName = "Macintosh";
+    else if (ua.includes("Linux")) deviceName = "Linux PC";
+    else if (ua.includes("Android")) deviceName = "Android Device";
+    else if (ua.includes("iPhone") || ua.includes("iPad")) deviceName = "iOS Device";
+
+    if (ua.includes("Chrome")) deviceName += " (Chrome)";
+    else if (ua.includes("Firefox")) deviceName += " (Firefox)";
+    else if (ua.includes("Safari") && !ua.includes("Chrome")) deviceName += " (Safari)";
+
+    // Update Session in Firestore
+    const sessionRef = db.collection('users').doc(user.uid).collection('sessions').doc(sessionId);
+    
+    sessionRef.set({
+        deviceName: deviceName,
+        lastActive: Date.now(),
+        ip: "Current Device", // In a real app, use an API or Cloud Function for IP
+        isCurrent: true,
+        userAgent: ua
+    }, { merge: true });
+
+    // Listen for session changes to render the table
+    subscribeToSessions(user.uid);
+}
+
+function subscribeToSessions(userId) {
+    db.collection('users').doc(userId).collection('sessions').orderBy('lastActive', 'desc').onSnapshot(snap => {
+        const tbody = document.getElementById('session-list-body');
+        if(!tbody) return;
+        
+        tbody.innerHTML = '';
+        const currentSessionId = window.localStorage.getItem('np_session_id');
+
+        snap.forEach(doc => {
+            const data = doc.data();
+            const isMe = doc.id === currentSessionId;
+            const dateStr = new Date(data.lastActive).toLocaleString();
+            
+            // Icon selection
+            let icon = 'fa-desktop';
+            if (data.deviceName.includes('Android') || data.deviceName.includes('iPhone')) icon = 'fa-mobile-screen';
+
+            const row = `
+                <tr style="border-bottom: 1px solid var(--glass-border);">
+                    <td style="padding: 15px;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <div style="width:36px; height:36px; background:rgba(255,255,255,0.05); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--primary);">
+                                <i class="fa-solid ${icon}"></i>
+                            </div>
+                            <div>
+                                <div style="font-weight:600; color:var(--text-main); font-size:0.9rem;">${data.deviceName}</div>
+                                ${isMe ? '<span class="status-badge active" style="font-size:0.6rem; padding:2px 6px;">THIS DEVICE</span>' : ''}
+                            </div>
+                        </div>
+                    </td>
+                    <td style="color:var(--text-muted);">${data.ip || 'Unknown'}</td>
+                    <td style="color:var(--text-muted);">${dateStr}</td>
+                    <td style="text-align:right;">
+                        ${!isMe ? `<button class="btn-text-danger" onclick="revokeSession('${userId}', '${doc.id}')">Revoke</button>` : ''}
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    });
+}
+
+window.revokeSession = async (userId, sessionId) => {
+    if(!confirm("Log out this device?")) return;
+    try {
+        await db.collection('users').doc(userId).collection('sessions').doc(sessionId).delete();
+        showToast("Device logged out");
+    } catch(e) {
+        showToast("Error revoking session");
+    }
+};
+
 /* ==========================================================================
-   14. FINAL POLISH: MISSING UI HANDLERS & SAFETY CHECKS
+   15. FINAL POLISH: MISSING UI HANDLERS & SAFETY CHECKS
    ========================================================================== */
+
+// 1. Label Management "Done" Button
 window.toggleManageMode = () => {
     state.labelManageMode = !state.labelManageMode;
     const indicator = document.getElementById('manage-indicator');
@@ -1024,28 +1077,37 @@ window.toggleManageMode = () => {
     }
 };
 
+// 2. Hub File Upload Handler
 window.handleHubFileSelect = async (input) => {
     if (input.files && input.files[0]) {
         const file = input.files[0];
         showToast(`Uploading ${file.name}...`);
-        setTimeout(() => { showToast("File uploaded successfully (Demo)"); }, 1500);
+        setTimeout(() => {
+            showToast("File uploaded successfully (Demo)");
+        }, 1500);
     }
 };
 
+// 3. Global Error Handler
 window.addEventListener('error', (event) => {
     console.error("Global App Error:", event.error);
+    // Suppress trivial errors from showing toasts
     if(event.error && !event.error.toString().includes('resize')) {
          showToast("⚠️ An error occurred. Check console.", "error");
     }
 });
 
+// 4. Initialize Tooltips & UI State on Load
 document.addEventListener('DOMContentLoaded', () => {
+    // Fix Mobile Sidebar closing when clicking outside
     document.addEventListener('click', (e) => {
         const sidebar = document.getElementById('sidebar');
         const btn = document.getElementById('btn-mobile-menu');
         const overlay = document.getElementById('sidebar-overlay');
         
-        if (sidebar && sidebar.classList.contains('mobile-open') && !sidebar.contains(e.target) && !btn.contains(e.target)) {
+        if (sidebar && sidebar.classList.contains('mobile-open') && 
+            !sidebar.contains(e.target) && 
+            !btn.contains(e.target)) {
             sidebar.classList.remove('mobile-open');
             if(overlay) overlay.classList.remove('active');
         }
