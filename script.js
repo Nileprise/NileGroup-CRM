@@ -197,30 +197,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     auth.onAuthStateChanged(user => {
         if (user) {
-            state.user = user; 
-            
-            // FIX: Ensure case-insensitive matching for Mobile
-            const emailLower = user.email.toLowerCase();
-            const known = ALLOWED_USERS[emailLower];
-
-            state.userRole = known ? known.role : 'Viewer'; 
-            state.currentUserName = known ? known.name : (user.displayName || 'Staff Member');
-            
-            // SECURITY FIX: HARDCODE MANAGER ACCESS FOR AKHIL
-            if(emailLower === 'an@nileprise.com') {
-                state.userRole = 'Manager';
-                state.currentUserName = 'Akhil';
-            }
-            
-            console.log("Logged In:", emailLower, "Role:", state.userRole);
-
+            state.user = user; const known = ALLOWED_USERS[user.email.toLowerCase()];
+            state.userRole = known ? known.role : 'Viewer'; state.currentUserName = known ? known.name : (user.displayName || 'Staff Member');
+           
             // 1. Update Profile UI
             updateUserProfile(user, known); 
-            // 2. Switch Screen
+            // 2. Track Session -> DELETED AS REQUESTED
+            // 3. Switch Screen
             switchScreen('app'); 
-            // 3. Start Listeners (SECURITY FIX: RBAC)
+            // 4. Start Listeners (SECURITY FIX: RBAC)
             initRealtimeListeners(); startAutoLogoutTimer(); checkGmailAuth(); loadCurrentUserProfile(user.email);
-            
+           
             const savedView = localStorage.getItem('np_current_view');
             if (savedView) { const navBtn = document.querySelector(`.nav-item[data-target="${savedView}"]`); if (navBtn) { navBtn.click(); } else { document.querySelector('.nav-item[data-target="view-dashboard"]')?.click(); } } 
             else { document.querySelector('.nav-item[data-target="view-dashboard"]')?.click(); }
