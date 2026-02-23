@@ -696,11 +696,16 @@ function renderPlacementTable() {
     const thead = document.querySelector('#placement-table-head'); 
     const customHeaders = (state.customColumns.placements || []).map(col => `<th>${thAlign(col.name, 'placements')}</th>`).join('');
     
-    if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
-    document.getElementById('placement-footer-count').innerText = `Showing ${placed.length} records`;
+    if(thead) {
+        thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
+    }
+    const countEl = document.getElementById('placement-footer-count');
+    if(countEl) countEl.innerText = `Showing ${placed.length} records`;
     
-    document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'placements', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last}</td><td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech}</td><td tabindex="0" data-field="location" onclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location||''}</td><td tabindex="0" data-field="contract" onclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract||''}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
-    
+    const tbody = document.getElementById('placement-table-body');
+    if(tbody) {
+        tbody.innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'placements', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last}</td><td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech}</td><td tabindex="0" data-field="location" onclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location||''}</td><td tabindex="0" data-field="contract" onclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract||''}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
+    }
     restoreColumnOrder('placement-table', 'placements'); applyAlignStyles('placements', 'placement-table'); initColumnDragDrop('placement-table', 'placements');
 }
 
@@ -748,8 +753,6 @@ function renderHubTable() {
 /* ==========================================================================
    13. HUB STATS & LOGIC
    ========================================================================== */
-window.toggleHubRow = (id) => { state.hub.expandedRowId = state.hub.expandedRowId === id ? null : id; renderHubTable(); };
-
 window.updateHubStats = (filterType, dateVal) => {
     if(filterType) state.hub.filterType = filterType; 
     if(dateVal) state.hub.date = dateVal;
@@ -815,7 +818,7 @@ window.triggerHubNote = async (candId, logType) => {
     if(!candidate) return; 
     let logs = candidate[logType] || []; 
     logs.push({ date: new Date().toISOString().split('T')[0], subject: note, recruiter: state.currentUserName, timestamp: Date.now(), type: 'Manual Entry' }); 
-    await db.collection('hub').doc(candId).update({ [logType]: logs }); 
+    await db.collection('candidates').doc(candId).update({ [logType]: logs }); // FIX: ensure writing to 'candidates'
     showToast("Activity Logged"); 
 };
 
@@ -824,7 +827,7 @@ window.deleteHubLog = async (candId, logType, index) => {
     const candidate = state.hubData.find(c => c.id === candId); 
     let logs = candidate[logType] || []; 
     logs.splice(index, 1); 
-    await db.collection('hub').doc(candId).update({ [logType]: logs }); 
+    await db.collection('candidates').doc(candId).update({ [logType]: logs }); // FIX: ensure writing to 'candidates'
     showToast("Log Removed"); 
 }
 
@@ -853,7 +856,9 @@ window.handleHubFileSelect = (input) => {
         let logs = candidate[field] || [];
         const newEntry = { date: dateVal, link: url, timestamp: Date.now() };
         logs.push(newEntry);
-        return db.collection(candidate.status === 'Placed' ? 'placements' : (state.hubData.find(c => c.id === id) ? 'hub' : 'candidates')).doc(id).update({ [field]: logs });
+        // Correcting the collection location
+        const targetCollection = candidate.status === 'Placed' ? 'placements' : 'candidates';
+        return db.collection(targetCollection).doc(id).update({ [field]: logs });
     }).then(() => {
         showToast("Email Attached!");
         input.value = '';
@@ -904,8 +909,69 @@ window.deleteProfilePhoto = () => {
 };
 
 /* ==========================================================================
-   15. DATA MANIPULATION, INLINE EDITS & DELETE (Robust)
+   15. DATA MANIPULATION & INLINE EDITS (NEW ROW FIXES APPLIED)
    ========================================================================== */
+window.createNewRow = async (type) => {
+    const ts = Date.now() + Math.random(); 
+    const newOrderIndex = -ts;
+    
+    // Automatically assign the current user so the row doesn't disappear for Employees
+    const defaultRecruiter = state.userRole === 'Employee' ? state.currentUserName : '';
+
+    let data = { 
+        first: '', last: '', mobile: '', wa: '', tech: '', comments: '', 
+        assigned: new Date().toISOString().split('T')[0], // Give it today's date
+        recruiter: defaultRecruiter, 
+        orderIndex: newOrderIndex, 
+        createdAt: ts 
+    };
+    
+    let collectionName = type;
+    
+    if (type === 'candidates') { 
+        data.status = 'Active'; 
+    } 
+    else if (type === 'employees') { 
+        data.designation = ''; data.workMobile = ''; data.personalMobile = ''; 
+        data.officialEmail = state.userRole === 'Employee' ? state.user.email : '';
+        data.personalEmail = ''; data.dob = ''; 
+    } 
+    else if (type === 'onboarding') { 
+        data.status = 'Onboarding'; data.dob = ''; 
+    }
+    else if (type === 'hub') { 
+        data.status = 'Active'; 
+        collectionName = 'candidates'; // Hub reads from the candidates database
+        data.submissionLog = []; data.screeningLog = []; data.interviewLog = [];
+    }
+
+    try { await db.collection(collectionName).add(data); showToast(`Blank row added to ${type}`); } 
+    catch (error) { console.error("Insertion error:", error); showToast("Error adding row"); } 
+};
+
+window.manualAddPlacement = async () => {
+    const ts = Date.now() + Math.random();
+    let defaultDate = new Date().toISOString().split('T')[0];
+    const mVal = document.getElementById('placement-month-picker')?.value;
+    const yVal = document.getElementById('placement-year-picker')?.value;
+    
+    if (state.placementFilter === 'monthly' && mVal) defaultDate = `${mVal}-01`;
+    else if (state.placementFilter === 'yearly' && yVal) defaultDate = `${yVal}-01-01`;
+
+    const defaultRecruiter = state.userRole === 'Employee' ? state.currentUserName : '';
+
+    const data = { 
+        first: '', last: '', tech: '', location: '', contract: '', 
+        assigned: defaultDate, 
+        status: 'Placed', 
+        recruiter: defaultRecruiter,
+        createdAt: ts, orderIndex: -ts 
+    };
+    
+    try { await db.collection('placements').add(data); showToast("Blank placement added"); } 
+    catch (error) { showToast("Error adding placement"); } 
+};
+
 window.inlineEdit = (id, field, col, el) => { 
     if (el.querySelector('input')) return; 
     el.tabIndex = 0; el.dataset.field = field;
@@ -982,19 +1048,6 @@ window.editCustomStatus = async (id) => {
     const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show'); 
 };
 
-window.moveToPlacements = async (id) => {
-    const cand = state.candidates.find(c => c.id === id); if(!cand) return;
-    const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show');
-    document.querySelector(`tr[data-id="${id}"]`)?.remove(); // Optimistic UI
-    try { 
-        const batch = db.batch(); 
-        const newPlaceData = { ...cand, status: 'Placed', assigned: new Date().toISOString().split('T')[0] }; 
-        batch.set(db.collection('placements').doc(id), newPlaceData); 
-        batch.delete(db.collection('candidates').doc(id)); 
-        await batch.commit(); showToast("Moved to Placements"); 
-    } catch(e) { console.error("Error moving to placements:", e); showToast("Move failed"); }
-};
-
 let activeColumnContext = null;
 window.openAddColumnModal = (context) => { 
     activeColumnContext = context; const modal = document.getElementById('add-column-modal'); modal.style.display = 'flex'; document.getElementById('new-col-name').focus(); 
@@ -1059,7 +1112,7 @@ window.closeDeleteModal = () => { document.getElementById('delete-modal').style.
 
 window.executeDelete = async () => {
     const type = state.pendingDelete.type; closeDeleteModal(); if(!type) return; 
-    let col = (type==='cand') ? 'candidates' : (type==='hub' ? 'hub' : (type==='place' ? 'placements' : (type==='emp'?'employees':'onboarding')));
+    let col = (type==='cand') ? 'candidates' : (type==='hub' ? 'candidates' : (type==='place' ? 'placements' : (type==='emp'?'employees':'onboarding')));
     const ids = Array.from(state.selection[type]);
     state.selection[type].clear(); updateSelectButtons(type);
     const masterBox = document.getElementById(`select-all-${type}`); if(masterBox) masterBox.checked = false;
