@@ -49,7 +49,6 @@ const state = {
     employees: [],
     placements: [],
     allUsers: [],
-    hubData: [],
     labels: [],
     selectedLabelColor: '#e91e63',
     
@@ -106,23 +105,7 @@ const dom = {
         app: document.getElementById('dashboard-screen'), 
         verify: document.getElementById('verify-screen') 
     },
-    navItems: document.querySelectorAll('.nav-item'),
-    views: {
-        dashboard: document.getElementById('view-dashboard'),
-        inbox: document.getElementById('view-inbox'),
-        candidates: document.getElementById('view-candidates'),
-        hub: document.getElementById('view-hub'),
-        employees: document.getElementById('view-employees'),
-        onboarding: document.getElementById('view-onboarding'),
-        settings: document.getElementById('view-settings'),
-        profile: document.getElementById('view-profile'),
-        placements: document.getElementById('view-placements')
-    },
-    headerUpdated: document.getElementById('header-updated'),
-    gmail: {
-        list: document.getElementById('gmail-rows-container'),
-        searchInput: document.getElementById('gmail-search-input')
-    }
+    navItems: document.querySelectorAll('.nav-item')
 };
 
 /* ==========================================================================
@@ -256,18 +239,17 @@ window.handleSignup = () => {
 };
 
 /* ==========================================================================
-   7. REALTIME LISTENERS & ISOLATED DATA LOGIC (NO LIMITS)
+   7. REALTIME LISTENERS & DATA ENGINE (FIXED FOR REFRESH BUG)
    ========================================================================== */
 function initRealtimeListeners() {
     let candQuery = db.collection('candidates');
-    let hubQuery = db.collection('hub');
     
     if (state.userRole === 'Employee') {
         candQuery = candQuery.where('recruiter', '==', state.currentUserName);
     }
 
-    // CANDIDATES LISTENER - Removed .limit(200) to show ALL records
-    candQuery.orderBy('createdAt', 'desc').onSnapshot(snap => {
+    // REMOVED .orderBy() to prevent Missing Index errors that erase data on refresh
+    candQuery.onSnapshot(snap => {
         state.candidates = []; 
         const techs = new Set();
         
@@ -278,41 +260,30 @@ function initRealtimeListeners() {
         });
         
         state.metadata.techs = Array.from(techs).sort();
+        
+        // Client-side sort ensures records are ordered correctly without Firebase blocking it
         state.candidates.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
             return aOrder - bOrder; 
         });
         
-        // Refresh Table and Selection Count
-        const currentSelectedCount = state.selection.cand.size;
         renderCandidateTable(); 
-        if (currentSelectedCount > 0) updateSelectButtons('cand');
-
+        updateSelectButtons('cand');
+        updateHubStats(); // Updates Hub using candidate data
         renderDropdowns(); 
         updateDashboardStats(); 
         renderDashboardCharts();
-        if(dom.headerUpdated) dom.headerUpdated.innerText = 'Synced';
+        
+        const headerText = document.getElementById('header-updated');
+        if(headerText) headerText.innerText = 'Synced';
     }, (error) => {
         console.error("Candidate Listener Error:", error);
     });
     
-    // HUB LISTENER - Removed .limit(200) to show ALL records
-    hubQuery.orderBy('createdAt', 'desc').onSnapshot(snap => {
-        state.hubData = [];
-        snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
-        
-        state.hubData.sort((a, b) => { 
-            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
-            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
-            return aOrder - bOrder; 
-        });
-        
-        updateHubStats(state.hub.filterType, state.hub.date);
-    });
 
     // EMPLOYEES (Staff Directory)
-    db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
+    db.collection('employees').onSnapshot(snap => {
         state.employees = []; 
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
         
@@ -335,7 +306,7 @@ function initRealtimeListeners() {
     });
 
     // ONBOARDING
-    db.collection('onboarding').orderBy('createdAt', 'desc').onSnapshot(snap => { 
+    db.collection('onboarding').onSnapshot(snap => { 
         state.onboarding = []; 
         snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() })); 
         state.onboarding.sort((a, b) => { 
@@ -350,7 +321,7 @@ function initRealtimeListeners() {
     });
 
     // PLACEMENTS 
-    db.collection('placements').orderBy('createdAt', 'desc').onSnapshot(snap => {
+    db.collection('placements').onSnapshot(snap => {
         state.placements = []; 
         snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
         state.placements.sort((a, b) => { 
@@ -461,10 +432,14 @@ function getFilteredData(data, filters) {
     return subset.filter(item => { 
         if (item.status === 'Placed') return false; 
         const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text); 
-        const matchesRec = filters.recruiter ? item.recruiter === filters.recruiter : true; 
-        const matchesTech = filters.tech ? item.tech === filters.tech : true; 
+        const matchesRec = filters.recruiter ? item.recruiter === item.recruiter : true; // Keep true, using manual dropdown filter logic
+        
+        // Exact Dropdown Match Check
+        const matchDropdownRec = filters.recruiter ? item.recruiter === filters.recruiter : true;
+        const matchDropdownTech = filters.tech ? item.tech === filters.tech : true;
+        
         const matchesStatus = filters.status ? item.status === filters.status : true; 
-        return matchesText && matchesRec && matchesTech && matchesStatus; 
+        return matchesText && matchDropdownRec && matchDropdownTech && matchesStatus; 
     }); 
 }
 
@@ -699,9 +674,10 @@ function renderPlacementTable() {
 }
 
 function renderHubTable() {
-    let data = state.hubData; 
+    let data = state.candidates; // Hub data is driven completely by candidates collection
     if(state.userRole === 'Employee' && state.currentUserName) data = data.filter(c => c.recruiter === state.currentUserName);
     if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
+    
     const { start, end } = state.hub.range; const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
     const activeCandidates = data.filter(c => (c.submissionLog || []).some(isInRange) || (c.screeningLog || []).some(isInRange) || (c.interviewLog || []).some(isInRange));
     
@@ -790,7 +766,7 @@ window.updateHubStats = (filterType, dateVal) => {
     const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
 
     let subs=0, scrs=0, ints=0; 
-    state.hubData.forEach(c => { 
+    state.candidates.forEach(c => { 
         subs += (c.submissionLog||[]).filter(isInRange).length; 
         scrs += (c.screeningLog||[]).filter(isInRange).length; 
         ints += (c.interviewLog||[]).filter(isInRange).length; 
@@ -1011,8 +987,14 @@ window.toggleSelectAll = (type, box) => {
     let data = [];
     if(type==='cand') data = getFilteredData(state.candidates, state.filters);
     else if(type==='emp') data = state.employees; else if(type==='onb') data = state.onboarding;
-    else if(type==='hub') { const { start, end } = state.hub.range; const isInRange = (e) => { const t = new Date(e.date || e).getTime(); return t >= start && t <= end; }; data = state.hubData.filter(c => [...(c.submissionLog||[]), ...(c.screeningLog||[]), ...(c.interviewLog||[])].some(isInRange)); }
-    else if(type==='place') { const mVal = document.getElementById('placement-month-picker').value; const yVal = document.getElementById('placement-year-picker').value; data = state.placements.filter(c => { if(!c.assigned) return false; return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); }); }
+    else if(type==='hub') { 
+        const { start, end } = state.hub.range; const isInRange = (e) => { const t = new Date(e.date || e).getTime(); return t >= start && t <= end; }; 
+        data = state.candidates.filter(c => [...(c.submissionLog||[]), ...(c.screeningLog||[]), ...(c.interviewLog||[])].some(isInRange)); 
+    }
+    else if(type==='place') { 
+        const mVal = document.getElementById('placement-month-picker').value; const yVal = document.getElementById('placement-year-picker').value; 
+        data = state.placements.filter(c => { if(!c.assigned) return false; return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); }); 
+    }
     if(!state.selection[type]) state.selection[type] = new Set();
     if(box.checked) data.forEach(i=>state.selection[type].add(i.id)); else state.selection[type].clear();
     updateSelectButtons(type); refreshViewForType(type);
@@ -1034,7 +1016,9 @@ function updateSelectButtons(type) {
     else if(type === 'onb') { btn = document.getElementById('btn-delete-onboarding'); countSpan = document.getElementById('onboarding-selected-count'); } 
     else if(type === 'place') { btn = document.getElementById('btn-delete-placement'); countSpan = document.getElementById('place-selected-count'); } 
     else if(type === 'hub') { btn = document.getElementById('btn-delete-hub'); countSpan = document.getElementById('hub-selected-count'); } 
+    
     if (!btn) return; 
+    
     if (state.selection[type] && state.selection[type].size > 0 && state.userRole !== 'Employee') { 
         btn.style.display = 'inline-flex'; 
         btn.style.opacity = '1'; 
@@ -1053,9 +1037,13 @@ window.executeDelete = async () => {
     const type = state.pendingDelete.type; closeDeleteModal(); if(!type) return; 
     let col = (type==='cand') ? 'candidates' : (type==='hub' ? 'candidates' : (type==='place' ? 'placements' : (type==='emp'?'employees':'onboarding')));
     const ids = Array.from(state.selection[type]);
-    state.selection[type].clear(); updateSelectButtons(type);
+    
+    state.selection[type].clear(); 
+    updateSelectButtons(type);
+    
     const masterBox = document.getElementById(`select-all-${type}`); if(masterBox) masterBox.checked = false;
     refreshViewForType(type);
+    
     const batch = db.batch(); ids.forEach(id => batch.delete(db.collection(col).doc(id)));
     try { await batch.commit(); showToast("Deleted successfully"); } catch(e) { console.error("Background deletion error:", e); showToast("Delete Failed: " + e.message); }
 };
@@ -1325,11 +1313,17 @@ function setupEventListeners() {
         });
     }
 
+    // Connect text search inputs
     document.getElementById('search-input')?.addEventListener('input', e => { state.filters.text = e.target.value.toLowerCase(); renderCandidateTable(); });
     document.getElementById('hub-search-input')?.addEventListener('input', e => { state.hubFilters.text = e.target.value.toLowerCase(); renderHubTable(); });
     document.getElementById('emp-search-input')?.addEventListener('input', e => { state.empFilters.text = e.target.value.toLowerCase(); renderEmployeeTable(); });
     document.getElementById('onb-search-input')?.addEventListener('input', e => { state.onbFilters.text = e.target.value.toLowerCase(); renderOnboardingTable(); });
 
+    // Connect Dropdown Filters
+    document.getElementById('filter-recruiter')?.addEventListener('change', e => { state.filters.recruiter = e.target.value; renderCandidateTable(); });
+    document.getElementById('filter-tech')?.addEventListener('change', e => { state.filters.tech = e.target.value; renderCandidateTable(); });
+
+    // Connect Status Toggles
     document.querySelectorAll('#view-candidates .btn-toggle').forEach(btn => {
         btn.addEventListener('click', (e) => {
             document.querySelectorAll('#view-candidates .btn-toggle').forEach(b => b.classList.remove('active'));
@@ -1339,13 +1333,15 @@ function setupEventListeners() {
         });
     });
 
+    // Master Table Reset Button
     document.getElementById('btn-reset-filters')?.addEventListener('click', () => {
-        document.getElementById('search-input').value = '';
-        document.getElementById('filter-recruiter').value = '';
-        document.getElementById('filter-tech').value = '';
+        if(document.getElementById('search-input')) document.getElementById('search-input').value = '';
+        if(document.getElementById('filter-recruiter')) document.getElementById('filter-recruiter').value = '';
+        if(document.getElementById('filter-tech')) document.getElementById('filter-tech').value = '';
         state.filters = { text: '', recruiter: '', tech: '', status: '' };
         document.querySelectorAll('#view-candidates .btn-toggle').forEach(b => b.classList.remove('active'));
-        document.querySelector('#view-candidates .btn-toggle[data-status=""]').classList.add('active');
+        const defaultToggle = document.querySelector('#view-candidates .btn-toggle[data-status=""]');
+        if(defaultToggle) defaultToggle.classList.add('active');
         renderCandidateTable();
     });
 }
@@ -1408,7 +1404,7 @@ window.triggerHubNote = async (id, type) => {
     const note = prompt("Enter manual activity note:");
     if(!note || note.trim() === "") return;
     
-    let cand = state.candidates.find(c => c.id === id) || state.hubData.find(c => c.id === id);
+    let cand = state.candidates.find(c => c.id === id);
     if(!cand) return showToast("Record not found", "error");
 
     let logs = cand[type] || [];
@@ -1429,7 +1425,7 @@ window.triggerHubNote = async (id, type) => {
 
 window.deleteHubLog = async (id, type, index) => {
     if(!confirm("Delete this log entry?")) return;
-    let cand = state.candidates.find(c => c.id === id) || state.hubData.find(c => c.id === id);
+    let cand = state.candidates.find(c => c.id === id);
     if(!cand) return;
 
     let logs = [...(cand[type] || [])];
