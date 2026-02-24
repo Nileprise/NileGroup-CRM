@@ -205,17 +205,19 @@ window.switchAuth = (type) => {
     document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active')); 
     document.getElementById(`form-${type}`).classList.add('active'); 
 };
+
 window.handleReset = () => { 
     const email = document.getElementById('reset-email').value; 
     if(!email) return showToast("Enter email"); 
     auth.sendPasswordResetEmail(email).then(() => { showToast("Reset link sent"); switchAuth('login'); }).catch(e => showToast(e.message)); 
 };
+
 window.checkVerificationStatus = () => { 
     auth.currentUser.reload().then(() => { if(auth.currentUser.emailVerified) location.reload(); else showToast("Not verified yet. Check spam folder."); }); 
 };
+
 window.resendVerificationEmail = () => { auth.currentUser.sendEmailVerification().then(() => showToast("Email resent")); };
 
-// Updated Login Function with Error Handling & Loading State
 window.handleLogin = () => { 
     const e = document.getElementById('login-email').value;
     const p = document.getElementById('login-pass').value; 
@@ -254,7 +256,7 @@ window.handleSignup = () => {
 };
 
 /* ==========================================================================
-   7. REALTIME LISTENERS & ISOLATED DATA LOGIC
+   7. REALTIME LISTENERS & ISOLATED DATA LOGIC (NO LIMITS)
    ========================================================================== */
 function initRealtimeListeners() {
     let candQuery = db.collection('candidates');
@@ -264,8 +266,8 @@ function initRealtimeListeners() {
         candQuery = candQuery.where('recruiter', '==', state.currentUserName);
     }
 
-    // CANDIDATES LISTENER
-    candQuery.orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
+    // CANDIDATES LISTENER - Removed .limit(200) to show ALL records
+    candQuery.orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.candidates = []; 
         const techs = new Set();
         
@@ -282,7 +284,11 @@ function initRealtimeListeners() {
             return aOrder - bOrder; 
         });
         
+        // Refresh Table and Selection Count
+        const currentSelectedCount = state.selection.cand.size;
         renderCandidateTable(); 
+        if (currentSelectedCount > 0) updateSelectButtons('cand');
+
         renderDropdowns(); 
         updateDashboardStats(); 
         renderDashboardCharts();
@@ -291,8 +297,8 @@ function initRealtimeListeners() {
         console.error("Candidate Listener Error:", error);
     });
     
-    // HUB LISTENER
-    hubQuery.orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
+    // HUB LISTENER - Removed .limit(200) to show ALL records
+    hubQuery.orderBy('createdAt', 'desc').onSnapshot(snap => {
         state.hubData = [];
         snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
         
@@ -323,6 +329,7 @@ function initRealtimeListeners() {
             .sort((a,b)=>a.value.localeCompare(b.value));
             
         renderEmployeeTable(); 
+        updateSelectButtons('emp');
         renderDropdowns(); 
         updateDashboardStats();
     });
@@ -337,6 +344,7 @@ function initRealtimeListeners() {
             return aOrder - bOrder; 
         });
         renderOnboardingTable(); 
+        updateSelectButtons('onb');
     }, (error) => {
         console.log("Onboarding access restricted"); 
     });
@@ -351,6 +359,7 @@ function initRealtimeListeners() {
             return aOrder - bOrder; 
         });
         renderPlacementTable(); 
+        updateSelectButtons('place');
         updateDashboardStats();
     }, (error) => {
         console.log("Placement access restricted"); 
@@ -585,17 +594,27 @@ function restoreColumnOrder(tableId, context) {
 }
 
 /* ==========================================================================
-   10. TABLE RENDERERS
+   10. TABLE RENDERERS (With Sync for Record Counts)
    ========================================================================== */
 function renderCandidateTable() {
     const filtered = getFilteredData(state.candidates, state.filters);
     const tbody = document.getElementById('table-body');
     const thead = document.getElementById('table-head');
+    
+    // Ensure deleted records are removed from selection set
+    const validIds = new Set(filtered.map(c => c.id));
+    state.selection.cand.forEach(id => { if(!validIds.has(id)) state.selection.cand.delete(id); });
+    updateSelectButtons('cand');
+
     const isAllChecked = filtered.length > 0 && filtered.every(c => state.selection.cand.has(c.id));
     const customHeaders = (state.customColumns.candidates || []).map(col => `<th>${thAlign(col.name, 'candidates')}</th>`).join('');
     
     thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
-    document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} records`;
+    
+    // Exact Record count sync
+    if(document.getElementById('cand-footer-count')) {
+        document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} total records`;
+    }
     
     tbody.innerHTML = filtered.map((c, i) => {
         const isSel = state.selection.cand.has(c.id) ? 'checked' : ''; const rowClass = state.selection.cand.has(c.id) ? 'selected-row' : '';
@@ -614,11 +633,19 @@ function renderCandidateTable() {
 
 function renderEmployeeTable() {
     let filtered = state.employees; if (state.userRole === 'Employee') filtered = filtered.filter(e => e.officialEmail === state.user.email); filtered = filtered.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
+    
+    const validIds = new Set(filtered.map(c => c.id));
+    state.selection.emp.forEach(id => { if(!validIds.has(id)) state.selection.emp.delete(id); });
+    updateSelectButtons('emp');
+    
     const isAllChecked = filtered.length > 0 && filtered.every(e => state.selection.emp.has(e.id));
     const customHeaders = (state.customColumns.employees || []).map(col => `<th>${thAlign(col.name, 'employees')}</th>`).join('');
     
     document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees')}</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th>${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th>${customHeaders}</tr>`;
-    document.getElementById('emp-footer-count').innerText = `Showing ${filtered.length} records`;
+    
+    if(document.getElementById('emp-footer-count')) {
+        document.getElementById('emp-footer-count').innerText = `Showing ${filtered.length} total records`;
+    }
     
     document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.emp.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'employees', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="employees" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'employees')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'employees')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td tabindex="0" data-field="designation" onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||''}</td><td tabindex="0" data-field="workMobile" onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||''}</td><td tabindex="0" data-field="personalMobile" onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||''}</td><td tabindex="0" data-field="officialEmail" onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||''}</td><td tabindex="0" data-field="personalEmail" onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||''}</td>${customCells}</tr>`; }).join('');
     
@@ -627,11 +654,19 @@ function renderEmployeeTable() {
 
 function renderOnboardingTable() {
     const filtered = state.onboarding.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.onbFilters.text));
+    
+    const validIds = new Set(filtered.map(c => c.id));
+    state.selection.onb.forEach(id => { if(!validIds.has(id)) state.selection.onb.delete(id); });
+    updateSelectButtons('onb');
+    
     const isAllChecked = filtered.length > 0 && filtered.every(o => state.selection.onb.has(o.id));
     const customHeaders = (state.customColumns.onboarding || []).map(col => `<th>${thAlign(col.name, 'onboarding')}</th>`).join('');
     
     document.getElementById('onboarding-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('onboarding')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('onboarding')"></i></div></th><th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'onboarding')}</th><th>${thAlign('First Name', 'onboarding')}</th><th>${thAlign('Last Name', 'onboarding')}</th><th>${thAlign('Date of Birth', 'onboarding')}</th><th>${thAlign('Recruiter', 'onboarding')}</th><th>${thAlign('Mobile', 'onboarding')}</th><th>${thAlign('Status', 'onboarding')}</th><th>${thAlign('Assigned', 'onboarding')}</th><th>${thAlign('Comments', 'onboarding')}</th>${customHeaders}</tr>`;
-    document.getElementById('onb-footer-count').innerText = `Showing ${filtered.length} records`;
+    
+    if(document.getElementById('onb-footer-count')) {
+        document.getElementById('onb-footer-count').innerText = `Showing ${filtered.length} total records`;
+    }
     
     document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.onb.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'onboarding', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="onboarding" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'onboarding')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'onboarding')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)"><option value="Onboarding" ${c.status==='Onboarding'?'selected':''}>Onboarding</option><option value="Completed" ${c.status==='Completed'?'selected':''}>Completed</option></select></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||''}</td>${customCells}</tr>`; }).join('');
     
@@ -641,13 +676,21 @@ function renderOnboardingTable() {
 function renderPlacementTable() {
     const mVal = document.getElementById('placement-month-picker').value; const yVal = document.getElementById('placement-year-picker').value;
     let placed = state.placements.filter(c => { if(!c.assigned) return false; return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); });
+    
     if(!state.selection.place) state.selection.place = new Set();
+    const validIds = new Set(placed.map(c => c.id));
+    state.selection.place.forEach(id => { if(!validIds.has(id)) state.selection.place.delete(id); });
+    updateSelectButtons('place');
+
     const isAllChecked = placed.length > 0 && placed.every(p => state.selection.place.has(p.id));
     const thead = document.querySelector('#placement-table-head'); 
     const customHeaders = (state.customColumns.placements || []).map(col => `<th>${thAlign(col.name, 'placements')}</th>`).join('');
     
     if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
-    if(document.getElementById('placement-footer-count')) document.getElementById('placement-footer-count').innerText = `Showing ${placed.length} records`;
+    
+    if(document.getElementById('placement-footer-count')) {
+        document.getElementById('placement-footer-count').innerText = `Showing ${placed.length} total records`;
+    }
     
     if(document.getElementById('placement-table-body')) {
         document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'placements', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last}</td><td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech}</td><td tabindex="0" data-field="location" onclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location||''}</td><td tabindex="0" data-field="contract" onclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract||''}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
@@ -661,13 +704,21 @@ function renderHubTable() {
     if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
     const { start, end } = state.hub.range; const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
     const activeCandidates = data.filter(c => (c.submissionLog || []).some(isInRange) || (c.screeningLog || []).some(isInRange) || (c.interviewLog || []).some(isInRange));
+    
     if(!state.selection.hub) state.selection.hub = new Set();
+    const validIds = new Set(activeCandidates.map(c => c.id));
+    state.selection.hub.forEach(id => { if(!validIds.has(id)) state.selection.hub.delete(id); });
+    updateSelectButtons('hub');
+
     const isAllChecked = activeCandidates.length > 0 && activeCandidates.every(c => state.selection.hub.has(c.id));
     
     document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('hub')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'hub')}</th><th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th><th style="width:150px;">${thAlign('Recruiter', 'hub')}</th><th style="width:120px;">${thAlign('Technology', 'hub')}</th><th style="text-align:center;">${thAlign('Submission', 'hub')}</th><th style="text-align:center;">${thAlign('Screenings', 'hub')}</th><th style="text-align:center;">${thAlign('Interview', 'hub')}</th><th style="text-align:right;">${thAlign('Date', 'hub')}</th></tr>`;
-    document.getElementById('hub-footer-count').innerText = `Showing ${activeCandidates.length} active records`;
-    const tbody = document.getElementById('hub-table-body');
     
+    if(document.getElementById('hub-footer-count')) {
+        document.getElementById('hub-footer-count').innerText = `Showing ${activeCandidates.length} active records`;
+    }
+    
+    const tbody = document.getElementById('hub-table-body');
     if (activeCandidates.length === 0) { tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:20px; opacity:0.6;">No activity found for this period.</td></tr>`; return; }
     
     tbody.innerHTML = activeCandidates.map((c, i) => {
@@ -966,6 +1017,7 @@ window.toggleSelectAll = (type, box) => {
     if(box.checked) data.forEach(i=>state.selection[type].add(i.id)); else state.selection[type].clear();
     updateSelectButtons(type); refreshViewForType(type);
 };
+
 function refreshViewForType(type) { 
     if(type==='cand' || type==='candidates') renderCandidateTable(); 
     else if(type==='emp' || type==='employees') renderEmployeeTable(); 
@@ -973,6 +1025,8 @@ function refreshViewForType(type) {
     else if(type==='hub') renderHubTable(); 
     else if(type==='place' || type==='placements') renderPlacementTable(); 
 }
+
+// SYNCING DELETE COUNT TO THE BUTTON
 function updateSelectButtons(type) { 
     let btn, countSpan; 
     if(type === 'cand') { btn = document.getElementById('btn-delete-selected'); countSpan = document.getElementById('selected-count'); } 
@@ -981,8 +1035,15 @@ function updateSelectButtons(type) {
     else if(type === 'place') { btn = document.getElementById('btn-delete-placement'); countSpan = document.getElementById('place-selected-count'); } 
     else if(type === 'hub') { btn = document.getElementById('btn-delete-hub'); countSpan = document.getElementById('hub-selected-count'); } 
     if (!btn) return; 
-    if (state.selection[type] && state.selection[type].size > 0 && state.userRole !== 'Employee') { btn.style.display = 'inline-flex'; btn.style.opacity = '1'; if(countSpan) countSpan.innerText = state.selection[type].size; } 
-    else { btn.style.display = 'none'; if(countSpan) countSpan.innerText = '0'; } 
+    if (state.selection[type] && state.selection[type].size > 0 && state.userRole !== 'Employee') { 
+        btn.style.display = 'inline-flex'; 
+        btn.style.opacity = '1'; 
+        if(countSpan) countSpan.innerText = state.selection[type].size; 
+    } 
+    else { 
+        btn.style.display = 'none'; 
+        if(countSpan) countSpan.innerText = '0'; 
+    } 
 }
 
 window.openDeleteModal = (type) => { state.pendingDelete.type = type; document.getElementById('delete-modal').style.display = 'flex'; document.getElementById('del-count').innerText = state.selection[type].size; }; 
