@@ -23,7 +23,7 @@ const auth = firebase.auth();
 const storage = firebase.storage();
 
 /* ==========================================================================
-   2. ACCESS CONTROL LIST 
+   2. ACCESS CONTROL LIST (Fallback)
    ========================================================================== */
 const ALLOWED_USERS = {
     'ali@nileprise.com': { name: 'Asif', role: 'Employee' },
@@ -49,6 +49,7 @@ const state = {
     employees: [],
     placements: [],
     allUsers: [],
+    hubData: [],
     labels: [],
     selectedLabelColor: '#e91e63',
     
@@ -105,11 +106,27 @@ const dom = {
         app: document.getElementById('dashboard-screen'), 
         verify: document.getElementById('verify-screen') 
     },
-    navItems: document.querySelectorAll('.nav-item')
+    navItems: document.querySelectorAll('.nav-item'),
+    views: {
+        dashboard: document.getElementById('view-dashboard'),
+        inbox: document.getElementById('view-inbox'),
+        candidates: document.getElementById('view-candidates'),
+        hub: document.getElementById('view-hub'),
+        employees: document.getElementById('view-employees'),
+        onboarding: document.getElementById('view-onboarding'),
+        settings: document.getElementById('view-settings'),
+        profile: document.getElementById('view-profile'),
+        placements: document.getElementById('view-placements')
+    },
+    headerUpdated: document.getElementById('header-updated'),
+    gmail: {
+        list: document.getElementById('gmail-rows-container'),
+        searchInput: document.getElementById('gmail-search-input')
+    }
 };
 
 /* ==========================================================================
-   5. INITIALIZATION & UTILITIES
+   5. INITIALIZATION & UTILITIES (Updated to read roles from DB)
    ========================================================================== */
 function init() {
     setupEventListeners();
@@ -127,7 +144,7 @@ function init() {
         }
     });
 
-    auth.onAuthStateChanged(user => {
+    auth.onAuthStateChanged(async user => {
         if (user) {
             if (!user.emailVerified) { 
                 document.getElementById('verify-email-display').innerText = user.email; 
@@ -135,11 +152,23 @@ function init() {
             }
             state.user = user;
             const email = user.email.toLowerCase();
-            const knownUser = ALLOWED_USERS[email];
-            state.userRole = knownUser ? knownUser.role : 'Viewer'; 
-            state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
             
-            updateUserProfile(user, knownUser);
+            // Fetch exact role from the database directly
+            try {
+                const userDoc = await db.collection('users').doc(email).get();
+                if (userDoc.exists) {
+                    state.userRole = userDoc.data().role || 'Employee';
+                    state.currentUserName = userDoc.data().firstName || user.displayName || 'Unknown';
+                } else {
+                    const knownUser = ALLOWED_USERS[email];
+                    state.userRole = knownUser ? knownUser.role : 'Employee'; 
+                    state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
+                }
+            } catch (err) {
+                console.error("Error fetching role:", err);
+            }
+            
+            updateUserProfile(user, ALLOWED_USERS[email]);
             switchScreen('app');
             initRealtimeListeners();
             if(window.updateHubStats) updateHubStats('daily', new Date().toISOString().split('T')[0]);
@@ -239,17 +268,12 @@ window.handleSignup = () => {
 };
 
 /* ==========================================================================
-   7. REALTIME LISTENERS & DATA ENGINE (FIXED FOR REFRESH BUG)
+   7. REALTIME LISTENERS (Data Isolation Removed for Global Visibility)
    ========================================================================== */
 function initRealtimeListeners() {
-    let candQuery = db.collection('candidates');
     
-    if (state.userRole === 'Employee') {
-        candQuery = candQuery.where('recruiter', '==', state.currentUserName);
-    }
-
-    // REMOVED .orderBy() to prevent Missing Index errors that erase data on refresh
-    candQuery.onSnapshot(snap => {
+    // CANDIDATES LISTENER (Loads everything, no limits)
+    db.collection('candidates').onSnapshot(snap => {
         state.candidates = []; 
         const techs = new Set();
         
@@ -261,16 +285,17 @@ function initRealtimeListeners() {
         
         state.metadata.techs = Array.from(techs).sort();
         
-        // Client-side sort ensures records are ordered correctly without Firebase blocking it
         state.candidates.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
             return aOrder - bOrder; 
         });
         
+        const currentSelectedCount = state.selection.cand.size;
         renderCandidateTable(); 
-        updateSelectButtons('cand');
-        updateHubStats(); // Updates Hub using candidate data
+        if (currentSelectedCount > 0) updateSelectButtons('cand');
+
+        updateHubStats(); 
         renderDropdowns(); 
         updateDashboardStats(); 
         renderDashboardCharts();
@@ -281,8 +306,21 @@ function initRealtimeListeners() {
         console.error("Candidate Listener Error:", error);
     });
     
+    // HUB LISTENER
+    db.collection('hub').onSnapshot(snap => {
+        state.hubData = [];
+        snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
+        
+        state.hubData.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        
+        updateHubStats(state.hub.filterType, state.hub.date);
+    });
 
-    // EMPLOYEES (Staff Directory)
+    // EMPLOYEES (Staff Directory - Isolation Removed)
     db.collection('employees').onSnapshot(snap => {
         state.employees = []; 
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
@@ -428,16 +466,12 @@ window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collec
 
 function getFilteredData(data, filters) { 
     let subset = data; 
-    if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName); 
+    // Data Isolation Removed Here!
     return subset.filter(item => { 
         if (item.status === 'Placed') return false; 
         const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text); 
-        const matchesRec = filters.recruiter ? item.recruiter === item.recruiter : true; // Keep true, using manual dropdown filter logic
-        
-        // Exact Dropdown Match Check
         const matchDropdownRec = filters.recruiter ? item.recruiter === filters.recruiter : true;
         const matchDropdownTech = filters.tech ? item.tech === filters.tech : true;
-        
         const matchesStatus = filters.status ? item.status === filters.status : true; 
         return matchesText && matchDropdownRec && matchDropdownTech && matchesStatus; 
     }); 
@@ -586,7 +620,6 @@ function renderCandidateTable() {
     
     thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
     
-    // Exact Record count sync
     if(document.getElementById('cand-footer-count')) {
         document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} total records`;
     }
@@ -607,7 +640,8 @@ function renderCandidateTable() {
 }
 
 function renderEmployeeTable() {
-    let filtered = state.employees; if (state.userRole === 'Employee') filtered = filtered.filter(e => e.officialEmail === state.user.email); filtered = filtered.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
+    // Data Isolation Removed Here!
+    let filtered = state.employees.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
     
     const validIds = new Set(filtered.map(c => c.id));
     state.selection.emp.forEach(id => { if(!validIds.has(id)) state.selection.emp.delete(id); });
@@ -674,8 +708,8 @@ function renderPlacementTable() {
 }
 
 function renderHubTable() {
-    let data = state.candidates; // Hub data is driven completely by candidates collection
-    if(state.userRole === 'Employee' && state.currentUserName) data = data.filter(c => c.recruiter === state.currentUserName);
+    let data = state.candidates; // Data Isolation Removed Here!
+    
     if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
     
     const { start, end } = state.hub.range; const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
