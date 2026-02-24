@@ -23,7 +23,7 @@ const auth = firebase.auth();
 const storage = firebase.storage();
 
 /* ==========================================================================
-   2. ACCESS CONTROL LIST (ACL)
+   2. ACCESS CONTROL LIST 
    ========================================================================== */
 const ALLOWED_USERS = {
     'ali@nileprise.com': { name: 'Asif', role: 'Employee' },
@@ -122,14 +122,6 @@ const dom = {
     gmail: {
         list: document.getElementById('gmail-rows-container'),
         searchInput: document.getElementById('gmail-search-input')
-    },
-    emailViewer: {
-        modal: document.getElementById('email-viewer-modal'),
-        iframe: document.getElementById('viewer-iframe'),
-        subject: document.getElementById('viewer-subject'),
-        from: document.getElementById('viewer-from') ? document.getElementById('viewer-from').querySelector('span') : null,
-        to: document.getElementById('viewer-to') ? document.getElementById('viewer-to').querySelector('span') : null,
-        date: document.getElementById('viewer-date')
     }
 };
 
@@ -167,11 +159,9 @@ function init() {
             updateUserProfile(user, knownUser);
             switchScreen('app');
             initRealtimeListeners();
-            startAutoLogoutTimer();
             if(window.updateHubStats) updateHubStats('daily', new Date().toISOString().split('T')[0]);
         } else {
             switchScreen('auth');
-            stopAutoLogoutTimer();
         }
     });
 
@@ -224,10 +214,34 @@ window.checkVerificationStatus = () => {
     auth.currentUser.reload().then(() => { if(auth.currentUser.emailVerified) location.reload(); else showToast("Not verified yet. Check spam folder."); }); 
 };
 window.resendVerificationEmail = () => { auth.currentUser.sendEmailVerification().then(() => showToast("Email resent")); };
+
+// Updated Login Function with Error Handling & Loading State
 window.handleLogin = () => { 
-    const e = document.getElementById('login-email').value, p = document.getElementById('login-pass').value; 
-    if(!e || !p) return; auth.signInWithEmailAndPassword(e, p).catch(err => alert("Login Failed: " + err.message)); 
+    const e = document.getElementById('login-email').value;
+    const p = document.getElementById('login-pass').value; 
+    
+    if(!e || !p) {
+        showToast("Please enter both email and password.");
+        return; 
+    }
+    
+    const btn = document.getElementById('btn-login-action');
+    const originalText = btn.innerText;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Logging in...';
+    btn.disabled = true;
+
+    auth.signInWithEmailAndPassword(e, p)
+        .then(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        })
+        .catch(err => {
+            showToast(err.message.replace('Firebase: ', ''));
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }); 
 };
+
 window.handleSignup = () => { 
     const n = document.getElementById('reg-name').value, e = document.getElementById('reg-email').value, p = document.getElementById('reg-pass').value; 
     auth.createUserWithEmailAndPassword(e, p).then(cred => { 
@@ -240,296 +254,272 @@ window.handleSignup = () => {
 };
 
 /* ==========================================================================
-   7. NAVIGATION & REAL-TIME DATABASE SYNC
+   7. REALTIME LISTENERS & ISOLATED DATA LOGIC
    ========================================================================== */
-dom.navItems.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-        dom.navItems.forEach(b => b.classList.remove('active'));
-        const clickedBtn = e.target.closest('.nav-item');
-        clickedBtn.classList.add('active');
-
-        if (window.innerWidth <= 900) {
-            document.querySelector('.sidebar').classList.remove('mobile-open');
-            const overlay = document.getElementById('sidebar-overlay');
-            if(overlay) overlay.classList.remove('active');
-        }
-
-        Object.values(dom.views).forEach(view => { if(view) view.classList.remove('active'); });
-        const targetId = clickedBtn.getAttribute('data-target');
-        const targetView = document.getElementById(targetId);
-    
-        if (targetView) {
-            targetView.classList.add('active');
-            if (targetId === 'view-dashboard') updateDashboardStats();
-            if (targetId === 'view-profile') refreshProfileData();
-            if (targetId === 'view-placements') renderPlacementTable();
-        }
-    });
-});
-
 function initRealtimeListeners() {
-    db.collection('candidates').onSnapshot(snap => {
-        state.candidates = []; state.hubData = [];
+    let candQuery = db.collection('candidates');
+    let hubQuery = db.collection('hub');
+    
+    if (state.userRole === 'Employee') {
+        candQuery = candQuery.where('recruiter', '==', state.currentUserName);
+    }
+
+    // CANDIDATES LISTENER
+    candQuery.orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
+        state.candidates = []; 
+        const techs = new Set();
+        
         snap.forEach(doc => { 
-            const data = { id: doc.id, ...doc.data() };
-            state.candidates.push(data); 
-            state.hubData.push(data); 
+            const d = doc.data(); 
+            state.candidates.push({ id: doc.id, ...d }); 
+            if (d.tech) techs.add(d.tech); 
         });
-        state.candidates.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
-        renderCandidateTable();
-        renderHubTable();
-        updateDashboardStats();
-        if(dom.headerUpdated) dom.headerUpdated.innerText = 'Synced';
-    });
-
-    db.collection('onboarding').onSnapshot(snap => {
-        state.onboarding = [];
-        snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() }));
-        state.onboarding.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
-        renderOnboardingTable();
-    });
-
-    db.collection('employees').onSnapshot(snap => {
-        state.employees = [];
-        snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
-        state.employees.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
-        const firstNames = state.employees.map(e => e.first).filter(name => name && name.trim().length > 0);
-        state.metadata.recruiters = [...new Set(firstNames)].sort();
+        
+        state.metadata.techs = Array.from(techs).sort();
+        state.candidates.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        
+        renderCandidateTable(); 
         renderDropdowns(); 
-        renderEmployeeTable();
+        updateDashboardStats(); 
+        renderDashboardCharts();
+        if(dom.headerUpdated) dom.headerUpdated.innerText = 'Synced';
+    }, (error) => {
+        console.error("Candidate Listener Error:", error);
+    });
+    
+    // HUB LISTENER
+    hubQuery.orderBy('createdAt', 'desc').limit(200).onSnapshot(snap => {
+        state.hubData = [];
+        snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
+        
+        state.hubData.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        
+        updateHubStats(state.hub.filterType, state.hub.date);
+    });
+
+    // EMPLOYEES (Staff Directory)
+    db.collection('employees').orderBy('createdAt', 'desc').onSnapshot(snap => {
+        state.employees = []; 
+        snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
+        
+        state.employees.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        
+        const recruiters = new Set(); 
+        state.employees.forEach(e => { if(e.first) recruiters.add(e.first.trim()); });
+        state.metadata.recruiters = Array.from(recruiters)
+            .map(r => ({value:r, display:r}))
+            .sort((a,b)=>a.value.localeCompare(b.value));
+            
+        renderEmployeeTable(); 
+        renderDropdowns(); 
         updateDashboardStats();
     });
 
-    db.collection('placements').onSnapshot(snap => {
-        state.placements = [];
-        snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
-        state.placements.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
-        renderPlacementTable();
+    // ONBOARDING
+    db.collection('onboarding').orderBy('createdAt', 'desc').onSnapshot(snap => { 
+        state.onboarding = []; 
+        snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() })); 
+        state.onboarding.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        renderOnboardingTable(); 
+    }, (error) => {
+        console.log("Onboarding access restricted"); 
     });
 
+    // PLACEMENTS 
+    db.collection('placements').orderBy('createdAt', 'desc').onSnapshot(snap => {
+        state.placements = []; 
+        snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
+        state.placements.sort((a, b) => { 
+            const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
+            const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
+            return aOrder - bOrder; 
+        });
+        renderPlacementTable(); 
+        updateDashboardStats();
+    }, (error) => {
+        console.log("Placement access restricted"); 
+    });
+
+    // USERS (For Birthdays)
     db.collection('users').onSnapshot(snap => {
         state.allUsers = [];
         snap.forEach(doc => {
             const data = doc.data();
-            const fullName = (data.firstName && data.lastName) ? `${data.firstName} ${data.lastName}` : (data.displayName || 'Staff Member');
+            const fullName = (data.firstName && data.lastName) 
+                                ? `${data.firstName} ${data.lastName}` 
+                                : (data.displayName || 'Staff Member');
             state.allUsers.push({ id: doc.id, name: fullName, dob: data.dob });
         });
         checkBirthdays();
     });
+
+    loadCustomColumns();
 }
 
-/* ==========================================================================
-   8. USER PROFILE & SETTINGS
-   ========================================================================== */
-function updateUserProfile(user, hardcodedData) {
-    if (!user) return;
-    const displayName = hardcodedData ? hardcodedData.name : (user.displayName || 'Staff Member');
-    const role = hardcodedData ? hardcodedData.role : 'Viewer';
-    
-    if (document.getElementById('display-username')) document.getElementById('display-username').innerText = displayName;
-    if (document.getElementById('prof-name-display')) document.getElementById('prof-name-display').innerText = displayName;
-    if (document.getElementById('prof-role-display')) document.getElementById('prof-role-display').innerText = role;
-    if (document.getElementById('prof-email-display-sidebar')) document.getElementById('prof-email-display-sidebar').innerText = user.email;
-    if (document.getElementById('prof-office-email')) document.getElementById('prof-office-email').value = user.email;
-    if (document.getElementById('prof-designation')) document.getElementById('prof-designation').value = role; 
+window.checkBirthdays = () => {
+    const today = new Date();
+    const currentMonth = String(today.getMonth() + 1).padStart(2, '0');
+    const currentDay = String(today.getDate()).padStart(2, '0');
+    const todayMatch = `${currentMonth}-${currentDay}`;
 
-    db.collection('users').doc(user.email).get().then(doc => {
-        if (doc.exists) {
-            const data = doc.data();
-            if(document.getElementById('prof-first')) document.getElementById('prof-first').value = data.firstName || '';
-            if(document.getElementById('prof-last')) document.getElementById('prof-last').value = data.lastName || '';
-            if(document.getElementById('prof-dob')) document.getElementById('prof-dob').value = data.dob || ''; 
-            if(document.getElementById('prof-work-mobile')) document.getElementById('prof-work-mobile').value = data.workMobile || '';
-            if(document.getElementById('prof-personal-mobile')) document.getElementById('prof-personal-mobile').value = data.personalMobile || '';
-            if(document.getElementById('prof-personal-email')) document.getElementById('prof-personal-email').value = data.personalEmail || '';
-            
-            let photoURL = data.photoURL || user.photoURL;
-            if(photoURL) {
-                const avatarImg = document.getElementById('profile-main-img');
-                const avatarPlaceholder = document.getElementById('profile-main-icon');
-                const deleteBtn = document.getElementById('btn-delete-photo');
-                if(avatarImg) { avatarImg.src = photoURL; avatarImg.style.display = 'block'; }
-                if(avatarPlaceholder) avatarPlaceholder.style.display = 'none';
-                if(deleteBtn) deleteBtn.style.display = 'flex';
-            }
-        }
+    if(!state.allUsers) return;
+
+    const birthdayPeople = state.allUsers.filter(user => {
+        if (!user.dob) return false;
+        const userBorn = user.dob.substring(5); 
+        return userBorn === todayMatch;
     });
-}
 
-function refreshProfileData() {
-    const user = firebase.auth().currentUser;
-    if(user) updateUserProfile(user, ALLOWED_USERS[user.email.toLowerCase()]);
-}
+    const card = document.getElementById('birthday-card');
+    const content = document.getElementById('bday-names');
 
-window.saveProfileData = () => {
-    const user = firebase.auth().currentUser;
-    if (!user) return;
-    const profileData = {
-        firstName: document.getElementById('prof-first').value,
-        lastName: document.getElementById('prof-last').value,
-        dob: document.getElementById('prof-dob').value, 
-        workMobile: document.getElementById('prof-work-mobile').value,
-        personalMobile: document.getElementById('prof-personal-mobile').value,
-        personalEmail: document.getElementById('prof-personal-email').value,
-        lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
-    };
-    db.collection('users').doc(user.email).set(profileData, { merge: true })
-        .then(() => showToast("Profile Saved Successfully"))
-        .catch(err => showToast("Error Saving: " + err.message));
+    if (!card || !content) return;
+
+    if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
+
+    if (birthdayPeople.length > 0) {
+        const names = birthdayPeople.map(u => u.name).join(', ');
+        content.innerText = names;
+        card.style.display = 'flex';
+        card.classList.add('active');
+        
+        window.birthdayTimer = setTimeout(() => {
+            card.classList.remove('active');
+            setTimeout(() => { card.style.display = 'none'; }, 500);
+        }, 7000); 
+    } else {
+        card.classList.remove('active');
+        card.style.display = 'none';
+    }
 };
 
-/* ==========================================================================
-   9. UNDO / REDO & SHORTCUT ENGINE
-   ========================================================================== */
+function loadCustomColumns() { 
+    db.collection('settings').doc('table_config').onSnapshot(doc => { 
+        if(doc.exists) { 
+            const data = doc.data(); 
+            if(data.candidates) state.customColumns.candidates = data.candidates; 
+            if(data.employees) state.customColumns.employees = data.employees; 
+            if(data.onboarding) state.customColumns.onboarding = data.onboarding; 
+            if(data.placements) state.customColumns.placements = data.placements; 
+            if(data.colOrders) state.colOrders = data.colOrders; 
+            renderCandidateTable(); 
+            renderEmployeeTable(); 
+            renderOnboardingTable(); 
+            renderPlacementTable(); 
+            renderHubTable(); 
+        } 
+    }); 
+}
+
+function renderDropdowns() { 
+    const ids = ['filter-recruiter', 'filter-tech']; 
+    ids.forEach(id => { 
+        const el = document.getElementById(id); 
+        if(!el) return; 
+        const currentVal = el.value; 
+        let opts = ""; 
+        if(id.includes('tech')) opts = state.metadata.techs.map(t => `<option value="${t}">${t}</option>`).join(''); 
+        else opts = state.metadata.recruiters.map(r => `<option value="${r.value}">${r.display}</option>`).join(''); 
+        el.innerHTML = `<option value="">${id.includes('tech')?"All Tech":"All Recruiters"}</option>${opts}`; 
+        el.value = currentVal; 
+    }); 
+}
+
+window.generateRecruiterDropdown = (currentVal, id, collection) => { const list = state.metadata.recruiters || []; const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`; };
+window.updateRecruiter = (id, collection, val) => { const oldVal = getOldValue(collection, id, 'recruiter'); pushToHistory(collection, id, 'recruiter', oldVal, val); db.collection(collection).doc(id).update({ recruiter: val }).then(() => showToast("Recruiter Auto-Saved")); };
+window.generateTechDropdown = (currentVal, id, collection) => { const list = state.metadata.techs || []; if(currentVal && !list.includes(currentVal)) list.push(currentVal); list.sort(); const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`; };
+window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collection, id, 'tech'); pushToHistory(collection, id, 'tech', oldVal, val); db.collection(collection).doc(id).update({ tech: val }).then(() => showToast("Tech Auto-Saved")); };
+
+function getFilteredData(data, filters) { 
+    let subset = data; 
+    if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName); 
+    return subset.filter(item => { 
+        if (item.status === 'Placed') return false; 
+        const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text); 
+        const matchesRec = filters.recruiter ? item.recruiter === filters.recruiter : true; 
+        const matchesTech = filters.tech ? item.tech === filters.tech : true; 
+        const matchesStatus = filters.status ? item.status === filters.status : true; 
+        return matchesText && matchesRec && matchesTech && matchesStatus; 
+    }); 
+}
+
 function getOldValue(collection, id, field) {
-    let list = [];
-    if (collection === 'candidates') list = state.candidates;
-    else if (collection === 'employees') list = state.employees;
-    else if (collection === 'onboarding') list = state.onboarding;
-    else if (collection === 'placements') list = state.placements;
-    else if (collection === 'hub') list = state.hubData; 
+    const list = state[collection] || [];
     const item = list.find(x => x.id === id);
-    return item ? (item[field] !== undefined ? item[field] : '') : '';
+    return item ? item[field] : null;
 }
 
 function pushToHistory(collection, id, field, oldVal, newVal) {
-    if (oldVal === newVal) return; 
     historyState.undo.push({ collection, id, field, oldVal, newVal });
-    historyState.redo = []; 
-    if (historyState.undo.length > 50) historyState.undo.shift();
 }
 
-window.performUndo = async () => {
-    if (historyState.undo.length === 0) return showToast("Nothing to undo");
-    const action = historyState.undo.pop();
-    try {
-        await db.collection(action.collection).doc(action.id).update({ [action.field]: action.oldVal });
-        historyState.redo.push(action); showToast("Undo successful");
-    } catch(e) { showToast("Undo failed"); historyState.undo.push(action); }
-};
+/* ==========================================================================
+   8. DASHBOARD CHARTS & STATS
+   ========================================================================== */
+let recChartInstance = null;
+let techChartInstance = null;
 
-window.performRedo = async () => {
-    if (historyState.redo.length === 0) return showToast("Nothing to redo");
-    const action = historyState.redo.pop();
-    try {
-        await db.collection(action.collection).doc(action.id).update({ [action.field]: action.newVal });
-        historyState.undo.push(action); showToast("Redo successful");
-    } catch(e) { showToast("Redo failed"); historyState.redo.push(action); }
-};
-
-document.addEventListener('keydown', async (e) => {
-    const activeTag = document.activeElement.tagName;
-    const isInput = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
-    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
-
-    const activeCell = document.activeElement;
-    if (activeCell.tagName === 'TD' && (e.key === 'Backspace' || e.key === 'Delete') && !isInput) {
-        const row = activeCell.closest('tr'); const table = activeCell.closest('table');
-        if (!row || !table) return;
-        const id = row.dataset.id; const field = activeCell.dataset.field; const collection = row.dataset.collection; 
-        if (id && field && collection) {
-            e.preventDefault(); const oldVal = getOldValue(collection, id, field);
-            pushToHistory(collection, id, field, oldVal, ""); activeCell.innerText = "";
-            try { await db.collection(collection).doc(id).update({ [field]: "" }); showToast("Cell cleared"); } 
-            catch (err) { activeCell.innerText = oldVal; showToast("Clear failed"); }
-        }
-        return;
+function renderDashboardCharts() { 
+    const candData = state.candidates.filter(c => c.status !== 'Placed'); 
+    const recCounts = {}; const techCounts = {}; 
+    candData.forEach(c => { 
+        const r = c.recruiter ? c.recruiter.trim() : 'Unassigned'; 
+        recCounts[r] = (recCounts[r] || 0) + 1; 
+        let tRaw = c.tech ? c.tech.trim() : 'Other'; if(tRaw === '') tRaw = 'Other';
+        const existingKey = Object.keys(techCounts).find(k => k.toLowerCase() === tRaw.toLowerCase());
+        const t = existingKey ? existingKey : tRaw; 
+        techCounts[t] = (techCounts[t] || 0) + 1; 
+    }); 
+    const recLabels = Object.keys(recCounts); const recData = Object.values(recCounts); const techLabels = Object.keys(techCounts); const techData = Object.values(techCounts); 
+    
+    const recWrapper = document.querySelector('.large-chart .canvas-wrapper');
+    if (recWrapper) {
+        const requiredWidth = Math.max(100, recLabels.length * 60); 
+        recWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: ${requiredWidth > 100 ? requiredWidth + 'px' : '100%'}"><canvas id="chart-recruiter"></canvas></div>`;
     }
 
-    if (e.key === 'Escape') {
-        closeDeleteModal(); closeColumnModal();
-        if (typeof closeComposeModal === 'function') closeComposeModal();
-        if (typeof closeCreateLabelModal === 'function') closeCreateLabelModal();
-        document.querySelectorAll('.custom-dropdown-menu').forEach(el => el.classList.remove('show'));
-        if (document.activeElement && isInput) document.activeElement.blur();
-        return;
-    }
+    const ctxRec = document.getElementById('chart-recruiter'); 
+    if (ctxRec) { if (recChartInstance) recChartInstance.destroy(); recChartInstance = new Chart(ctxRec, { type: 'bar', data: { labels: recLabels, datasets: [{ label: 'Candidates Assigned', data: recData, backgroundColor: 'rgba(6, 182, 212, 0.6)', borderColor: '#06b6d4', borderWidth: 1, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } } } }); } 
+    
+    const techWrapper = document.querySelector('.small-chart .canvas-wrapper');
+    if (techWrapper) { techWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: 100%;"><canvas id="chart-tech"></canvas></div>`; }
 
-    if (cmdOrCtrl && !isInput) {
-        if (e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) performRedo(); else performUndo(); return; } 
-        else if (e.key.toLowerCase() === 'y') { e.preventDefault(); performRedo(); return; }
-    }
+    const ctxTech = document.getElementById('chart-tech'); 
+    if (ctxTech) { if (techChartInstance) techChartInstance.destroy(); techChartInstance = new Chart(ctxTech, { type: 'doughnut', data: { labels: techLabels, datasets: [{ data: techData, backgroundColor: ['rgba(6,182,212,0.7)', 'rgba(245,158,11,0.7)', 'rgba(139,92,246,0.7)', 'rgba(34,197,94,0.7)', 'rgba(239,68,68,0.7)'], borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } } }); } 
+}
 
-    if (cmdOrCtrl && e.key.toLowerCase() === 'a' && !isInput) {
-        e.preventDefault(); const activeView = document.querySelector('.content-view.active'); if (!activeView) return;
-        const viewMap = { 'view-candidates': 'select-all-cand', 'view-hub': 'select-all-hub', 'view-employees': 'select-all-emp', 'view-onboarding': 'select-all-onb', 'view-placements': 'select-all-place' };
-        const checkId = viewMap[activeView.id]; if (checkId) { const box = document.getElementById(checkId); if (box) box.click(); } return;
-    }
-});
+function updateDashboardStats() { 
+    const candData = state.candidates.filter(c => c.status !== 'Placed');
+    if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = candData.length; 
+    if(document.getElementById('stat-active')) document.getElementById('stat-active').innerText = candData.filter(c => c.status === 'Active').length; 
+    if(document.getElementById('stat-inactive')) document.getElementById('stat-inactive').innerText = candData.filter(c => c.status === 'Inactive').length; 
+    if(document.getElementById('stat-placed')) document.getElementById('stat-placed').innerText = state.placements.length; 
+    const uniqueTechs = new Set(candData.map(c => c.tech ? c.tech.trim().toLowerCase() : '').filter(Boolean)); 
+    if(document.getElementById('stat-tech')) document.getElementById('stat-tech').innerText = uniqueTechs.size; 
+    if(document.getElementById('stat-rec')) document.getElementById('stat-rec').innerText = state.employees.length; 
+}
 
 /* ==========================================================================
-   10. AUTO-SAVE DRAG & DROP (FRACTIONAL INDEXING)
+   9. ALIGNMENT & COLUMN CONFIG
    ========================================================================== */
-let dragSrcEl = null; let dragCollection = null;
-window.handleDragStart = (e, collection) => { 
-    if (e.target.tagName === 'TH' || e.target.closest('th')) return; 
-    dragSrcEl = e.target.closest('tr'); 
-    dragCollection = collection; 
-    e.dataTransfer.effectAllowed = 'move'; 
-    e.dataTransfer.setData('text/plain', dragSrcEl.dataset.id); 
-    dragSrcEl.classList.add('dragging'); 
-};
-window.handleDragOver = (e) => { if (e.preventDefault) e.preventDefault(); e.dataTransfer.dropEffect = 'move'; return false; };
-window.handleDrop = async (e, collection) => {
-    if (e.stopPropagation) e.stopPropagation();
-    if (dragSrcEl) dragSrcEl.classList.remove('dragging');
-    if(dragCollection !== collection) return false;
-    const targetRow = e.target.closest('tr');
-    if (!targetRow || dragSrcEl === targetRow) return false;
-    
-    const tbody = targetRow.parentNode; 
-    const targetRect = targetRow.getBoundingClientRect(); 
-    const dropY = e.clientY; 
-    const insertAfter = dropY > targetRect.top + (targetRect.height / 2);
-    
-    if (insertAfter) targetRow.after(dragSrcEl); else targetRow.before(dragSrcEl);
-    
-    const prevRow = dragSrcEl.previousElementSibling; const nextRow = dragSrcEl.nextElementSibling;
-    let prevOrder = prevRow ? parseFloat(prevRow.dataset.order) : null; 
-    let nextOrder = nextRow ? parseFloat(nextRow.dataset.order) : null; 
-    let newOrder;
-    
-    if (prevOrder !== null && nextOrder !== null) newOrder = (prevOrder + nextOrder) / 2; 
-    else if (prevOrder !== null) newOrder = prevOrder + 10000; 
-    else if (nextOrder !== null) newOrder = nextOrder - 10000; 
-    else newOrder = 0; 
-    
-    dragSrcEl.dataset.order = newOrder; const id = dragSrcEl.dataset.id;
-    const oldOrder = getOldValue(collection, id, 'orderIndex'); 
-    pushToHistory(collection, id, 'orderIndex', oldOrder, newOrder);
-    
-    try { 
-        await db.collection(collection).doc(id).update({ orderIndex: newOrder }); 
-        showToast("Row position saved"); 
-        updateSerialNumbers(tbody); 
-    } catch(err) { console.error(err); showToast("Failed to save row position"); }
-    return false;
-};
-window.updateSerialNumbers = (tbody) => { 
-    if (!tbody) return; 
-    const rows = tbody.querySelectorAll('tr[data-id]'); 
-    rows.forEach((row, index) => { if (row.cells.length > 2) row.cells[2].innerText = index + 1; }); 
-};
-
-/* ==========================================================================
-   11. COLUMN ALIGNMENT & COLUMN DRAG/DROP
-   ========================================================================== */
-window.cycleAlign = (context, colName) => { 
-    const modes = ['left', 'center', 'right']; 
-    const current = state.alignments[context][colName] || 'left'; 
-    const next = modes[(modes.indexOf(current) + 1) % 3]; 
-    state.alignments[context][colName] = next; 
-    refreshViewForType(context === 'candidates' ? 'cand' : (context === 'employees' ? 'emp' : (context === 'onboarding' ? 'onb' : (context === 'placements' ? 'place' : 'hub')))); 
-};
-window.cycleAlignAll = (context) => { 
-    const modes = ['left', 'center', 'right']; 
-    const current = state.alignments[context]['global'] || 'left'; 
-    const next = modes[(modes.indexOf(current) + 1) % 3]; 
-    state.alignments[context]['global'] = next; 
-    refreshViewForType(context === 'candidates' ? 'cand' : (context === 'employees' ? 'emp' : (context === 'onboarding' ? 'onb' : (context === 'placements' ? 'place' : 'hub')))); 
-    showToast(`All columns aligned ${next}`); 
-};
+window.cycleAlign = (context, colName) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context][colName] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context][colName] = next; refreshViewForType(context); };
+window.cycleAlignAll = (context) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context]['global'] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context]['global'] = next; refreshViewForType(context); showToast(`All columns aligned ${next}`); };
 
 function applyAlignStyles(context, tableId) { 
     const table = document.getElementById(tableId); if (!table) return;
@@ -538,7 +528,7 @@ function applyAlignStyles(context, tableId) {
         const div = th.querySelector('[data-colname]');
         if (div) {
             const colName = div.dataset.colname; const val = config[colName] || config['global'] || 'left';
-            if (val !== 'left') rules += `#${tableId} th:nth-child(${idx+1}), #${tableId} td:nth-child(${idx+1}) { text-align: ${val} !important; }\n`;
+            if (val !== 'left') { rules += `#${tableId} th:nth-child(${idx+1}), #${tableId} td:nth-child(${idx+1}) { text-align: ${val} !important; }\n`; }
         }
     });
     let style = document.getElementById(`align-style-${context}`); 
@@ -546,19 +536,14 @@ function applyAlignStyles(context, tableId) {
     style.innerHTML = rules; 
 }
 
-function thAlign(title, context) { 
-    const dir = state.alignments[context]?.[title] || state.alignments[context]?.['global'] || 'left'; 
-    const icon = dir === 'left' ? 'fa-align-left' : (dir === 'center' ? 'fa-align-center' : 'fa-align-right'); 
-    const style = dir !== 'left' ? 'color:var(--primary); opacity:1;' : ''; 
-    return `<div data-colname="${title}" style="display:flex; align-items:center; width:100%;"><span style="flex:1; text-align:${dir};">${title}</span><i class="fa-solid ${icon} align-icon" style="${style}" onclick="event.stopPropagation(); cycleAlign('${context}', '${title}')"></i></div>`; 
-}
+function thAlign(title, context) { const dir = state.alignments[context]?.[title] || state.alignments[context]?.['global'] || 'left'; const icon = dir === 'left' ? 'fa-align-left' : (dir === 'center' ? 'fa-align-center' : 'fa-align-right'); const style = dir !== 'left' ? 'color:var(--primary); opacity:1;' : ''; return `<div data-colname="${title}" style="display:flex; align-items:center; width:100%;"><span style="flex:1; text-align:${dir};">${title}</span><i class="fa-solid ${icon} align-icon" style="${style}" onclick="event.stopPropagation(); cycleAlign('${context}', '${title}')"></i></div>`; }
 
 let dragColIndex = null; let dragTableId = null;
 function initColumnDragDrop(tableId, context) {
     const table = document.getElementById(tableId); if (!table) return;
     const headers = table.querySelectorAll('th');
     headers.forEach((th, index) => {
-        if (index < 4) return; // Protect Fixed Columns
+        if (index < 4) return; 
         th.setAttribute('draggable', 'true'); th.classList.add('draggable-col');
         th.ondragstart = (e) => { e.stopPropagation(); dragColIndex = Array.from(th.parentNode.children).indexOf(th); dragTableId = tableId; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'col_drag'); th.style.opacity = '0.5'; };
         th.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); if (index < 4 || dragTableId !== tableId) return false; e.dataTransfer.dropEffect = 'move'; th.classList.add('drag-over'); return false; };
@@ -600,42 +585,8 @@ function restoreColumnOrder(tableId, context) {
 }
 
 /* ==========================================================================
-   12. TABLE RENDERERS (DOUBLE-CLICK EDIT ENABLED)
+   10. TABLE RENDERERS
    ========================================================================== */
-function getFilteredData(data, filters) {
-    let subset = data;
-    if (state.userRole === 'Employee' && state.currentUserName) {
-        subset = subset.filter(item => item.recruiter === state.currentUserName);
-    }
-    return subset.filter(item => {
-        const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text);
-        const matchesRec = filters.recruiter ? item.recruiter === filters.recruiter : true;
-        const matchesTech = filters.tech ? item.tech === filters.tech : true;
-        const matchesStatus = filters.status ? item.status === filters.status : true;
-        return matchesText && matchesRec && matchesTech && matchesStatus;
-    });
-}
-
-function renderDropdowns() {
-    const rSelect = document.getElementById('filter-recruiter');
-    if (rSelect) rSelect.innerHTML = `<option value="">All Recruiters</option>${state.metadata.recruiters.map(r => `<option value="${r}">${r}</option>`).join('')}`;
-    const tSelect = document.getElementById('filter-tech');
-    if (tSelect) tSelect.innerHTML = `<option value="">All Tech</option>${state.metadata.techs.map(t => `<option value="${t}">${t}</option>`).join('')}`;
-    const hubRec = document.getElementById('hub-filter-recruiter');
-    if (hubRec) hubRec.innerHTML = `<option value="">All Recruiters</option>${state.metadata.recruiters.map(r => `<option value="${r}">${r}</option>`).join('')}`;
-}
-
-function generateRecruiterDropdown(val, id, collection) {
-    if (state.userRole === 'Employee') return val || '-';
-    let opts = state.metadata.recruiters.map(r => `<option value="${r}" ${r===val?'selected':''}>${r}</option>`).join('');
-    return `<select class="modern-select" style="width:100%; border:none; background:transparent;" onchange="inlineDateEdit('${id}', 'recruiter', '${collection}', this.value)"><option value="">Select...</option>${opts}</select>`;
-}
-
-function generateTechDropdown(val, id, collection) {
-    let opts = state.metadata.techs.map(t => `<option value="${t}" ${t===val?'selected':''}>${t}</option>`).join('');
-    return `<select class="modern-select text-cyan" style="width:100%; border:none; background:transparent; font-weight:600;" onchange="inlineDateEdit('${id}', 'tech', '${collection}', this.value)"><option value="">Select...</option>${opts}</select>`;
-}
-
 function renderCandidateTable() {
     const filtered = getFilteredData(state.candidates, state.filters);
     const tbody = document.getElementById('table-body');
@@ -650,55 +601,12 @@ function renderCandidateTable() {
         const isSel = state.selection.cand.has(c.id) ? 'checked' : ''; const rowClass = state.selection.cand.has(c.id) ? 'selected-row' : '';
         const statusClass = c.status === 'Active' ? 'active' : 'inactive'; const statusLabel = c.status || 'Inactive';
         const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt;
-        
-        const customCells = (state.customColumns.candidates || []).map(col => { 
-            const val = c[col.key] || ''; 
-            if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'candidates', this.value)"></td>`; 
-            if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" ondblclick="inlineUrlEdit('${c.id}', '${col.key}', 'candidates', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan link-icon-btn"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; 
-            return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'candidates', this)">${val || ''}</td>`; 
-        }).join('');
-
-        const buildUrlCell = (val, field, iconClass) => {
-            const innerContent = val 
-                ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="${iconClass} link-icon-btn"></i></a>` 
-                : `<i class="fa-solid fa-plus icon-empty"></i>`;
-            return `<td style="text-align:center;" tabindex="0" data-field="${field}" ondblclick="inlineUrlEdit('${c.id}', '${field}', 'candidates', this)">${innerContent}</td>`;
-        };
-
-        const gmailCell = buildUrlCell(c.gmail, 'gmail', 'fa-brands fa-google icon-gmail');
-        const linkedinCell = buildUrlCell(c.linkedin, 'linkedin', 'fa-brands fa-linkedin icon-linkedin');
-        const resumeCell = buildUrlCell(c.resume, 'resume', 'fa-solid fa-file-lines icon-resume');
-        const trackCell = buildUrlCell(c.track, 'track', 'fa-solid fa-location-crosshairs icon-track');
-        
-        return `<tr class="${rowClass}" data-id="${c.id}" data-collection="candidates" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'candidates')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'candidates')">
-            <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td>
-            <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td>
-            <td>${i+1}</td>
-            <td tabindex="0" data-field="first" id="fname-${c.id}" ondblclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td>
-            <td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td>
-            <td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td>
-            <td tabindex="0" data-field="wa" ondblclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td>
-            <td tabindex="0" data-field="tech" ondblclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td>
-            <td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td>
-            <td style="overflow:visible;">
-                <div class="action-dropdown-container">
-                    <div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div>
-                    <div id="menu-${c.id}" class="custom-dropdown-menu">
-                        <div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div>
-                        <div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div>
-                        <div class="dropdown-option" onclick="moveToPlacements('${c.id}')"><span class="dot-gold" style="width:8px; height:8px; background:#f59e0b; border-radius:50%; display:inline-block;"></span> Move to Placements</div>
-                        <div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div>
-                    </div>
-                </div>
-            </td>
-            <td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>
-            ${gmailCell}
-            ${linkedinCell}
-            ${resumeCell}
-            ${trackCell}
-            <td tabindex="0" data-field="comments" ondblclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||''}</td>
-            ${customCells}
-        </tr>`;
+        const customCells = (state.customColumns.candidates || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'candidates', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'candidates', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'candidates', this)">${val || ''}</td>`; }).join('');
+        const gmailIcon = c.gmail ? `<a href="${c.gmail}" target="_blank"><i class="fa-brands fa-google icon-gmail link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="gmail" onclick="inlineUrlEdit('${c.id}', 'gmail', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
+        const linkedinIcon = c.linkedin ? `<a href="${c.linkedin}" target="_blank"><i class="fa-brands fa-linkedin icon-linkedin link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="linkedin" onclick="inlineUrlEdit('${c.id}', 'linkedin', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
+        const resumeIcon = c.resume ? `<a href="${c.resume}" target="_blank"><i class="fa-solid fa-file-lines icon-resume link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="resume" onclick="inlineUrlEdit('${c.id}', 'resume', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
+        const trackIcon = c.track ? `<a href="${c.track}" target="_blank"><i class="fa-solid fa-location-crosshairs icon-track link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="track" onclick="inlineUrlEdit('${c.id}', 'track', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
+        return `<tr class="${rowClass}" data-id="${c.id}" data-collection="candidates" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'candidates')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'candidates')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td><td>${i+1}</td><td tabindex="0" data-field="first" id="fname-${c.id}" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td><td tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td><td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td><td tabindex="0" data-field="wa" onclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td><td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td><td style="overflow:visible;"><div class="action-dropdown-container"><div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div><div id="menu-${c.id}" class="custom-dropdown-menu"><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div><div class="dropdown-option" onclick="moveToPlacements('${c.id}')"><span class="dot-gold" style="width:8px; height:8px; background:#f59e0b; border-radius:50%; display:inline-block;"></span> Move to Placements</div><div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div></div></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td><td style="text-align:center;">${gmailIcon}</td><td style="text-align:center;">${linkedinIcon}</td><td style="text-align:center;">${resumeIcon}</td><td style="text-align:center;">${trackIcon}</td><td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||''}</td>${customCells}</tr>`;
     }).join('');
     
     restoreColumnOrder('candidates-table', 'candidates'); applyAlignStyles('candidates', 'candidates-table'); initColumnDragDrop('candidates-table', 'candidates');
@@ -712,7 +620,7 @@ function renderEmployeeTable() {
     document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees')}</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th>${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th>${customHeaders}</tr>`;
     document.getElementById('emp-footer-count').innerText = `Showing ${filtered.length} records`;
     
-    document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.emp.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" ondblclick="inlineUrlEdit('${c.id}', '${col.key}', 'employees', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan link-icon-btn"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="employees" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'employees')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'employees')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td tabindex="0" data-field="designation" ondblclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||''}</td><td tabindex="0" data-field="workMobile" ondblclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||''}</td><td tabindex="0" data-field="personalMobile" ondblclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||''}</td><td tabindex="0" data-field="officialEmail" ondblclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||''}</td><td tabindex="0" data-field="personalEmail" ondblclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||''}</td>${customCells}</tr>`; }).join('');
+    document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.emp.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'employees', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="employees" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'employees')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'employees')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td tabindex="0" data-field="designation" onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||''}</td><td tabindex="0" data-field="workMobile" onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||''}</td><td tabindex="0" data-field="personalMobile" onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||''}</td><td tabindex="0" data-field="officialEmail" onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||''}</td><td tabindex="0" data-field="personalEmail" onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||''}</td>${customCells}</tr>`; }).join('');
     
     restoreColumnOrder('employee-table', 'employees'); applyAlignStyles('employees', 'employee-table'); initColumnDragDrop('employee-table', 'employees');
 }
@@ -725,28 +633,24 @@ function renderOnboardingTable() {
     document.getElementById('onboarding-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('onboarding')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('onboarding')"></i></div></th><th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'onboarding')}</th><th>${thAlign('First Name', 'onboarding')}</th><th>${thAlign('Last Name', 'onboarding')}</th><th>${thAlign('Date of Birth', 'onboarding')}</th><th>${thAlign('Recruiter', 'onboarding')}</th><th>${thAlign('Mobile', 'onboarding')}</th><th>${thAlign('Status', 'onboarding')}</th><th>${thAlign('Assigned', 'onboarding')}</th><th>${thAlign('Comments', 'onboarding')}</th>${customHeaders}</tr>`;
     document.getElementById('onb-footer-count').innerText = `Showing ${filtered.length} records`;
     
-    document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.onb.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" ondblclick="inlineUrlEdit('${c.id}', '${col.key}', 'onboarding', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan link-icon-btn"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="onboarding" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'onboarding')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'onboarding')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)"><option value="Onboarding" ${c.status==='Onboarding'?'selected':''}>Onboarding</option><option value="Completed" ${c.status==='Completed'?'selected':''}>Completed</option></select></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td tabindex="0" data-field="comments" ondblclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||''}</td>${customCells}</tr>`; }).join('');
+    document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.onb.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'onboarding', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="onboarding" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'onboarding')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'onboarding')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)"><option value="Onboarding" ${c.status==='Onboarding'?'selected':''}>Onboarding</option><option value="Completed" ${c.status==='Completed'?'selected':''}>Completed</option></select></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||''}</td>${customCells}</tr>`; }).join('');
     
     restoreColumnOrder('onboarding-table', 'onboarding'); applyAlignStyles('onboarding', 'onboarding-table'); initColumnDragDrop('onboarding-table', 'onboarding');
 }
 
 function renderPlacementTable() {
-    const mVal = document.getElementById('placement-month-picker')?.value; const yVal = document.getElementById('placement-year-picker')?.value;
+    const mVal = document.getElementById('placement-month-picker').value; const yVal = document.getElementById('placement-year-picker').value;
     let placed = state.placements.filter(c => { if(!c.assigned) return false; return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); });
     if(!state.selection.place) state.selection.place = new Set();
     const isAllChecked = placed.length > 0 && placed.every(p => state.selection.place.has(p.id));
     const thead = document.querySelector('#placement-table-head'); 
     const customHeaders = (state.customColumns.placements || []).map(col => `<th>${thAlign(col.name, 'placements')}</th>`).join('');
     
-    if(thead) {
-        thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
-    }
-    const countEl = document.getElementById('placement-footer-count');
-    if(countEl) countEl.innerText = `Showing ${placed.length} records`;
+    if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
+    if(document.getElementById('placement-footer-count')) document.getElementById('placement-footer-count').innerText = `Showing ${placed.length} records`;
     
-    const tbody = document.getElementById('placement-table-body');
-    if(tbody) {
-        tbody.innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" ondblclick="inlineUrlEdit('${c.id}', '${col.key}', 'placements', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan link-icon-btn"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last}</td><td tabindex="0" data-field="tech" ondblclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech}</td><td tabindex="0" data-field="location" ondblclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location||''}</td><td tabindex="0" data-field="contract" ondblclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract||''}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
+    if(document.getElementById('placement-table-body')) {
+        document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'placements', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last}</td><td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech}</td><td tabindex="0" data-field="location" onclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location||''}</td><td tabindex="0" data-field="contract" onclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract||''}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
     }
     restoreColumnOrder('placement-table', 'placements'); applyAlignStyles('placements', 'placement-table'); initColumnDragDrop('placement-table', 'placements');
 }
@@ -755,16 +659,7 @@ function renderHubTable() {
     let data = state.hubData; 
     if(state.userRole === 'Employee' && state.currentUserName) data = data.filter(c => c.recruiter === state.currentUserName);
     if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
-    
-    const { start, end } = state.hub.range; 
-    const isInRange = (entry) => { 
-        const dateStr = typeof entry === 'string' ? entry : entry.date;
-        if(!dateStr) return false;
-        const [y, m, d] = dateStr.split('-').map(Number);
-        const t = new Date(y, m - 1, d, 12, 0, 0).getTime(); 
-        return t >= start && t <= end; 
-    };
-    
+    const { start, end } = state.hub.range; const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
     const activeCandidates = data.filter(c => (c.submissionLog || []).some(isInRange) || (c.screeningLog || []).some(isInRange) || (c.interviewLog || []).some(isInRange));
     if(!state.selection.hub) state.selection.hub = new Set();
     const isAllChecked = activeCandidates.length > 0 && activeCandidates.every(c => state.selection.hub.has(c.id));
@@ -783,48 +678,17 @@ function renderHubTable() {
         const activeStyle = isExpanded ? 'background: rgba(6, 182, 212, 0.1); border-left: 3px solid var(--primary);' : ''; const caret = isExpanded ? '<i class="fa-solid fa-chevron-down"></i>' : '<i class="fa-solid fa-chevron-right"></i>';
         const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt;
         
-        let html = `<tr style="cursor:pointer; ${activeStyle}" class="${state.selection.hub.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="hub" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'hub')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'hub')"><td class="drag-handle-cell" onclick="event.stopPropagation()"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td onclick="event.stopPropagation()"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'hub')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'hub', this)">${c.first} ${c.last}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'hub')}</td><td>${generateTechDropdown(c.tech, c.id, 'hub')}</td><td class="text-cyan" style="font-weight:bold; font-size:1.1rem; text-align:center;" onclick="toggleHubRow('${c.id}')">${sub}</td><td class="text-gold" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${scr}</td><td class="text-purple" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${int}</td><td style="font-size:0.8rem; color:var(--text-muted); text-align:right;" onclick="toggleHubRow('${c.id}')">${displayDate} <span style="margin-left: 8px; opacity:0.7;">${caret}</span></td></tr>`;
-        
+        let html = `<tr style="cursor:pointer; ${activeStyle}" class="${state.selection.hub.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="hub" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'hub')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'hub')"><td class="drag-handle-cell" onclick="event.stopPropagation()"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td onclick="event.stopPropagation()"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'hub')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'hub', this)">${c.first} ${c.last}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'hub')}</td><td>${generateTechDropdown(c.tech, c.id, 'hub')}</td><td class="text-cyan" style="font-weight:bold; font-size:1.1rem; text-align:center;" onclick="toggleHubRow('${c.id}')">${sub}</td><td class="text-gold" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${scr}</td><td class="text-purple" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${int}</td><td style="font-size:0.8rem; color:var(--text-muted); text-align:right;" onclick="toggleHubRow('${c.id}')">${displayDate} <span style="margin-left: 8px; opacity:0.7;">${caret}</span></td></tr>`;
         if(isExpanded) {
-            const inputDefault = state.hub.date || new Date().toISOString().split('T')[0];
-            const renderTimeline = (list, type) => {
+             const renderTimeline = (list, type) => {
                 const visibleLogs = (list||[]).filter(isInRange);
                 if(visibleLogs.length === 0) return `<li class="hub-log-item" style="opacity:0.5; font-style:italic;">No records in this range.</li>`;
                 return visibleLogs.map((entry, index) => {
                     const isLegacy = typeof entry === 'string', dateStr = isLegacy ? entry : entry.date, subject = isLegacy ? 'Manual Entry' : (entry.subject || entry.note || 'No Subject'), link = !isLegacy && entry.link ? entry.link : null, icon = type === 'sub' ? 'fa-paper-plane' : (type === 'scr' ? 'fa-user-clock' : 'fa-headset');
-                    return `<li class="hub-log-item" style="display:flex; flex-direction:column; gap:4px; padding:10px; border-bottom:1px solid rgba(255,255,255,0.05);"><div style="display:flex; justify-content:space-between; width:100%;"><span class="log-date" style="color:var(--primary); font-weight:bold; font-size:0.85rem;"><i class="fa-solid ${icon}"></i> ${dateStr}</span>${!isLegacy && entry.recruiter ? `<span style="font-size:0.7rem; opacity:0.6;">${entry.recruiter}</span>` : ''}</div><div style="font-weight:500; color:#fff; font-size:0.9rem;">${subject}</div>${link ? `<a href="${link}" target="_blank" class="hub-link-btn" style="margin-top:5px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:4px; background:rgba(255,255,255,0.05); color:var(--primary); font-size:0.8rem;">View Link</a>` : ''}<div style="text-align:right; width:100%; margin-top:5px;"><button class="hub-action-btn delete" style="color: #ef4444; background:none; border:none; cursor:pointer;" onclick="event.stopPropagation(); deleteHubLog('${c.id}', '${type==='sub'?'submissionLog':type==='scr'?'screeningLog':'interviewLog'}', ${index})"><i class="fa-solid fa-trash"></i> Remove</button></div></li>`;
+                    return `<li class="hub-log-item" style="display:flex; flex-direction:column; gap:4px; padding:10px; border-bottom:1px solid rgba(255,255,255,0.05);"><div style="display:flex; justify-content:space-between; width:100%;"><span class="log-date" style="color:var(--primary); font-weight:bold; font-size:0.85rem;"><i class="fa-solid ${icon}"></i> ${dateStr}</span>${!isLegacy && entry.recruiter ? `<span style="font-size:0.7rem; opacity:0.6;">${entry.recruiter}</span>` : ''}</div><div style="font-weight:500; color:#fff; font-size:0.9rem;">${subject}</div>${link ? `<a href="${link}" target="_blank" class="hub-link-btn" style="margin-top:5px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:4px; background:rgba(255,255,255,0.05); color:var(--primary); font-size:0.8rem;">View Email</a>` : ''}<div style="text-align:right; width:100%; margin-top:5px;"><button class="hub-action-btn delete" style="color: #ef4444; background:none; border:none; cursor:pointer;" onclick="event.stopPropagation(); deleteHubLog('${c.id}', '${type==='sub'?'submissionLog':type==='scr'?'screeningLog':'interviewLog'}', ${index})"><i class="fa-solid fa-trash"></i> Remove</button></div></li>`;
                 }).join('');
             };
-            
-            html += `<tr class="hub-details-row"><td colspan="10" style="padding:0; border:none;"><div class="hub-details-wrapper" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; padding:20px; background:rgba(0,0,0,0.2); border-bottom:1px solid var(--glass-border);" onclick="event.stopPropagation()">
-                <div class="hub-col cyan">
-                    <div class="hub-col-header cyan"><i class="fa-solid fa-paper-plane"></i> Submissions</div>
-                    <div style="display:flex; gap:5px; margin-bottom:10px;">
-                        <input type="date" id="in-sub-${c.id}" class="date-input-modern" style="flex:1;" value="${inputDefault}">
-                        <button class="btn-icon-small" title="Attach File" onclick="triggerHubFileUpload('${c.id}', 'submissionLog')"><i class="fa-solid fa-paperclip"></i></button>
-                        <button class="btn-primary" style="padding:5px 10px; border-radius:6px; border:none; color:#fff; cursor:pointer;" onclick="addHubLog('${c.id}', 'submissionLog', 'in-sub-${c.id}')">Add</button>
-                    </div>
-                    <ul class="hub-log-list custom-scroll">${renderTimeline(c.submissionLog, 'sub')}</ul>
-                </div>
-                <div class="hub-col gold">
-                    <div class="hub-col-header gold"><i class="fa-solid fa-user-clock"></i> Screenings</div>
-                    <div style="display:flex; gap:5px; margin-bottom:10px;">
-                        <input type="date" id="in-scr-${c.id}" class="date-input-modern" style="flex:1;" value="${inputDefault}">
-                        <button class="btn-icon-small" title="Attach File" onclick="triggerHubFileUpload('${c.id}', 'screeningLog')"><i class="fa-solid fa-paperclip"></i></button>
-                        <button class="btn-primary" style="background:#f59e0b; padding:5px 10px; border-radius:6px; border:none; color:#fff; cursor:pointer;" onclick="addHubLog('${c.id}', 'screeningLog', 'in-scr-${c.id}')">Add</button>
-                    </div>
-                    <ul class="hub-log-list custom-scroll">${renderTimeline(c.screeningLog, 'scr')}</ul>
-                </div>
-                <div class="hub-col purple">
-                    <div class="hub-col-header purple"><i class="fa-solid fa-headset"></i> Interviews</div>
-                    <div style="display:flex; gap:5px; margin-bottom:10px;">
-                        <input type="date" id="in-int-${c.id}" class="date-input-modern" style="flex:1;" value="${inputDefault}">
-                        <button class="btn-icon-small" title="Attach File" onclick="triggerHubFileUpload('${c.id}', 'interviewLog')"><i class="fa-solid fa-paperclip"></i></button>
-                        <button class="btn-primary" style="background:#8b5cf6; padding:5px 10px; border-radius:6px; border:none; color:#fff; cursor:pointer;" onclick="addHubLog('${c.id}', 'interviewLog', 'in-int-${c.id}')">Add</button>
-                    </div>
-                    <ul class="hub-log-list custom-scroll">${renderTimeline(c.interviewLog, 'int')}</ul>
-                </div>
-            </div></td></tr>`;
+            html += `<tr class="hub-details-row"><td colspan="10" style="padding:0; border:none;"><div class="hub-details-wrapper" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; padding:20px; background:rgba(0,0,0,0.2); border-bottom:1px solid var(--glass-border);" onclick="event.stopPropagation()"><div class="hub-col cyan"><div class="hub-col-header cyan">RTR & Submissions <button onclick="triggerHubNote('${c.id}', 'submissionLog')" style="float:right; background:none; border:none; color:#06b6d4; cursor:pointer;"><i class="fa-solid fa-plus"></i></button></div><ul class="hub-log-list custom-scroll">${renderTimeline(c.submissionLog, 'sub')}</ul></div><div class="hub-col gold"><div class="hub-col-header gold">Screenings <button onclick="triggerHubNote('${c.id}', 'screeningLog')" style="float:right; background:none; border:none; color:#f59e0b; cursor:pointer;"><i class="fa-solid fa-plus"></i></button></div><ul class="hub-log-list custom-scroll">${renderTimeline(c.screeningLog, 'scr')}</ul></div><div class="hub-col purple"><div class="hub-col-header purple">Interviews <button onclick="triggerHubNote('${c.id}', 'interviewLog')" style="float:right; background:none; border:none; color:#8b5cf6; cursor:pointer;"><i class="fa-solid fa-plus"></i></button></div><ul class="hub-log-list custom-scroll">${renderTimeline(c.interviewLog, 'int')}</ul></div></div></td></tr>`;
         }
         return html;
     }).join('');
@@ -833,7 +697,7 @@ function renderHubTable() {
 }
 
 /* ==========================================================================
-   13. HUB STATS & LOGIC
+   11. DATA MANIPULATION & INLINE EDITS
    ========================================================================== */
 window.updateHubStats = (filterType, dateVal) => {
     if(filterType) state.hub.filterType = filterType; 
@@ -872,13 +736,7 @@ window.updateHubStats = (filterType, dateVal) => {
     if(document.getElementById('hub-range-label')) document.getElementById('hub-range-label').innerHTML = `<i class="fa-regular fa-calendar"></i> ${labelText}`;
     state.hub.range = { start, end };
     
-    const isInRange = (entry) => { 
-        const dateStr = typeof entry === 'string' ? entry : entry.date;
-        if(!dateStr) return false;
-        const [y, m, dayVal] = dateStr.split('-').map(Number);
-        const t = new Date(y, m - 1, dayVal, 12, 0, 0).getTime(); 
-        return t >= start && t <= end; 
-    };
+    const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
 
     let subs=0, scrs=0, ints=0; 
     state.hubData.forEach(c => { 
@@ -899,126 +757,15 @@ window.updateHubStats = (filterType, dateVal) => {
     renderHubTable();
 };
 
-window.addHubLog = async (id, fieldName, inputId) => {
-    const dateInput = document.getElementById(inputId);
-    const dateVal = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
-    
-    if(!dateVal) return showToast("Please select a valid date");
-    
-    const noteVal = prompt("Enter a description or paste a link for this log:");
-    if(noteVal === null) return; 
-    
-    const candidate = state.hubData.find(c => c.id === id);
-    if(!candidate) return;
+window.toggleHubRow = (id) => { state.hub.expandedRowId = state.hub.expandedRowId === id ? null : id; renderHubTable(); };
 
-    let logs = candidate[fieldName] || [];
-    const newEntry = { 
-        date: dateVal, 
-        subject: noteVal.startsWith('http') ? 'Attached Link' : (noteVal || 'Manual Entry'),
-        link: noteVal.startsWith('http') ? noteVal : "", 
-        recruiter: state.currentUserName, 
-        timestamp: Date.now(), 
-        type: 'Manual Entry' 
-    };
-    
-    logs.push(newEntry);
-    
-    try {
-        await db.collection('candidates').doc(id).update({ [fieldName]: logs });
-        showToast("Activity Logged");
-    } catch (err) {
-        showToast("Error saving log: " + err.message);
-    }
+window.updatePlacementFilter = (type, btn) => {
+    state.placementFilter = type; document.querySelectorAll('#view-placements .filter-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active');
+    if (type === 'monthly') { document.getElementById('placement-month-picker').style.display = 'block'; document.getElementById('placement-year-picker').style.display = 'none'; } 
+    else { document.getElementById('placement-month-picker').style.display = 'none'; document.getElementById('placement-year-picker').style.display = 'block'; }
+    renderPlacementTable();
 };
 
-window.deleteHubLog = async (candId, logType, index) => { 
-    if(!confirm("Remove this log entry?")) return; 
-    const candidate = state.hubData.find(c => c.id === candId); 
-    let logs = candidate[logType] || []; 
-    logs.splice(index, 1); 
-    await db.collection('candidates').doc(candId).update({ [logType]: logs });
-    showToast("Log Removed"); 
-};
-
-/* ==========================================================================
-   14. FILE HANDLING (HUB + PROFILE)
-   ========================================================================== */
-window.triggerHubFileUpload = (candidateId, fieldName) => {
-    state.uploadTarget = { id: candidateId, field: fieldName };
-    document.getElementById('hub-file-input').click();
-};
-
-window.handleHubFileSelect = (input) => {
-    const file = input.files[0];
-    if (!file) return;
-    const { id, field } = state.uploadTarget;
-    if (!id || !field) return;
-
-    const dateVal = new Date().toISOString().split('T')[0];
-    const storageRef = storage.ref(`candidates/${id}/emails/${Date.now()}_${file.name}`);
-    showToast("Uploading Email...");
-
-    storageRef.put(file).then(snapshot => {
-        return snapshot.ref.getDownloadURL();
-    }).then(url => {
-        const candidate = state.candidates.find(c => c.id === id) || state.hubData.find(c => c.id === id);
-        let logs = candidate[field] || [];
-        const newEntry = { date: dateVal, link: url, timestamp: Date.now() };
-        logs.push(newEntry);
-        const targetCollection = candidate.status === 'Placed' ? 'placements' : 'candidates';
-        return db.collection(targetCollection).doc(id).update({ [field]: logs });
-    }).then(() => {
-        showToast("Email Attached!");
-        input.value = '';
-    }).catch(err => {
-        showToast("Upload Error: " + err.message);
-        input.value = '';
-    });
-};
-
-window.triggerPhotoUpload = () => { document.getElementById('profile-upload-input').click(); };
-
-window.handlePhotoUpload = async (input) => {
-    const file = input.files[0];
-    if (!file || !file.type.startsWith('image/')) return showToast("Please select an image file.");
-    const user = auth.currentUser; if (!user) return;
-    const localPreviewURL = URL.createObjectURL(file);
-    const avatarImg = document.getElementById('profile-main-img');
-    const avatarPlaceholder = document.getElementById('profile-main-icon');
-    if(avatarImg) { avatarImg.src = localPreviewURL; avatarImg.style.display = 'block'; }
-    if(avatarPlaceholder) avatarPlaceholder.style.display = 'none';
-
-    try {
-        const storageRef = storage.ref(`users/${user.email}/profile.jpg`); 
-        const uploadTask = storageRef.put(file);
-        uploadTask.on('state_changed', null, 
-            (error) => { showToast("Upload Failed"); }, 
-            () => {
-                uploadTask.snapshot.ref.getDownloadURL().then((downloadURL) => {
-                    db.collection('users').doc(user.email).set({ photoURL: downloadURL }, { merge: true });
-                    user.updateProfile({ photoURL: downloadURL });
-                    document.getElementById('btn-delete-photo').style.display = 'flex';
-                    showToast("Photo Updated");
-                });
-            }
-        );
-    } catch (err) { showToast("Error processing image"); }
-};
-
-window.deleteProfilePhoto = () => {
-    if(!confirm("Remove profile photo?")) return;
-    const user = auth.currentUser; if (!user) return;
-    db.collection('users').doc(user.email).update({ photoURL: firebase.firestore.FieldValue.delete() }).then(() => {
-        document.getElementById('profile-main-img').style.display = 'none';
-        document.getElementById('profile-main-icon').style.display = 'flex';
-        document.getElementById('btn-delete-photo').style.display = 'none';
-        showToast("Photo Removed");
-    });
-};
-
-/* ==========================================================================
-   15. DATA MANIPULATION & INLINE EDITS
-   ========================================================================== */
 window.createNewRow = async (type) => {
     const ts = Date.now() + Math.random(); 
     const newOrderIndex = -ts;
@@ -1268,7 +1015,7 @@ window.moveToPlacements = async (id) => {
 window.deletePlacement = async (id) => { if(confirm("Remove this placement?")) { await db.collection('placements').doc(id).delete(); showToast("Placement removed"); } };
 
 /* ==========================================================================
-   16. GMAIL & BACKGROUND SYNC ENGINE
+   12. GMAIL ENGINE
    ========================================================================== */
 function loadGoogleScripts() { 
     const s1 = document.createElement('script'); s1.src = "https://apis.google.com/js/api.js"; 
@@ -1462,101 +1209,292 @@ window.sendCrmEmail = async () => {
 };
 
 /* ==========================================================================
-   17. DASHBOARD VISUALIZATIONS & TIMERS
-   ========================================================================== */
-function updateDashboardStats() { 
-    let calcData = state.candidates;
-    if (state.userRole === 'Employee' && state.currentUserName) calcData = calcData.filter(c => c.recruiter === state.currentUserName);
-
-    const total = calcData.length;
-    const active = calcData.filter(c => c.status === 'Active').length;
-    const inactive = calcData.filter(c => c.status === 'Inactive').length;
-    const placed = state.placements.length;
-    const techs = new Set(calcData.map(c=>c.tech)).size;
-    const recruiters = state.metadata.recruiters.length;
-
-    if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = total;
-    if(document.getElementById('stat-active-count')) document.getElementById('stat-active-count').innerText = active;
-    if(document.getElementById('stat-inactive-count')) document.getElementById('stat-inactive-count').innerText = inactive;
-    if(document.getElementById('stat-placed')) document.getElementById('stat-placed').innerText = placed;
-    if(document.getElementById('stat-tech')) document.getElementById('stat-tech').innerText = techs;
-    if(document.getElementById('stat-rec')) document.getElementById('stat-rec').innerText = recruiters;
-    if(document.getElementById('current-date-display')) document.getElementById('current-date-display').innerText = new Date().toLocaleDateString();
-
-    const techData = getChartData(calcData, 'tech');
-    const recData = getChartData(calcData, 'recruiter');
-    renderChart('chart-recruiter', recData, 'bar'); 
-    renderChart('chart-tech', techData, 'doughnut');
-}
-
-function getChartData(data, key) { const counts = {}; data.forEach(c => {if(c[key]) counts[c[key]] = (counts[c[key]] || 0) + 1;}); return { labels: Object.keys(counts), data: Object.values(counts) }; }
-
-let chartInstances = {}; 
-function renderChart(id, data, type) { 
-    const ctx = document.getElementById(id); if(!ctx) return; 
-    if(ctx.clientHeight === 0) ctx.style.height = '250px';
-    const context = ctx.getContext('2d');
-    if(chartInstances[id]) chartInstances[id].destroy(); 
-    const colors = ['#06b6d4', '#f59e0b', '#8b5cf6', '#22c55e', '#ef4444', '#ec4899', '#6366f1'];
-    chartInstances[id] = new Chart(context, { type: type, data: { labels: data.labels, datasets: [{ label: 'Candidates', data: data.data, backgroundColor: colors, borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, borderRadius: 4, barThickness: 20 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: type === 'doughnut', position: 'right', labels: { color: '#94a3b8', font: { size: 11 } } } }, scales: { y: { display: type === 'bar', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }, x: { display: type === 'bar', grid: { display: false }, ticks: { color: '#94a3b8' } } } } }); 
-}
-
-window.checkBirthdays = () => {
-    const today = new Date(); const currentMonth = String(today.getMonth() + 1).padStart(2, '0'); const currentDay = String(today.getDate()).padStart(2, '0'); const todayMatch = `${currentMonth}-${currentDay}`;
-    if(!state.allUsers) return;
-    const birthdayPeople = state.allUsers.filter(user => { if (!user.dob) return false; return user.dob.substring(5) === todayMatch; });
-    const card = document.getElementById('birthday-card'); const content = document.getElementById('bday-names');
-    if (!card || !content) return;
-    if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
-    if (birthdayPeople.length > 0) { const names = birthdayPeople.map(u => u.name).join(', '); content.innerText = names; card.style.display = 'flex'; card.classList.add('active'); window.birthdayTimer = setTimeout(() => { card.classList.remove('active'); setTimeout(() => { card.style.display = 'none'; }, 500); }, 7000); } 
-    else { card.classList.remove('active'); card.style.display = 'none'; }
-};
-
-let inactivityTimer;
-function startAutoLogoutTimer() {
-    const TIMEOUT_DURATION = 10 * 60 * 1000; 
-    function resetTimer() {
-        if (!firebase.auth().currentUser) return; 
-        clearTimeout(inactivityTimer);
-        inactivityTimer = setTimeout(() => { firebase.auth().signOut().then(() => { showToast("Session expired due to inactivity"); switchScreen('auth'); }); }, TIMEOUT_DURATION);
-    }
-    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
-    activityEvents.forEach(event => { document.addEventListener(event, resetTimer); });
-    resetTimer();
-}
-function stopAutoLogoutTimer() { clearTimeout(inactivityTimer); }
-
-/* ==========================================================================
-   18. MISC EVENT LISTENERS
+   13. GLOBAL EVENT LISTENERS & NAVIGATION
    ========================================================================== */
 function setupEventListeners() {
-    document.getElementById('btn-logout')?.addEventListener('click', () => auth.signOut());
-    document.getElementById('theme-toggle')?.addEventListener('click', () => { document.body.classList.toggle('light-mode'); localStorage.setItem('np_theme', document.body.classList.contains('light-mode') ? 'light' : 'dark'); });
-    
-    document.getElementById('search-input')?.addEventListener('input', e => { state.filters.text = e.target.value.toLowerCase(); renderCandidateTable(); });
-    document.getElementById('filter-recruiter')?.addEventListener('change', e => { state.filters.recruiter = e.target.value; renderCandidateTable(); });
-    document.getElementById('filter-tech')?.addEventListener('change', e => { state.filters.tech = e.target.value; renderCandidateTable(); });
-    
-    document.querySelectorAll('.btn-toggle').forEach(btn => { 
-        btn.addEventListener('click', e => { document.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('active')); e.target.classList.add('active'); state.filters.status = e.target.dataset.status; renderCandidateTable(); }); 
-    });
-    
-    document.getElementById('btn-reset-filters')?.addEventListener('click', () => { 
-        document.getElementById('search-input').value = ''; document.getElementById('filter-recruiter').value = ''; document.getElementById('filter-tech').value = ''; 
-        document.querySelectorAll('.btn-toggle').forEach(b => b.classList.remove('active')); document.querySelector('.btn-toggle[data-status=""]').classList.add('active'); 
-        state.filters = { text: '', recruiter: '', tech: '', status: '' }; renderCandidateTable(); showToast("Filters refreshed"); 
-    });
+    document.querySelectorAll('.nav-item[data-target]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            if(e.target.closest('.fa-chevron-down') || e.target.closest('.fa-chevron-up')) return;
 
-    document.getElementById('hub-search-input')?.addEventListener('input', e => { state.hubFilters.text = e.target.value.toLowerCase(); renderHubTable(); });
-    document.getElementById('hub-filter-recruiter')?.addEventListener('change', e => { state.hubFilters.recruiter = e.target.value; renderHubTable(); });
-    document.getElementById('onb-search-input')?.addEventListener('input', e => { state.onbFilters.text = e.target.value.toLowerCase(); renderOnboardingTable(); });
-    document.getElementById('emp-search-input')?.addEventListener('input', e => { state.empFilters.text = e.target.value.toLowerCase(); renderEmployeeTable(); });
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            btn.classList.add('active');
+            
+            document.querySelectorAll('.content-view').forEach(v => v.classList.remove('active'));
+            const targetId = btn.dataset.target;
+            const targetView = document.getElementById(targetId);
+            if(targetView) targetView.classList.add('active');
+            
+            const titleEl = document.getElementById('page-title');
+            if(titleEl) {
+                const icon = btn.querySelector('i, .material-icons')?.outerHTML || '';
+                const text = btn.querySelector('span:not(.material-icons)')?.innerText || btn.innerText;
+                titleEl.innerHTML = `${icon} ${text}`;
+            }
+
+            if(window.innerWidth <= 900) {
+                document.getElementById('sidebar').classList.remove('mobile-open');
+                document.getElementById('sidebar-overlay').classList.remove('active');
+            }
+
+            if(targetId === 'view-dashboard') updateDashboardStats();
+        });
+    });
 
     const mobileBtn = document.getElementById('btn-mobile-menu');
-    const sidebar = document.querySelector('.sidebar');
     const overlay = document.getElementById('sidebar-overlay');
-    if(mobileBtn) { mobileBtn.addEventListener('click', () => { sidebar.classList.toggle('mobile-open'); overlay.classList.toggle('active'); }); }
-    if(overlay) { overlay.addEventListener('click', () => { sidebar.classList.remove('mobile-open'); overlay.classList.remove('active'); }); }
+    if(mobileBtn) {
+        mobileBtn.addEventListener('click', () => {
+            document.getElementById('sidebar').classList.add('mobile-open');
+            overlay.classList.add('active');
+        });
+    }
+    if(overlay) {
+        overlay.addEventListener('click', () => {
+            document.getElementById('sidebar').classList.remove('mobile-open');
+            overlay.classList.remove('active');
+        });
+    }
+
+    const logoutBtn = document.getElementById('btn-logout');
+    if(logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+            if(confirm("Are you sure you want to log out?")) {
+                auth.signOut();
+            }
+        });
+    }
+
+    document.getElementById('search-input')?.addEventListener('input', e => { state.filters.text = e.target.value.toLowerCase(); renderCandidateTable(); });
+    document.getElementById('hub-search-input')?.addEventListener('input', e => { state.hubFilters.text = e.target.value.toLowerCase(); renderHubTable(); });
+    document.getElementById('emp-search-input')?.addEventListener('input', e => { state.empFilters.text = e.target.value.toLowerCase(); renderEmployeeTable(); });
+    document.getElementById('onb-search-input')?.addEventListener('input', e => { state.onbFilters.text = e.target.value.toLowerCase(); renderOnboardingTable(); });
+
+    document.querySelectorAll('#view-candidates .btn-toggle').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('#view-candidates .btn-toggle').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            state.filters.status = e.target.dataset.status;
+            renderCandidateTable();
+        });
+    });
+
+    document.getElementById('btn-reset-filters')?.addEventListener('click', () => {
+        document.getElementById('search-input').value = '';
+        document.getElementById('filter-recruiter').value = '';
+        document.getElementById('filter-tech').value = '';
+        state.filters = { text: '', recruiter: '', tech: '', status: '' };
+        document.querySelectorAll('#view-candidates .btn-toggle').forEach(b => b.classList.remove('active'));
+        document.querySelector('#view-candidates .btn-toggle[data-status=""]').classList.add('active');
+        renderCandidateTable();
+    });
 }
 
-document.addEventListener('DOMContentLoaded', init);
+/* ==========================================================================
+   14. ROW DRAG & DROP REORDERING
+   ========================================================================== */
+window.handleDragStart = (e, collection) => {
+    if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+        e.preventDefault();
+        return;
+    }
+    
+    const row = e.target.closest('tr');
+    if(!row) return;
+
+    e.dataTransfer.setData('text/plain', row.dataset.id);
+    e.dataTransfer.setData('collection', collection);
+    e.dataTransfer.effectAllowed = 'move';
+    row.classList.add('dragging');
+};
+
+window.handleDragOver = (e) => {
+    e.preventDefault(); 
+    const row = e.target.closest('tr');
+    if(row) {
+        document.querySelectorAll('tr').forEach(tr => tr.style.borderTop = '');
+        row.style.borderTop = '2px solid var(--primary)'; 
+    }
+};
+
+window.handleDrop = async (e, collection) => {
+    e.preventDefault();
+    document.querySelectorAll('tr').forEach(tr => {
+        tr.classList.remove('dragging');
+        tr.style.borderTop = '';
+    });
+
+    const draggedId = e.dataTransfer.getData('text/plain');
+    const dragCollection = e.dataTransfer.getData('collection');
+    const targetRow = e.target.closest('tr');
+
+    if (!targetRow || !draggedId || targetRow.dataset.id === draggedId || collection !== dragCollection) return;
+
+    try {
+        const targetOrder = parseFloat(targetRow.dataset.order);
+        const newOrderIndex = targetOrder - 0.1; 
+        
+        await db.collection(collection).doc(draggedId).update({ orderIndex: newOrderIndex });
+        showToast("Row reordered");
+    } catch (error) {
+        console.error("Reorder failed:", error);
+    }
+};
+
+/* ==========================================================================
+   15. HUB SPECIFIC HELPERS
+   ========================================================================== */
+window.triggerHubNote = async (id, type) => {
+    const note = prompt("Enter manual activity note:");
+    if(!note || note.trim() === "") return;
+    
+    let cand = state.candidates.find(c => c.id === id) || state.hubData.find(c => c.id === id);
+    if(!cand) return showToast("Record not found", "error");
+
+    let logs = cand[type] || [];
+    logs.push({ 
+        date: new Date().toISOString().split('T')[0], 
+        note: note.trim(), 
+        recruiter: state.currentUserName,
+        timestamp: Date.now()
+    });
+
+    try {
+        await db.collection('candidates').doc(id).update({ [type]: logs });
+        showToast("Manual log added");
+    } catch(err) {
+        showToast("Failed to add log");
+    }
+};
+
+window.deleteHubLog = async (id, type, index) => {
+    if(!confirm("Delete this log entry?")) return;
+    let cand = state.candidates.find(c => c.id === id) || state.hubData.find(c => c.id === id);
+    if(!cand) return;
+
+    let logs = [...(cand[type] || [])];
+    logs.splice(index, 1);
+
+    try {
+        await db.collection('candidates').doc(id).update({ [type]: logs });
+        showToast("Log entry removed");
+    } catch(err) {
+        showToast("Failed to remove log");
+    }
+};
+
+/* ==========================================================================
+   16. PROFILE MANAGEMENT
+   ========================================================================== */
+function updateUserProfile(user, knownUser) {
+    const displayName = knownUser ? knownUser.name : (user.displayName || 'User');
+    const role = knownUser ? knownUser.role : 'Employee';
+    const email = user.email;
+
+    if(document.getElementById('display-username')) document.getElementById('display-username').innerText = displayName;
+    if(document.getElementById('prof-name-display')) document.getElementById('prof-name-display').innerText = displayName;
+    if(document.getElementById('prof-role-display')) document.getElementById('prof-role-display').innerText = role;
+    if(document.getElementById('prof-email-display-sidebar')) document.getElementById('prof-email-display-sidebar').innerText = email;
+    if(document.getElementById('prof-office-email')) document.getElementById('prof-office-email').value = email;
+    if(document.getElementById('prof-designation')) document.getElementById('prof-designation').value = role;
+
+    db.collection('users').doc(email).get().then(doc => {
+        if(doc.exists) {
+            const data = doc.data();
+            if(data.firstName) document.getElementById('prof-first').value = data.firstName;
+            if(data.lastName) document.getElementById('prof-last').value = data.lastName;
+            if(data.dob) document.getElementById('prof-dob').value = data.dob;
+            if(data.workMobile) document.getElementById('prof-work-mobile').value = data.workMobile;
+            if(data.personalMobile) document.getElementById('prof-personal-mobile').value = data.personalMobile;
+            if(data.personalEmail) document.getElementById('prof-personal-email').value = data.personalEmail;
+            
+            if(data.photoURL) {
+                const img = document.getElementById('profile-main-img');
+                img.src = data.photoURL;
+                img.style.display = 'block';
+                document.getElementById('profile-main-icon').style.display = 'none';
+                document.getElementById('btn-delete-photo').style.display = 'inline-flex';
+            }
+        }
+    });
+}
+
+window.saveProfileData = async () => {
+    if(!state.user) return;
+    const email = state.user.email;
+    
+    const profileData = {
+        firstName: document.getElementById('prof-first').value,
+        lastName: document.getElementById('prof-last').value,
+        dob: document.getElementById('prof-dob').value,
+        workMobile: document.getElementById('prof-work-mobile').value,
+        personalMobile: document.getElementById('prof-personal-mobile').value,
+        personalEmail: document.getElementById('prof-personal-email').value,
+    };
+
+    try {
+        await db.collection('users').doc(email).set(profileData, { merge: true });
+        showToast("Profile Updated Successfully");
+    } catch(err) {
+        showToast("Error updating profile");
+        console.error(err);
+    }
+};
+
+window.triggerPhotoUpload = () => {
+    document.getElementById('profile-upload-input').click();
+};
+
+window.handlePhotoUpload = async (input) => {
+    if (!input.files || !input.files[0] || !state.user) return;
+    const file = input.files[0];
+    const email = state.user.email;
+    const loadingEl = document.getElementById('avatar-loading');
+    
+    if(loadingEl) loadingEl.style.display = 'flex';
+    
+    try {
+        const ref = storage.ref(`profiles/${email}_${Date.now()}`);
+        await ref.put(file);
+        const url = await ref.getDownloadURL();
+        
+        await db.collection('users').doc(email).set({ photoURL: url }, { merge: true });
+        
+        document.getElementById('profile-main-img').src = url;
+        document.getElementById('profile-main-img').style.display = 'block';
+        document.getElementById('profile-main-icon').style.display = 'none';
+        document.getElementById('btn-delete-photo').style.display = 'inline-flex';
+        
+        showToast("Photo uploaded");
+    } catch(err) {
+        showToast("Photo upload failed");
+        console.error(err);
+    } finally {
+        if(loadingEl) loadingEl.style.display = 'none';
+    }
+};
+
+window.deleteProfilePhoto = async () => {
+    if(!state.user || !confirm("Remove profile photo?")) return;
+    
+    try {
+        await db.collection('users').doc(state.user.email).update({
+            photoURL: firebase.firestore.FieldValue.delete()
+        });
+        
+        document.getElementById('profile-main-img').style.display = 'none';
+        document.getElementById('profile-main-img').src = '';
+        document.getElementById('profile-main-icon').style.display = 'flex';
+        document.getElementById('btn-delete-photo').style.display = 'none';
+        
+        showToast("Photo removed");
+    } catch(err) {
+        showToast("Failed to remove photo");
+    }
+};
+
+/* ==========================================================================
+   17. STARTUP
+   ========================================================================== */
+window.onload = () => {
+    init();
+};
