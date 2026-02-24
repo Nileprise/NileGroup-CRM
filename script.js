@@ -126,7 +126,7 @@ const dom = {
 };
 
 /* ==========================================================================
-   5. INITIALIZATION & UTILITIES (Updated to read roles from DB)
+   5. INITIALIZATION & UTILITIES 
    ========================================================================== */
 function init() {
     setupEventListeners();
@@ -466,7 +466,6 @@ window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collec
 
 function getFilteredData(data, filters) { 
     let subset = data; 
-    // Data Isolation Removed Here!
     return subset.filter(item => { 
         if (item.status === 'Placed') return false; 
         const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text); 
@@ -640,7 +639,6 @@ function renderCandidateTable() {
 }
 
 function renderEmployeeTable() {
-    // Data Isolation Removed Here!
     let filtered = state.employees.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
     
     const validIds = new Set(filtered.map(c => c.id));
@@ -708,7 +706,7 @@ function renderPlacementTable() {
 }
 
 function renderHubTable() {
-    let data = state.candidates; // Data Isolation Removed Here!
+    let data = state.candidates; 
     
     if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
     
@@ -1042,7 +1040,6 @@ function refreshViewForType(type) {
     else if(type==='place' || type==='placements') renderPlacementTable(); 
 }
 
-// SYNCING DELETE COUNT TO THE BUTTON
 function updateSelectButtons(type) { 
     let btn, countSpan; 
     if(type === 'cand') { btn = document.getElementById('btn-delete-selected'); countSpan = document.getElementById('selected-count'); } 
@@ -1292,7 +1289,78 @@ window.sendCrmEmail = async () => {
 };
 
 /* ==========================================================================
-   13. GLOBAL EVENT LISTENERS & NAVIGATION
+   13. EXPORT & SYSTEM MANAGEMENT
+   ========================================================================== */
+window.exportData = () => {
+    if (!state.candidates || state.candidates.length === 0) {
+        return showToast("No candidate data to export.");
+    }
+
+    const rows = [["ID", "First Name", "Last Name", "Mobile", "WhatsApp", "Technology", "Recruiter", "Status", "Assigned Date", "Comments"]];
+    const escapeCsv = (str) => `"${(str || '').toString().replace(/"/g, '""')}"`;
+
+    state.candidates.forEach(c => {
+        rows.push([
+            escapeCsv(c.id),
+            escapeCsv(c.first),
+            escapeCsv(c.last),
+            escapeCsv(c.mobile),
+            escapeCsv(c.wa),
+            escapeCsv(c.tech),
+            escapeCsv(c.recruiter),
+            escapeCsv(c.status),
+            escapeCsv(c.assigned),
+            escapeCsv(c.comments)
+        ]);
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    
+    const today = new Date().toISOString().split('T')[0];
+    link.setAttribute("download", `Nileprise_Candidates_${today}.csv`);
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showToast("Exported successfully");
+};
+
+window.resetSystem = async () => {
+    if (state.userRole === 'Employee') {
+        return showToast("Access Denied: Only Admins can wipe the database.");
+    }
+
+    if(confirm("CRITICAL WARNING: This will permanently delete ALL candidates from the cloud database. This CANNOT be undone. Continue?")) {
+        const confirmText = prompt("Type 'DELETE' to confirm:");
+        
+        if (confirmText === 'DELETE') {
+            showToast("Wiping database...");
+            
+            try {
+                const batch = db.batch();
+                state.candidates.forEach(c => {
+                    const docRef = db.collection('candidates').doc(c.id);
+                    batch.delete(docRef);
+                });
+                
+                await batch.commit();
+                showToast("System reset successfully.");
+            } catch (error) {
+                console.error("Wipe failed:", error);
+                showToast("Error resetting system.");
+            }
+        } else {
+            showToast("Reset cancelled.");
+        }
+    }
+};
+
+/* ==========================================================================
+   14. GLOBAL EVENT LISTENERS & NAVIGATION
    ========================================================================== */
 function setupEventListeners() {
     document.querySelectorAll('.nav-item[data-target]').forEach(btn => {
@@ -1381,7 +1449,7 @@ function setupEventListeners() {
 }
 
 /* ==========================================================================
-   14. ROW DRAG & DROP REORDERING
+   15. ROW DRAG & DROP REORDERING
    ========================================================================== */
 window.handleDragStart = (e, collection) => {
     if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
@@ -1428,48 +1496,6 @@ window.handleDrop = async (e, collection) => {
         showToast("Row reordered");
     } catch (error) {
         console.error("Reorder failed:", error);
-    }
-};
-
-/* ==========================================================================
-   15. HUB SPECIFIC HELPERS
-   ========================================================================== */
-window.triggerHubNote = async (id, type) => {
-    const note = prompt("Enter manual activity note:");
-    if(!note || note.trim() === "") return;
-    
-    let cand = state.candidates.find(c => c.id === id);
-    if(!cand) return showToast("Record not found", "error");
-
-    let logs = cand[type] || [];
-    logs.push({ 
-        date: new Date().toISOString().split('T')[0], 
-        note: note.trim(), 
-        recruiter: state.currentUserName,
-        timestamp: Date.now()
-    });
-
-    try {
-        await db.collection('candidates').doc(id).update({ [type]: logs });
-        showToast("Manual log added");
-    } catch(err) {
-        showToast("Failed to add log");
-    }
-};
-
-window.deleteHubLog = async (id, type, index) => {
-    if(!confirm("Delete this log entry?")) return;
-    let cand = state.candidates.find(c => c.id === id);
-    if(!cand) return;
-
-    let logs = [...(cand[type] || [])];
-    logs.splice(index, 1);
-
-    try {
-        await db.collection('candidates').doc(id).update({ [type]: logs });
-        showToast("Log entry removed");
-    } catch(err) {
-        showToast("Failed to remove log");
     }
 };
 
