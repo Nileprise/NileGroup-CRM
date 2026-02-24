@@ -132,7 +132,7 @@
               <button class="nav-item" onclick="renderGmailList('Drafts', this)">
                   <span class="material-icons" style="font-size: 18px;">drafts</span> <span>Drafts</span>
               </button>
-              
+             
               <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
                   <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
               </div>
@@ -153,7 +153,7 @@
                       <small>Create label</small>
                   </div>
               </div>
-              
+             
               <div style="margin-top: 15px; padding-left: 5px; color: gray; font-size: 10px; font-weight: bold; display:flex; justify-content:space-between; padding-right:10px;">
                   <span>LABELS</span>
                   <span id="manage-indicator" style="display:none; color:var(--danger); cursor:pointer;" onclick="toggleManageMode()">Done</span>
@@ -177,7 +177,7 @@
       </aside>
 
       <main class="main-content">
-        
+       
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
           <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
@@ -201,6 +201,7 @@
             <div><h2 style="margin:0;">Executive Overview</h2></div>
             <div class="date-badge"><i class="fa-regular fa-calendar"></i> <span id="current-date-display">Live</span></div>
           </div>
+          
           <div class="kpi-grid">
             <div class="kpi-card accent-blue">
               <div class="kpi-content">
@@ -282,13 +283,13 @@
               <button class="btn-insert" onclick="createNewRow('candidates')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-              
+             
               <div class="status-toggles">
                 <button class="btn-toggle active" data-status="">All</button>
                 <button class="btn-toggle" data-status="Active">Active</button>
                 <button class="btn-toggle" data-status="Inactive">Inactive</button>
               </div>
-          
+         
               <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="selected-count">0</span>)
               </button>
@@ -314,7 +315,7 @@
               <button class="btn-insert" onclick="manualAddPlacement()">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-          
+         
               <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)
               </button>
@@ -370,7 +371,7 @@
               <button class="btn-insert" onclick="createNewRow('hub')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-              
+             
               <button id="btn-delete-hub" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('hub')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="hub-selected-count">0</span>)
               </button>
@@ -393,7 +394,7 @@
               <button class="btn-insert" onclick="createNewRow('employees')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-              
+             
               <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="emp-selected-count">0</span>)
               </button>
@@ -416,7 +417,7 @@
               <button class="btn-insert" onclick="createNewRow('onboarding')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-          
+         
               <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)
               </button>
