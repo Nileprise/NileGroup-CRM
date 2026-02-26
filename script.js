@@ -12,13 +12,26 @@ const firebaseConfig = {
     measurementId: "G-11XNH0CYY1"
 };
 
+// DO NOT CHANGE THESE
 const G_CLIENT_ID = '575678017832-34fs5qkepdnrgqdc58h0semgjrct5arl.apps.googleusercontent.com';
 const G_API_KEY = 'AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE';
 const G_DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest';
 const G_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.labels';
 
 try { firebase.initializeApp(firebaseConfig); } catch (e) { console.error("Firebase Init Error:", e); }
+
 const db = firebase.firestore();
+
+// Enable local caching so data loads instantly on refresh without blank screens
+db.enablePersistence()
+  .catch(function(err) {
+      if (err.code == 'failed-precondition') {
+          console.warn("Multiple tabs open, persistence enabled in first tab only.");
+      } else if (err.code == 'unimplemented') {
+          console.warn("Browser does not support offline caching.");
+      }
+  });
+
 const auth = firebase.auth();
 const storage = firebase.storage();
 
@@ -126,7 +139,7 @@ const dom = {
 };
 
 /* ==========================================================================
-   5. INITIALIZATION & UTILITIES 
+   5. INITIALIZATION & UTILITIES
    ========================================================================== */
 function init() {
     setupEventListeners();
@@ -268,11 +281,11 @@ window.handleSignup = () => {
 };
 
 /* ==========================================================================
-   7. REALTIME LISTENERS (Data Isolation Removed for Global Visibility)
+   7. REALTIME LISTENERS (Loads ALL data, filtering happens in JS)
    ========================================================================== */
 function initRealtimeListeners() {
     
-    // CANDIDATES LISTENER (Loads everything, no limits)
+    // CANDIDATES LISTENER
     db.collection('candidates').onSnapshot(snap => {
         state.candidates = []; 
         const techs = new Set();
@@ -301,7 +314,7 @@ function initRealtimeListeners() {
         renderDashboardCharts();
         
         const headerText = document.getElementById('header-updated');
-        if(headerText) headerText.innerText = 'Synced';
+        if(headerText) headerText.innerText = 'Synced Just Now';
     }, (error) => {
         console.error("Candidate Listener Error:", error);
     });
@@ -320,7 +333,7 @@ function initRealtimeListeners() {
         updateHubStats(state.hub.filterType, state.hub.date);
     });
 
-    // EMPLOYEES (Staff Directory - Isolation Removed)
+    // EMPLOYEES
     db.collection('employees').onSnapshot(snap => {
         state.employees = []; 
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
@@ -354,8 +367,6 @@ function initRealtimeListeners() {
         });
         renderOnboardingTable(); 
         updateSelectButtons('onb');
-    }, (error) => {
-        console.log("Onboarding access restricted"); 
     });
 
     // PLACEMENTS 
@@ -370,8 +381,6 @@ function initRealtimeListeners() {
         renderPlacementTable(); 
         updateSelectButtons('place');
         updateDashboardStats();
-    }, (error) => {
-        console.log("Placement access restricted"); 
     });
 
     // USERS (For Birthdays)
@@ -464,8 +473,17 @@ window.updateRecruiter = (id, collection, val) => { const oldVal = getOldValue(c
 window.generateTechDropdown = (currentVal, id, collection) => { const list = state.metadata.techs || []; if(currentVal && !list.includes(currentVal)) list.push(currentVal); list.sort(); const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`; };
 window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collection, id, 'tech'); pushToHistory(collection, id, 'tech', oldVal, val); db.collection(collection).doc(id).update({ tech: val }).then(() => showToast("Tech Auto-Saved")); };
 
+/* ==========================================================================
+   8. CLIENT-SIDE DATA ISOLATION LOGIC
+   ========================================================================== */
 function getFilteredData(data, filters) { 
     let subset = data; 
+    
+    // DATA ISOLATION: Employees only see their own candidates
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        subset = subset.filter(item => item.recruiter === state.currentUserName);
+    }
+
     return subset.filter(item => { 
         if (item.status === 'Placed') return false; 
         const matchesText = (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text); 
@@ -487,13 +505,18 @@ function pushToHistory(collection, id, field, oldVal, newVal) {
 }
 
 /* ==========================================================================
-   8. DASHBOARD CHARTS & STATS
+   9. DASHBOARD CHARTS & STATS
    ========================================================================== */
 let recChartInstance = null;
 let techChartInstance = null;
 
 function renderDashboardCharts() { 
-    const candData = state.candidates.filter(c => c.status !== 'Placed'); 
+    // Isolate Chart Data based on Role
+    let candData = state.candidates.filter(c => c.status !== 'Placed'); 
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        candData = candData.filter(c => c.recruiter === state.currentUserName);
+    }
+    
     const recCounts = {}; const techCounts = {}; 
     candData.forEach(c => { 
         const r = c.recruiter ? c.recruiter.trim() : 'Unassigned'; 
@@ -522,18 +545,25 @@ function renderDashboardCharts() {
 }
 
 function updateDashboardStats() { 
-    const candData = state.candidates.filter(c => c.status !== 'Placed');
+    let candData = state.candidates.filter(c => c.status !== 'Placed');
+    let placedData = state.placements;
+    
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        candData = candData.filter(c => c.recruiter === state.currentUserName);
+        placedData = placedData.filter(c => c.recruiter === state.currentUserName);
+    }
+    
     if(document.getElementById('stat-total')) document.getElementById('stat-total').innerText = candData.length; 
     if(document.getElementById('stat-active')) document.getElementById('stat-active').innerText = candData.filter(c => c.status === 'Active').length; 
     if(document.getElementById('stat-inactive')) document.getElementById('stat-inactive').innerText = candData.filter(c => c.status === 'Inactive').length; 
-    if(document.getElementById('stat-placed')) document.getElementById('stat-placed').innerText = state.placements.length; 
+    if(document.getElementById('stat-placed')) document.getElementById('stat-placed').innerText = placedData.length; 
     const uniqueTechs = new Set(candData.map(c => c.tech ? c.tech.trim().toLowerCase() : '').filter(Boolean)); 
     if(document.getElementById('stat-tech')) document.getElementById('stat-tech').innerText = uniqueTechs.size; 
     if(document.getElementById('stat-rec')) document.getElementById('stat-rec').innerText = state.employees.length; 
 }
 
 /* ==========================================================================
-   9. ALIGNMENT & COLUMN CONFIG
+   10. ALIGNMENT & COLUMN CONFIG
    ========================================================================== */
 window.cycleAlign = (context, colName) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context][colName] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context][colName] = next; refreshViewForType(context); };
 window.cycleAlignAll = (context) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context]['global'] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context]['global'] = next; refreshViewForType(context); showToast(`All columns aligned ${next}`); };
@@ -602,14 +632,13 @@ function restoreColumnOrder(tableId, context) {
 }
 
 /* ==========================================================================
-   10. TABLE RENDERERS (With Sync for Record Counts)
+   11. TABLE RENDERERS (With Sync for Record Counts & Isolation)
    ========================================================================== */
 function renderCandidateTable() {
     const filtered = getFilteredData(state.candidates, state.filters);
     const tbody = document.getElementById('table-body');
     const thead = document.getElementById('table-head');
     
-    // Ensure deleted records are removed from selection set
     const validIds = new Set(filtered.map(c => c.id));
     state.selection.cand.forEach(id => { if(!validIds.has(id)) state.selection.cand.delete(id); });
     updateSelectButtons('cand');
@@ -639,7 +668,14 @@ function renderCandidateTable() {
 }
 
 function renderEmployeeTable() {
-    let filtered = state.employees.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
+    let filtered = state.employees;
+    
+    // DATA ISOLATION: Employees only see their own profile
+    if (state.userRole === 'Employee' && state.user) {
+        filtered = filtered.filter(e => e.officialEmail === state.user.email); 
+    }
+    
+    filtered = filtered.filter(item => (item.first + ' ' + item.last).toLowerCase().includes(state.empFilters.text));
     
     const validIds = new Set(filtered.map(c => c.id));
     state.selection.emp.forEach(id => { if(!validIds.has(id)) state.selection.emp.delete(id); });
@@ -682,7 +718,18 @@ function renderOnboardingTable() {
 
 function renderPlacementTable() {
     const mVal = document.getElementById('placement-month-picker').value; const yVal = document.getElementById('placement-year-picker').value;
-    let placed = state.placements.filter(c => { if(!c.assigned) return false; return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); });
+    
+    let placed = state.placements;
+    
+    // DATA ISOLATION: Employees only see their own placements
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        placed = placed.filter(c => c.recruiter === state.currentUserName);
+    }
+
+    placed = placed.filter(c => { 
+        if(!c.assigned) return false; 
+        return (state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal); 
+    });
     
     if(!state.selection.place) state.selection.place = new Set();
     const validIds = new Set(placed.map(c => c.id));
@@ -708,7 +755,14 @@ function renderPlacementTable() {
 function renderHubTable() {
     let data = state.candidates; 
     
-    if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
+    // DATA ISOLATION: Employees only see their own candidates in the Hub
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        data = data.filter(c => c.recruiter === state.currentUserName);
+    }
+    
+    if(state.hubFilters && state.hubFilters.text) {
+        data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
+    }
     
     const { start, end } = state.hub.range; const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
     const activeCandidates = data.filter(c => (c.submissionLog || []).some(isInRange) || (c.screeningLog || []).some(isInRange) || (c.interviewLog || []).some(isInRange));
@@ -756,7 +810,7 @@ function renderHubTable() {
 }
 
 /* ==========================================================================
-   11. DATA MANIPULATION & INLINE EDITS
+   12. DATA MANIPULATION & INLINE EDITS
    ========================================================================== */
 window.updateHubStats = (filterType, dateVal) => {
     if(filterType) state.hub.filterType = filterType; 
@@ -798,7 +852,12 @@ window.updateHubStats = (filterType, dateVal) => {
     const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
 
     let subs=0, scrs=0, ints=0; 
-    state.candidates.forEach(c => { 
+    let hubDataCount = state.candidates;
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        hubDataCount = hubDataCount.filter(c => c.recruiter === state.currentUserName);
+    }
+    
+    hubDataCount.forEach(c => { 
         subs += (c.submissionLog||[]).filter(isInRange).length; 
         scrs += (c.screeningLog||[]).filter(isInRange).length; 
         ints += (c.interviewLog||[]).filter(isInRange).length; 
@@ -1095,7 +1154,7 @@ window.moveToPlacements = async (id) => {
 window.deletePlacement = async (id) => { if(confirm("Remove this placement?")) { await db.collection('placements').doc(id).delete(); showToast("Placement removed"); } };
 
 /* ==========================================================================
-   12. GMAIL ENGINE
+   13. GMAIL ENGINE
    ========================================================================== */
 function loadGoogleScripts() { 
     const s1 = document.createElement('script'); s1.src = "https://apis.google.com/js/api.js"; 
@@ -1289,7 +1348,7 @@ window.sendCrmEmail = async () => {
 };
 
 /* ==========================================================================
-   13. EXPORT & SYSTEM MANAGEMENT
+   14. EXPORT & SYSTEM MANAGEMENT (CSV Export & Manual Sync)
    ========================================================================== */
 window.exportData = () => {
     if (!state.candidates || state.candidates.length === 0) {
@@ -1299,7 +1358,12 @@ window.exportData = () => {
     const rows = [["ID", "First Name", "Last Name", "Mobile", "WhatsApp", "Technology", "Recruiter", "Status", "Assigned Date", "Comments"]];
     const escapeCsv = (str) => `"${(str || '').toString().replace(/"/g, '""')}"`;
 
-    state.candidates.forEach(c => {
+    let dataToExport = state.candidates;
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        dataToExport = dataToExport.filter(c => c.recruiter === state.currentUserName);
+    }
+
+    dataToExport.forEach(c => {
         rows.push([
             escapeCsv(c.id),
             escapeCsv(c.first),
@@ -1359,8 +1423,26 @@ window.resetSystem = async () => {
     }
 };
 
+window.manualSync = () => {
+    const icon = document.getElementById('sync-icon');
+    if(icon) icon.classList.add('fa-spin');
+    
+    renderCandidateTable();
+    renderEmployeeTable();
+    renderHubTable();
+    renderPlacementTable();
+    updateDashboardStats();
+    
+    setTimeout(() => {
+        if(icon) icon.classList.remove('fa-spin');
+        showToast("Data is fully synced and up to date!");
+        const headerText = document.getElementById('header-updated');
+        if(headerText) headerText.innerText = 'Synced Just Now';
+    }, 600);
+};
+
 /* ==========================================================================
-   14. GLOBAL EVENT LISTENERS & NAVIGATION
+   15. GLOBAL EVENT LISTENERS & NAVIGATION
    ========================================================================== */
 function setupEventListeners() {
     document.querySelectorAll('.nav-item[data-target]').forEach(btn => {
@@ -1449,7 +1531,7 @@ function setupEventListeners() {
 }
 
 /* ==========================================================================
-   15. ROW DRAG & DROP REORDERING
+   16. ROW DRAG & DROP REORDERING
    ========================================================================== */
 window.handleDragStart = (e, collection) => {
     if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
@@ -1500,7 +1582,7 @@ window.handleDrop = async (e, collection) => {
 };
 
 /* ==========================================================================
-   16. PROFILE MANAGEMENT
+   17. PROFILE MANAGEMENT
    ========================================================================== */
 function updateUserProfile(user, knownUser) {
     const displayName = knownUser ? knownUser.name : (user.displayName || 'User');
@@ -1610,7 +1692,7 @@ window.deleteProfilePhoto = async () => {
 };
 
 /* ==========================================================================
-   17. STARTUP
+   18. STARTUP
    ========================================================================== */
 window.onload = () => {
     init();
