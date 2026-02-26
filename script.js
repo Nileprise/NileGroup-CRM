@@ -22,7 +22,7 @@ try { firebase.initializeApp(firebaseConfig); } catch (e) { console.error("Fireb
 
 const db = firebase.firestore();
 
-// Enable local caching so data loads instantly on refresh without blank screens
+// Enable local caching so data loads instantly on refresh
 db.enablePersistence()
   .catch(function(err) {
       if (err.code == 'failed-precondition') {
@@ -181,6 +181,7 @@ function init() {
                 console.error("Error fetching role:", err);
             }
             
+            applyRoleBasedUI(); // Apply restricted tabs for Employees
             updateUserProfile(user, ALLOWED_USERS[email]);
             switchScreen('app');
             initRealtimeListeners();
@@ -194,6 +195,40 @@ function init() {
     
     const monthPicker = document.getElementById('placement-month-picker');
     if(monthPicker) monthPicker.value = new Date().toISOString().slice(0, 7);
+}
+
+// Function to dynamically lock sidebar items based on role
+function applyRoleBasedUI() {
+    const isEmployee = state.userRole === 'Employee';
+    
+    const restrictedForEmployees = [
+        'view-placements',
+        'view-onboarding',
+        'view-employees',
+        'view-settings'
+    ];
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+        const target = item.getAttribute('data-target');
+        if (!target) return;
+        
+        if (isEmployee && restrictedForEmployees.includes(target)) {
+            item.classList.add('locked');
+            if (!item.querySelector('.lock-icon')) {
+                item.insertAdjacentHTML('beforeend', '<i class="fa-solid fa-lock lock-icon" title="Manager Access Only"></i>');
+            }
+        } else {
+            item.classList.remove('locked');
+            const lockIcon = item.querySelector('.lock-icon');
+            if (lockIcon) lockIcon.remove();
+        }
+    });
+
+    // Boot to Dashboard if Employee lands on a restricted view
+    const activeView = document.querySelector('.content-view.active');
+    if (isEmployee && activeView && restrictedForEmployees.includes(activeView.id)) {
+        document.querySelector('.nav-item[data-target="view-dashboard"]').click();
+    }
 }
 
 function switchScreen(screenName) {
@@ -247,10 +282,7 @@ window.handleLogin = () => {
     const e = document.getElementById('login-email').value;
     const p = document.getElementById('login-pass').value; 
     
-    if(!e || !p) {
-        showToast("Please enter both email and password.");
-        return; 
-    }
+    if(!e || !p) return showToast("Please enter both email and password.");
     
     const btn = document.getElementById('btn-login-action');
     const originalText = btn.innerText;
@@ -281,7 +313,7 @@ window.handleSignup = () => {
 };
 
 /* ==========================================================================
-   7. REALTIME LISTENERS (Loads ALL data, filtering happens in JS)
+   7. REALTIME LISTENERS
    ========================================================================== */
 function initRealtimeListeners() {
     
@@ -297,7 +329,6 @@ function initRealtimeListeners() {
         });
         
         state.metadata.techs = Array.from(techs).sort();
-        
         state.candidates.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
@@ -315,21 +346,17 @@ function initRealtimeListeners() {
         
         const headerText = document.getElementById('header-updated');
         if(headerText) headerText.innerText = 'Synced Just Now';
-    }, (error) => {
-        console.error("Candidate Listener Error:", error);
     });
     
     // HUB LISTENER
     db.collection('hub').onSnapshot(snap => {
         state.hubData = [];
         snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
-        
         state.hubData.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
             return aOrder - bOrder; 
         });
-        
         updateHubStats(state.hub.filterType, state.hub.date);
     });
 
@@ -337,7 +364,6 @@ function initRealtimeListeners() {
     db.collection('employees').onSnapshot(snap => {
         state.employees = []; 
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
-        
         state.employees.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
@@ -389,8 +415,8 @@ function initRealtimeListeners() {
         snap.forEach(doc => {
             const data = doc.data();
             const fullName = (data.firstName && data.lastName) 
-                                ? `${data.firstName} ${data.lastName}` 
-                                : (data.displayName || 'Staff Member');
+                            ? `${data.firstName} ${data.lastName}` 
+                            : (data.displayName || 'Staff Member');
             state.allUsers.push({ id: doc.id, name: fullName, dob: data.dob });
         });
         checkBirthdays();
@@ -417,7 +443,6 @@ window.checkBirthdays = () => {
     const content = document.getElementById('bday-names');
 
     if (!card || !content) return;
-
     if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
 
     if (birthdayPeople.length > 0) {
@@ -511,7 +536,6 @@ let recChartInstance = null;
 let techChartInstance = null;
 
 function renderDashboardCharts() { 
-    // Isolate Chart Data based on Role
     let candData = state.candidates.filter(c => c.status !== 'Placed'); 
     if (state.userRole === 'Employee' && state.currentUserName) {
         candData = candData.filter(c => c.recruiter === state.currentUserName);
@@ -670,7 +694,6 @@ function renderCandidateTable() {
 function renderEmployeeTable() {
     let filtered = state.employees;
     
-    // DATA ISOLATION: Employees only see their own profile
     if (state.userRole === 'Employee' && state.user) {
         filtered = filtered.filter(e => e.officialEmail === state.user.email); 
     }
@@ -721,7 +744,6 @@ function renderPlacementTable() {
     
     let placed = state.placements;
     
-    // DATA ISOLATION: Employees only see their own placements
     if (state.userRole === 'Employee' && state.currentUserName) {
         placed = placed.filter(c => c.recruiter === state.currentUserName);
     }
@@ -755,7 +777,6 @@ function renderPlacementTable() {
 function renderHubTable() {
     let data = state.candidates; 
     
-    // DATA ISOLATION: Employees only see their own candidates in the Hub
     if (state.userRole === 'Employee' && state.currentUserName) {
         data = data.filter(c => c.recruiter === state.currentUserName);
     }
@@ -1187,19 +1208,60 @@ if(document.getElementById('btn-gmail-signout')) document.getElementById('btn-gm
 };
 
 function getHeader(headers, name) { const header = headers.find(h => h.name === name); return header ? header.value : ''; }
-function parseMessageBody(payload) { 
-    let bodyText = ''; let bodyHtml = ''; let attachments = []; 
-    if (payload.body && payload.body.data) { 
-        const decoded = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/')); 
-        if (payload.mimeType === 'text/html') bodyHtml = decoded; else bodyText = decoded; 
-    } 
-    if (payload.parts) { 
-        payload.parts.forEach(part => { 
-            if (part.filename && part.filename.length > 0) { attachments.push({ filename: part.filename, mimeType: part.mimeType, size: part.body.size, attachmentId: part.body.attachmentId }); } 
-            else { const result = parseMessageBody(part); bodyText += result.text; bodyHtml += result.html; attachments = [...attachments, ...result.attachments]; } 
-        }); 
-    } 
-    return { text: bodyText, html: bodyHtml, attachments: attachments }; 
+
+/**
+ * Safely parses Gmail API payload parts into text, HTML, and attachments.
+ * Supports UTF-8 and deep recursive nesting.
+ */
+function parseMessageBody(payload) {
+    const decodeBase64Utf8 = (base64Str) => {
+        try {
+            const b64 = base64Str.replace(/-/g, '+').replace(/_/g, '/');
+            return decodeURIComponent(escape(window.atob(b64)));
+        } catch (e) {
+            console.warn("Email decoding failed, falling back to raw text.", e);
+            return "(Encoding Error)";
+        }
+    };
+
+    let bodyText = '';
+    let bodyHtml = '';
+    
+    if (payload.body && payload.body.data) {
+        const decodedString = decodeBase64Utf8(payload.body.data);
+        if (payload.mimeType === 'text/html') {
+            bodyHtml = decodedString;
+        } else if (payload.mimeType === 'text/plain') {
+            bodyText = decodedString;
+        }
+    }
+
+    let attachments = [];
+    
+    if (payload.parts) {
+        const parsedParts = payload.parts.reduce((acc, part) => {
+            if (part.filename && part.filename.length > 0) {
+                acc.attachments.push({
+                    filename: part.filename,
+                    mimeType: part.mimeType,
+                    size: part.body.size,
+                    attachmentId: part.body.attachmentId
+                });
+            } else {
+                const nestedResult = parseMessageBody(part);
+                acc.text += nestedResult.text;
+                acc.html += nestedResult.html;
+                acc.attachments = acc.attachments.concat(nestedResult.attachments);
+            }
+            return acc;
+        }, { text: '', html: '', attachments: [] });
+
+        bodyText += parsedParts.text;
+        bodyHtml += parsedParts.html;
+        attachments = [...attachments, ...parsedParts.attachments];
+    }
+
+    return { text: bodyText, html: bodyHtml, attachments };
 }
 
 async function startMailboxSync() { 
@@ -1308,9 +1370,15 @@ window.openGmailDetail = async (id) => {
     try { 
         const resp = await gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': id, 'format': 'full' }); const email = resp.result; const headers = email.payload.headers; 
         document.getElementById('detail-subject').innerText = headers.find(h => h.name === 'Subject')?.value || ''; document.getElementById('detail-sender').innerText = headers.find(h => h.name === 'From')?.value || ''; document.getElementById('detail-date').innerText = new Date(Number(email.internalDate)).toLocaleString(); 
-        let body = ""; const findBody = (parts) => { if(!parts) return null; let htmlPart = parts.find(p => p.mimeType === 'text/html'); if(htmlPart) return htmlPart.body.data; let textPart = parts.find(p => p.mimeType === 'text/plain'); if(textPart) return textPart.body.data; for(let part of parts) { if(part.parts) { const res = findBody(part.parts); if(res) return res; } } return null; } ; 
-        body = email.payload.body.data ? email.payload.body.data : findBody(email.payload.parts); 
-        if(body) { const decoded = atob(body.replace(/-/g, '+').replace(/_/g, '/')); document.getElementById('detail-message').innerHTML = decoded; } else { document.getElementById('detail-message').innerHTML = "<i>[Message body empty]</i>"; } 
+        
+        const parsedBody = parseMessageBody(email.payload);
+        if(parsedBody.html) { 
+            document.getElementById('detail-message').innerHTML = parsedBody.html; 
+        } else if(parsedBody.text) {
+            document.getElementById('detail-message').innerText = parsedBody.text;
+        } else { 
+            document.getElementById('detail-message').innerHTML = "<i>[Message body empty]</i>"; 
+        } 
     } catch (err) { document.getElementById('detail-message').innerText = "Error loading content."; } 
 };
 
@@ -1332,19 +1400,69 @@ window.toggleMore = () => { const sub = document.getElementById('more-submenu');
 function createMimeMessage(to, subject, body) { const email = [`To: ${to}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/html; charset=utf-8", "", body].join("\n"); return btoa(unescape(encodeURIComponent(email))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); } 
 window.openComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'flex'; }; 
 window.closeComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'none'; }; 
+
 window.sendCrmEmail = async () => { 
-    const to = document.getElementById('compose-to').value.trim(); const subject = document.getElementById('compose-subject').value; const body = document.getElementById('compose-message').value; 
+    const to = document.getElementById('compose-to').value.trim(); 
+    const subject = document.getElementById('compose-subject').value; 
+    const body = document.getElementById('compose-message').value; 
+    const logType = document.getElementById('compose-log-type')?.value || 'none';
+    const candName = document.getElementById('compose-candidate-name')?.value.trim().toLowerCase();
+    
     if(!to || !subject) return showToast("Recipient and Subject required"); 
-    const sendBtn = document.querySelector('.compose-footer .btn-primary'); const originalText = sendBtn.innerHTML; sendBtn.innerHTML = 'Sending...'; sendBtn.disabled = true; 
+    
+    const sendBtn = document.querySelector('.compose-footer .btn-primary'); 
+    const originalText = sendBtn.innerHTML; 
+    sendBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...'; 
+    sendBtn.disabled = true; 
+    
     try { 
-        if (!state.gmail.gapiInited || !gapi.client.getToken()) throw new Error("Gmail not connected."); 
+        if (!state.gmail.gapiInited || !gapi.client.getToken()) {
+            throw new Error("Gmail not connected. Please login to Workspace Inbox."); 
+        }
+
         const raw = createMimeMessage(to, subject, body.replace(/\n/g, '<br>')); 
         await gapi.client.gmail.users.messages.send({ 'userId': 'me', 'resource': { 'raw': raw } }); 
-        showToast("Email Sent!"); closeComposeModal(); 
-        const candidate = state.candidates.find(c => (c.gmail && c.gmail.includes(to)) || (c.email && c.email.includes(to))); 
-        if(candidate) { let logs = candidate.submissionLog || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: subject, type: 'Outbound Email', tech: candidate.tech||'General', recruiter: state.currentUserName, timestamp: Date.now() }); await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs }); showToast("Logged to Hub"); } 
-        document.getElementById('compose-to').value = ''; document.getElementById('compose-subject').value = ''; document.getElementById('compose-message').value = ''; 
-    } catch (err) { showToast("Send Failed: " + err.message); } finally { sendBtn.innerHTML = originalText; sendBtn.disabled = false; } 
+        
+        showToast("Email Sent!"); 
+        closeComposeModal(); 
+        
+        let candidate = null;
+        if (candName) {
+            candidate = state.candidates.find(c => c.first.toLowerCase() === candName);
+        } else {
+            candidate = state.candidates.find(c => 
+                (c.gmail && c.gmail.toLowerCase().includes(to.toLowerCase())) || 
+                (c.officialEmail && c.officialEmail.toLowerCase().includes(to.toLowerCase())) ||
+                (c.personalEmail && c.personalEmail.toLowerCase().includes(to.toLowerCase()))
+            ); 
+        }
+
+        if (candidate && logType !== 'none') { 
+            let logs = candidate[logType] || []; 
+            logs.push({ 
+                date: new Date().toISOString().split('T')[0], 
+                subject: subject, 
+                type: 'Outbound Email', 
+                tech: candidate.tech || 'General', 
+                recruiter: state.currentUserName, 
+                timestamp: Date.now() 
+            }); 
+            
+            await db.collection('candidates').doc(candidate.id).update({ [logType]: logs }); 
+            showToast(`Tracked as ${logType.replace('Log','')} for ${candidate.first}`); 
+        } 
+        
+        document.getElementById('compose-to').value = ''; 
+        document.getElementById('compose-subject').value = ''; 
+        document.getElementById('compose-message').value = ''; 
+        if(document.getElementById('compose-candidate-name')) document.getElementById('compose-candidate-name').value = '';
+        
+    } catch (err) { 
+        showToast("Send Failed: " + err.message); 
+    } finally { 
+        sendBtn.innerHTML = originalText; 
+        sendBtn.disabled = false; 
+    } 
 };
 
 /* ==========================================================================
@@ -1448,6 +1566,12 @@ function setupEventListeners() {
     document.querySelectorAll('.nav-item[data-target]').forEach(btn => {
         btn.addEventListener('click', (e) => {
             if(e.target.closest('.fa-chevron-down') || e.target.closest('.fa-chevron-up')) return;
+
+            // Intercept click if tab is restricted
+            if (btn.classList.contains('locked')) {
+                showToast("Access Restricted: Manager clearance required.");
+                return; 
+            }
 
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
             btn.classList.add('active');
@@ -1572,7 +1696,11 @@ window.handleDrop = async (e, collection) => {
 
     try {
         const targetOrder = parseFloat(targetRow.dataset.order);
-        const newOrderIndex = targetOrder - 0.1; 
+        
+        // Exact Midpoint Calculation for rock-solid reordering precision
+        const prevRow = targetRow.previousElementSibling;
+        const prevOrder = prevRow && prevRow.dataset.order ? parseFloat(prevRow.dataset.order) : targetOrder + 1;
+        const newOrderIndex = (prevOrder + targetOrder) / 2;
         
         await db.collection(collection).doc(draggedId).update({ orderIndex: newOrderIndex });
         showToast("Row reordered");
