@@ -720,6 +720,31 @@ input[type="checkbox"] {
 .icon-track:hover { color: var(--success); }
 
 /* ==========================================================================
+   ADJUSTABLE COLUMN DIVIDERS
+   ========================================================================== */
+th.divider-col, td.divider-col {
+    border-right: 2px solid var(--primary) !important;
+}
+
+.resizer {
+    position: absolute;
+    top: 0;
+    right: -3px; /* Hangs slightly over the edge to make it easy to click */
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    user-select: none;
+    z-index: 20;
+    background: transparent;
+    transition: background 0.2s;
+}
+
+.resizer:hover, .resizer.active {
+    background-color: var(--primary);
+    opacity: 0.5;
+}
+
+/* ==========================================================================
    10. DRAG & DROP ROWS/COLUMNS
    ========================================================================== */
 .drag-handle-cell {
