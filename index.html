@@ -592,6 +592,18 @@
             <div class="compose-body">
                 <input type="email" id="compose-to" placeholder="To" class="compose-input">
                 <input type="text" id="compose-subject" placeholder="Subject" class="compose-input">
+                
+                <div style="display: flex; gap: 10px; padding: 10px 15px; border-bottom: 1px solid var(--glass-border); background: rgba(0,0,0,0.1);">
+                    <select id="compose-log-type" style="flex: 1; background: transparent; color: var(--text-main); border: none; outline: none; cursor: pointer;">
+                        <option value="none" style="background: var(--bg-card);">Do not track in Hub</option>
+                        <option value="submissionLog" selected style="background: var(--bg-card);">Log as Submission</option>
+                        <option value="screeningLog" style="background: var(--bg-card);">Log as Screening</option>
+                        <option value="interviewLog" style="background: var(--bg-card);">Log as Interview</option>
+                    </select>
+                    <div style="width: 1px; background: var(--glass-border);"></div>
+                    <input type="text" id="compose-candidate-name" placeholder="Candidate First Name (Optional)" style="flex: 1; background: transparent; color: var(--text-main); border: none; outline: none;">
+                </div>
+
                 <textarea id="compose-message" class="compose-textarea" placeholder="Write your message here..."></textarea>
             </div>
             <div class="compose-footer">
