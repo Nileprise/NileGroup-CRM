@@ -4,7 +4,7 @@
 const firebaseConfig = {
     apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
     authDomain: "nile-group-crm.firebaseapp.com",
-    databaseURL: "https://nile-group-crm-default-rtdb.firebaseio.com",
+    databaseURL: "https://nileprise.github.io/Nileprise-CRM/",
     projectId: "nile-group-crm",
     storageBucket: "nile-group-crm.firebasestorage.app",
     messagingSenderId: "575678017832",
@@ -1396,74 +1396,6 @@ window.syncCurrentEmailToCandidate = async () => {
 
 window.toggleCategories = () => { const sub = document.getElementById('categories-submenu'); if (sub.style.display === 'none') sub.style.display = 'block'; else sub.style.display = 'none'; }; 
 window.toggleMore = () => { const sub = document.getElementById('more-submenu'); if (sub.style.display === 'none') sub.style.display = 'block'; else sub.style.display = 'none'; };
-
-function createMimeMessage(to, subject, body) { const email = [`To: ${to}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/html; charset=utf-8", "", body].join("\n"); return btoa(unescape(encodeURIComponent(email))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); } 
-window.openComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'flex'; }; 
-window.closeComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'none'; }; 
-
-window.sendCrmEmail = async () => { 
-    const to = document.getElementById('compose-to').value.trim(); 
-    const subject = document.getElementById('compose-subject').value; 
-    const body = document.getElementById('compose-message').value; 
-    const logType = document.getElementById('compose-log-type')?.value || 'none';
-    const candName = document.getElementById('compose-candidate-name')?.value.trim().toLowerCase();
-    
-    if(!to || !subject) return showToast("Recipient and Subject required"); 
-    
-    const sendBtn = document.querySelector('.compose-footer .btn-primary'); 
-    const originalText = sendBtn.innerHTML; 
-    sendBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...'; 
-    sendBtn.disabled = true; 
-    
-    try { 
-        if (!state.gmail.gapiInited || !gapi.client.getToken()) {
-            throw new Error("Gmail not connected. Please login to Workspace Inbox."); 
-        }
-
-        const raw = createMimeMessage(to, subject, body.replace(/\n/g, '<br>')); 
-        await gapi.client.gmail.users.messages.send({ 'userId': 'me', 'resource': { 'raw': raw } }); 
-        
-        showToast("Email Sent!"); 
-        closeComposeModal(); 
-        
-        let candidate = null;
-        if (candName) {
-            candidate = state.candidates.find(c => c.first.toLowerCase() === candName);
-        } else {
-            candidate = state.candidates.find(c => 
-                (c.gmail && c.gmail.toLowerCase().includes(to.toLowerCase())) || 
-                (c.officialEmail && c.officialEmail.toLowerCase().includes(to.toLowerCase())) ||
-                (c.personalEmail && c.personalEmail.toLowerCase().includes(to.toLowerCase()))
-            ); 
-        }
-
-        if (candidate && logType !== 'none') { 
-            let logs = candidate[logType] || []; 
-            logs.push({ 
-                date: new Date().toISOString().split('T')[0], 
-                subject: subject, 
-                type: 'Outbound Email', 
-                tech: candidate.tech || 'General', 
-                recruiter: state.currentUserName, 
-                timestamp: Date.now() 
-            }); 
-            
-            await db.collection('candidates').doc(candidate.id).update({ [logType]: logs }); 
-            showToast(`Tracked as ${logType.replace('Log','')} for ${candidate.first}`); 
-        } 
-        
-        document.getElementById('compose-to').value = ''; 
-        document.getElementById('compose-subject').value = ''; 
-        document.getElementById('compose-message').value = ''; 
-        if(document.getElementById('compose-candidate-name')) document.getElementById('compose-candidate-name').value = '';
-        
-    } catch (err) { 
-        showToast("Send Failed: " + err.message); 
-    } finally { 
-        sendBtn.innerHTML = originalText; 
-        sendBtn.disabled = false; 
-    } 
-};
 
 /* ==========================================================================
    14. EXPORT & SYSTEM MANAGEMENT (CSV Export & Manual Sync)
