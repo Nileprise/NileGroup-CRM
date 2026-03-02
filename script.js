@@ -1,10 +1,10 @@
 /* ==========================================================================
    1. CONFIGURATION (FIREBASE + GMAIL API)
-   ========================================================================== */
+   ========================================================================= */
 const firebaseConfig = {
     apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
     authDomain: "nile-group-crm.firebaseapp.com",
-    databaseURL: "https://nile-group-crm-default-rtdb.firebaseio.com",
+    databaseURL: "https://nileprise.github.io/Nileprise-CRM/",
     projectId: "nile-group-crm",
     storageBucket: "nile-group-crm.firebasestorage.app",
     messagingSenderId: "575678017832",
@@ -32,7 +32,7 @@ const storage = firebase.storage();
 
 /* ==========================================================================
    2. ACCESS CONTROL LIST (Fallback)
-   ========================================================================== */
+   ========================================================================= */
 const ALLOWED_USERS = {
     'ali@nileprise.com': { name: 'Asif', role: 'Employee' },
     'mdi@nileprise.com': { name: 'Ikram', role: 'Employee' },
@@ -47,7 +47,7 @@ const ALLOWED_USERS = {
 
 /* ==========================================================================
    3. STATE MANAGEMENT
-   ========================================================================== */
+   ========================================================================= */
 const state = {
     user: null, userRole: null, currentUserName: null, 
     candidates: [], onboarding: [], employees: [], placements: [], allUsers: [], hubData: [], labels: [],
@@ -69,7 +69,7 @@ const historyState = { undo: [], redo: [] };
 
 /* ==========================================================================
    4. DOM CACHE
-   ========================================================================== */
+   ========================================================================= */
 const dom = {
     screens: { auth: document.getElementById('auth-screen'), app: document.getElementById('dashboard-screen'), verify: document.getElementById('verify-screen') },
     navItems: document.querySelectorAll('.nav-item'),
@@ -79,7 +79,7 @@ const dom = {
 
 /* ==========================================================================
    5. INITIALIZATION & UTILITIES
-   ========================================================================== */
+   ========================================================================= */
 function init() {
     setupEventListeners();
     loadGoogleScripts();
@@ -155,38 +155,34 @@ function showToast(msg) { const t = document.getElementById('toast'); document.g
 
 /* ==========================================================================
    6. AUTHENTICATION HELPERS
-   ========================================================================== */
+   ========================================================================= */
 window.togglePasswordVisibility = (inputId, iconElement) => {
     const input = document.getElementById(inputId);
     if (input.type === "password") { input.type = "text"; iconElement.classList.remove('fa-eye'); iconElement.classList.add('fa-eye-slash'); iconElement.style.color = "var(--primary)"; } 
     else { input.type = "password"; iconElement.classList.remove('fa-eye-slash'); iconElement.classList.add('fa-eye'); iconElement.style.color = ""; }
 };
 window.switchAuth = (type) => { document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active')); document.getElementById(`form-${type}`).classList.add('active'); };
-window.handleReset = () => { const email = document.getElementById('reset-email').value; if(!email) return showToast("Enter email"); auth.sendPasswordResetEmail(email).then(() => { showToast("Reset link sent"); switchAuth('login'); }).catch(e => showToast(e.message)); };
 window.checkVerificationStatus = () => { auth.currentUser.reload().then(() => { if(auth.currentUser.emailVerified) location.reload(); else showToast("Not verified yet. Check spam folder."); }); };
 window.resendVerificationEmail = () => { auth.currentUser.sendEmailVerification().then(() => showToast("Email resent")); };
 
-window.handleLogin = () => { 
-    const e = document.getElementById('login-email').value, p = document.getElementById('login-pass').value; 
-    if(!e || !p) return showToast("Please enter both email and password.");
-    const btn = document.getElementById('btn-login-action'); const originalText = btn.innerText; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Logging in...'; btn.disabled = true;
-    auth.signInWithEmailAndPassword(e, p).then(() => { btn.innerHTML = originalText; btn.disabled = false; }).catch(err => { showToast(err.message.replace('Firebase: ', '')); btn.innerHTML = originalText; btn.disabled = false; }); 
-};
-
-window.handleSignup = () => { 
-    const n = document.getElementById('reg-name').value, e = document.getElementById('reg-email').value, p = document.getElementById('reg-pass').value; 
-    auth.createUserWithEmailAndPassword(e, p).then(cred => { 
-        cred.user.updateProfile({displayName: n}); 
-        db.collection('users').doc(e).set({firstName: n, email: e, role: 'Employee', createdAt: Date.now()}); 
-        cred.user.sendEmailVerification(); showToast("Verification Sent"); switchAuth('login'); 
-    }).catch(err => showToast(err.message.replace('Firebase: ', ''))); 
-};
-
 /* ==========================================================================
-   7. REALTIME LISTENERS
-   ========================================================================== */
+   7. REALTIME LISTENERS (With Security Queries Applied)
+   ========================================================================= */
 function initRealtimeListeners() {
-    db.collection('candidates').onSnapshot(snap => {
+    let candRef = db.collection('candidates');
+    let hubRef = db.collection('hub');
+    let onbRef = db.collection('onboarding');
+    let placeRef = db.collection('placements');
+
+    // Secure queries based on Role
+    if (state.userRole === 'Employee' && state.currentUserName) {
+        candRef = candRef.where('recruiter', '==', state.currentUserName);
+        hubRef = hubRef.where('recruiter', '==', state.currentUserName);
+        onbRef = onbRef.where('recruiter', '==', state.currentUserName);
+        placeRef = placeRef.where('recruiter', '==', state.currentUserName);
+    }
+
+    candRef.onSnapshot(snap => {
         state.candidates = []; const techs = new Set();
         snap.forEach(doc => { const d = doc.data(); state.candidates.push({ id: doc.id, ...d }); if (d.tech) techs.add(d.tech); });
         state.metadata.techs = Array.from(techs).sort();
@@ -197,7 +193,7 @@ function initRealtimeListeners() {
         const headerText = document.getElementById('header-updated'); if(headerText) headerText.innerText = 'Synced Just Now';
     });
     
-    db.collection('hub').onSnapshot(snap => {
+    hubRef.onSnapshot(snap => {
         state.hubData = []; snap.forEach(doc => state.hubData.push({ id: doc.id, ...doc.data() }));
         state.hubData.sort((a, b) => (a.orderIndex !== undefined ? a.orderIndex : -a.createdAt) - (b.orderIndex !== undefined ? b.orderIndex : -b.createdAt));
         updateHubStats(state.hub.filterType, state.hub.date);
@@ -211,13 +207,13 @@ function initRealtimeListeners() {
         renderEmployeeTable(); updateSelectButtons('emp'); renderDropdowns(); updateDashboardStats();
     });
 
-    db.collection('onboarding').onSnapshot(snap => { 
+    onbRef.onSnapshot(snap => { 
         state.onboarding = []; snap.forEach(doc => state.onboarding.push({ id: doc.id, ...doc.data() })); 
         state.onboarding.sort((a, b) => (a.orderIndex !== undefined ? a.orderIndex : -a.createdAt) - (b.orderIndex !== undefined ? b.orderIndex : -b.createdAt));
         renderOnboardingTable(); updateSelectButtons('onb');
     });
 
-    db.collection('placements').onSnapshot(snap => {
+    placeRef.onSnapshot(snap => {
         state.placements = []; snap.forEach(doc => state.placements.push({ id: doc.id, ...doc.data() }));
         state.placements.sort((a, b) => (a.orderIndex !== undefined ? a.orderIndex : -a.createdAt) - (b.orderIndex !== undefined ? b.orderIndex : -b.createdAt));
         renderPlacementTable(); updateSelectButtons('place'); updateDashboardStats();
@@ -229,25 +225,10 @@ function initRealtimeListeners() {
             const data = doc.data(); const fullName = (data.firstName && data.lastName) ? `${data.firstName} ${data.lastName}` : (data.displayName || 'Staff Member');
             state.allUsers.push({ id: doc.id, name: fullName, dob: data.dob });
         });
-        checkBirthdays();
     });
 
     loadCustomColumns();
 }
-
-window.checkBirthdays = () => {
-    const today = new Date(); const todayMatch = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    if(!state.allUsers) return;
-    const birthdayPeople = state.allUsers.filter(user => user.dob && user.dob.substring(5) === todayMatch);
-    const card = document.getElementById('birthday-card'); const content = document.getElementById('bday-names');
-    if (!card || !content) return;
-    if (window.birthdayTimer) clearTimeout(window.birthdayTimer);
-    if (birthdayPeople.length > 0) {
-        content.innerText = birthdayPeople.map(u => u.name).join(', ');
-        card.style.display = 'flex'; card.classList.add('active');
-        window.birthdayTimer = setTimeout(() => { card.classList.remove('active'); setTimeout(() => { card.style.display = 'none'; }, 500); }, 7000); 
-    } else { card.classList.remove('active'); card.style.display = 'none'; }
-};
 
 function loadCustomColumns() { 
     db.collection('settings').doc('table_config').onSnapshot(doc => { 
@@ -274,7 +255,7 @@ window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collec
 
 /* ==========================================================================
    8. CLIENT-SIDE DATA ISOLATION LOGIC
-   ========================================================================== */
+   ========================================================================= */
 function getFilteredData(data, filters) { 
     let subset = data; 
     if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName);
@@ -292,7 +273,7 @@ function pushToHistory(collection, id, field, oldVal, newVal) { historyState.und
 
 /* ==========================================================================
    9. DASHBOARD CHARTS & STATS
-   ========================================================================== */
+   ========================================================================= */
 let recChartInstance = null; let techChartInstance = null;
 function renderDashboardCharts() { 
     let candData = state.candidates.filter(c => c.status !== 'Placed'); 
@@ -326,7 +307,7 @@ function updateDashboardStats() {
 
 /* ==========================================================================
    10. ALIGNMENT & COLUMN CONFIG & RESIZER LOGIC
-   ========================================================================== */
+   ========================================================================= */
 window.cycleAlign = (context, colName) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context][colName] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context][colName] = next; refreshViewForType(context); };
 window.cycleAlignAll = (context) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context]['global'] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context]['global'] = next; refreshViewForType(context); showToast(`All columns aligned ${next}`); };
 
@@ -412,8 +393,8 @@ function stopResize() {
 }
 
 /* ==========================================================================
-   11. TABLE RENDERERS (With Sync for Record Counts, Isolation & Dividers)
-   ========================================================================== */
+   11. TABLE RENDERERS 
+   ========================================================================= */
 function renderCandidateTable() {
     const filtered = getFilteredData(state.candidates, state.filters);
     const tbody = document.getElementById('table-body');
@@ -427,7 +408,7 @@ function renderCandidateTable() {
     const customHeaders = (state.customColumns.candidates || []).map(col => `<th>${thAlign(col.name, 'candidates')}</th>`).join('');
     
     // Divider applied to Last Name
-    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th class="divider-col" style="position:relative;">${thAlign('Last Name', 'candidates')}<div class="resizer" onmousedown="initResize(event)"></div></th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
+    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th class="divider-col" style="position:relative;">${thAlign('Last Name', 'candidates')}<div class="resizer" onmousedown="initResize(event)"></div></th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
     
     if(document.getElementById('cand-footer-count')) document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} total records`;
     
@@ -437,17 +418,7 @@ function renderCandidateTable() {
         const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt;
         const customCells = (state.customColumns.candidates || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'candidates', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="inlineUrlEdit('${c.id}', '${col.key}', 'candidates', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${c.id}', '${col.key}', 'candidates', this)">${val || ''}</td>`; }).join('');
         
-        // Smart URL cells
-        const makeLinkCell = (id, field, value, iconClass, hoverColor) => {
-            if (value) { return `<td style="text-align:center; cursor:cell;" onclick="inlineUrlEdit('${id}', '${field}', 'candidates', this)" title="Click cell background to edit"><a href="${value}" target="_blank" onclick="event.stopPropagation()"><i class="${iconClass} link-icon-btn" style="color: ${hoverColor}; opacity: 1;"></i></a></td>`; } 
-            else { return `<td style="text-align:center; cursor:pointer;" onclick="inlineUrlEdit('${id}', '${field}', 'candidates', this)" title="Add Link"><i class="fa-solid fa-plus icon-empty link-icon-btn"></i></td>`; }
-        };
-        const gmailCell = makeLinkCell(c.id, 'gmail', c.gmail, 'fa-brands fa-google icon-gmail', '#ea4335');
-        const linkedinCell = makeLinkCell(c.id, 'linkedin', c.linkedin, 'fa-brands fa-linkedin icon-linkedin', '#0a66c2');
-        const resumeCell = makeLinkCell(c.id, 'resume', c.resume, 'fa-solid fa-file-lines icon-resume', 'var(--warning)');
-        const trackCell = makeLinkCell(c.id, 'track', c.track, 'fa-solid fa-location-crosshairs icon-track', 'var(--success)');
-        
-        return `<tr class="${rowClass}" data-id="${c.id}" data-collection="candidates" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'candidates')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'candidates')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td><td>${i+1}</td><td tabindex="0" data-field="first" id="fname-${c.id}" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td><td class="divider-col" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td><td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td><td tabindex="0" data-field="wa" onclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td><td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td><td style="overflow:visible;"><div class="action-dropdown-container"><div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div><div id="menu-${c.id}" class="custom-dropdown-menu"><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div><div class="dropdown-option" onclick="moveToPlacements('${c.id}')"><span class="dot-gold" style="width:8px; height:8px; background:#f59e0b; border-radius:50%; display:inline-block;"></span> Move to Placements</div><div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div></div></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>${gmailCell}${linkedinCell}${resumeCell}${trackCell}<td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||''}</td>${customCells}</tr>`;
+        return `<tr class="${rowClass}" data-id="${c.id}" data-collection="candidates" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'candidates')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'candidates')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td><td>${i+1}</td><td tabindex="0" data-field="first" id="fname-${c.id}" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first}</td><td class="divider-col" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td><td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td><td tabindex="0" data-field="wa" onclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td><td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td><td style="overflow:visible;"><div class="action-dropdown-container"><div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div><div id="menu-${c.id}" class="custom-dropdown-menu"><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div><div class="dropdown-option" onclick="moveToPlacements('${c.id}')"><span class="dot-gold" style="width:8px; height:8px; background:#f59e0b; border-radius:50%; display:inline-block;"></span> Move to Placements</div><div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div></div></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td><td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||''}</td>${customCells}</tr>`;
     }).join('');
     
     restoreColumnOrder('candidates-table', 'candidates'); applyAlignStyles('candidates', 'candidates-table'); initColumnDragDrop('candidates-table', 'candidates');
@@ -562,7 +533,7 @@ function renderHubTable() {
 
 /* ==========================================================================
    12. DATA MANIPULATION & INLINE EDITS
-   ========================================================================== */
+   ========================================================================= */
 window.updateHubStats = (filterType, dateVal) => {
     if(filterType) state.hub.filterType = filterType; 
     if(dateVal) state.hub.date = dateVal;
@@ -743,7 +714,7 @@ window.deletePlacement = async (id) => { if(confirm("Remove this placement?")) {
 
 /* ==========================================================================
    13. GMAIL ENGINE
-   ========================================================================== */
+   ========================================================================= */
 function loadGoogleScripts() { 
     const s1 = document.createElement('script'); s1.src = "https://apis.google.com/js/api.js"; 
     s1.onload = () => gapi.load('client', async () => { try { await gapi.client.init({ apiKey: G_API_KEY, discoveryDocs: [G_DISCOVERY_DOC] }); state.gmail.gapiInited = true; checkGmailAuth(); } catch(e) { console.error(e); } }); 
@@ -820,7 +791,7 @@ window.deleteLabel = (index) => { const label = state.labels[index]; if(confirm(
 window.openCreateLabelModal = () => { document.getElementById('create-label-modal').style.display = 'flex'; document.getElementById('new-label-name').focus(); }; window.closeCreateLabelModal = () => { document.getElementById('create-label-modal').style.display = 'none'; }; window.createLabel = () => { const name = document.getElementById('new-label-name').value.trim(); if (!name) return; state.labels.push({ name: name, color: state.selectedLabelColor }); renderLabels(); closeCreateLabelModal(); }; window.selectColor = (element, color) => { state.selectedLabelColor = color; document.querySelectorAll('.color-circle').forEach(el => el.classList.remove('selected')); element.classList.add('selected'); };
 
 window.renderGmailList = async (label = 'Inbox', navElement = null) => { 
-    const labelMap = { 'Inbox': 'INBOX', 'Sent': 'SENT', 'Drafts': 'DRAFT', 'Trash': 'TRASH', 'Spam': 'SPAM', 'Starred': 'STARRED', 'Important': 'IMPORTANT', 'Social': 'CATEGORY_SOCIAL', 'Updates': 'CATEGORY_UPDATES', 'Promotions': 'CATEGORY_PROMOTIONS' }; 
+    const labelMap = { 'Inbox': 'INBOX', 'Trash': 'TRASH', 'Spam': 'SPAM', 'Starred': 'STARRED', 'Important': 'IMPORTANT', 'Social': 'CATEGORY_SOCIAL', 'Updates': 'CATEGORY_UPDATES', 'Promotions': 'CATEGORY_PROMOTIONS' }; 
     const apiLabelId = labelMap[label] || label; state.gmail.currentLabel = apiLabelId; 
     document.getElementById('gmail-list-view').style.display = 'flex'; document.getElementById('gmail-detail-view').style.display = 'none'; 
     const container = document.getElementById('gmail-rows-container'); 
@@ -885,38 +856,9 @@ window.syncCurrentEmailToCandidate = async () => {
 window.toggleCategories = () => { const sub = document.getElementById('categories-submenu'); if (sub.style.display === 'none') sub.style.display = 'block'; else sub.style.display = 'none'; }; 
 window.toggleMore = () => { const sub = document.getElementById('more-submenu'); if (sub.style.display === 'none') sub.style.display = 'block'; else sub.style.display = 'none'; };
 
-function createMimeMessage(to, subject, body) { const email = [`To: ${to}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/html; charset=utf-8", "", body].join("\n"); return btoa(unescape(encodeURIComponent(email))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); } 
-window.openComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'flex'; }; 
-window.closeComposeModal = () => { document.getElementById('crm-compose-modal').style.display = 'none'; }; 
-
-window.sendCrmEmail = async () => { 
-    const to = document.getElementById('compose-to').value.trim(); const subject = document.getElementById('compose-subject').value; const body = document.getElementById('compose-message').value; 
-    const logType = document.getElementById('compose-log-type')?.value || 'none'; const candName = document.getElementById('compose-candidate-name')?.value.trim().toLowerCase();
-    if(!to || !subject) return showToast("Recipient and Subject required"); 
-    
-    const sendBtn = document.querySelector('.compose-footer .btn-primary'); const originalText = sendBtn.innerHTML; sendBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...'; sendBtn.disabled = true; 
-    
-    try { 
-        if (!state.gmail.gapiInited || !gapi.client.getToken()) throw new Error("Gmail not connected. Please login to Workspace Inbox."); 
-        const raw = createMimeMessage(to, subject, body.replace(/\n/g, '<br>')); await gapi.client.gmail.users.messages.send({ 'userId': 'me', 'resource': { 'raw': raw } }); 
-        showToast("Email Sent!"); closeComposeModal(); 
-        
-        let candidate = null;
-        if (candName) { candidate = state.candidates.find(c => c.first.toLowerCase() === candName); } 
-        else { candidate = state.candidates.find(c => (c.gmail && c.gmail.toLowerCase().includes(to.toLowerCase())) || (c.officialEmail && c.officialEmail.toLowerCase().includes(to.toLowerCase())) || (c.personalEmail && c.personalEmail.toLowerCase().includes(to.toLowerCase()))); }
-
-        if (candidate && logType !== 'none') { 
-            let logs = candidate[logType] || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: subject, type: 'Outbound Email', tech: candidate.tech || 'General', recruiter: state.currentUserName, timestamp: Date.now() }); 
-            await db.collection('candidates').doc(candidate.id).update({ [logType]: logs }); showToast(`Tracked as ${logType.replace('Log','')} for ${candidate.first}`); 
-        } 
-        
-        document.getElementById('compose-to').value = ''; document.getElementById('compose-subject').value = ''; document.getElementById('compose-message').value = ''; if(document.getElementById('compose-candidate-name')) document.getElementById('compose-candidate-name').value = '';
-    } catch (err) { showToast("Send Failed: " + err.message); } finally { sendBtn.innerHTML = originalText; sendBtn.disabled = false; } 
-};
-
 /* ==========================================================================
    14. EXPORT & SYSTEM MANAGEMENT (CSV Export & Manual Sync)
-   ========================================================================== */
+   ========================================================================= */
 window.exportData = () => {
     if (!state.candidates || state.candidates.length === 0) return showToast("No candidate data to export.");
     const rows = [["ID", "First Name", "Last Name", "Mobile", "WhatsApp", "Technology", "Recruiter", "Status", "Assigned Date", "Comments"]];
@@ -956,7 +898,7 @@ window.manualSync = async () => {
 
 /* ==========================================================================
    15. GLOBAL EVENT LISTENERS & NAVIGATION
-   ========================================================================== */
+   ========================================================================= */
 function setupEventListeners() {
     document.querySelectorAll('.nav-item[data-target]').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -991,7 +933,7 @@ function setupEventListeners() {
 
 /* ==========================================================================
    16. ROW DRAG & DROP REORDERING
-   ========================================================================== */
+   ========================================================================= */
 window.handleDragStart = (e, collection) => {
     if(e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') { e.preventDefault(); return; }
     const row = e.target.closest('tr'); if(!row) return;
@@ -1012,7 +954,7 @@ window.handleDrop = async (e, collection) => {
 
 /* ==========================================================================
    17. PROFILE MANAGEMENT
-   ========================================================================== */
+   ========================================================================= */
 function updateUserProfile(user, knownUser) {
     const displayName = knownUser ? knownUser.name : (user.displayName || 'User'); const role = knownUser ? knownUser.role : 'Employee'; const email = user.email;
     if(document.getElementById('display-username')) document.getElementById('display-username').innerText = displayName;
@@ -1057,5 +999,5 @@ window.deleteProfilePhoto = async () => {
 
 /* ==========================================================================
    18. STARTUP
-   ========================================================================== */
+   ========================================================================= */
 window.onload = () => { init(); };
