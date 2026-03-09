@@ -148,7 +148,7 @@ function init() {
 }
 
 function showTableLoaders() {
-    const loaderHTML = `<tr><td colspan="25" style="text-align: center; padding: 40px; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin text-cyan" style="font-size: 2rem; margin-bottom: 15px;"></i><br>Connecting to secure server...</td></tr>`;
+    const loaderHTML = `<tr><td colspan="25" style="text-align: center; padding: 40px; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin text-cyan" style="font-size: 2rem; margin-bottom: 15px;"></i><br>Connecting to live database...</td></tr>`;
     ['table-body', 'employee-table-body', 'hub-table-body', 'placement-table-body', 'onboarding-table-body'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.innerHTML = loaderHTML;
@@ -193,7 +193,7 @@ function showToast(msg) {
 }
 
 /* ==========================================================================
-   6. REALTIME LISTENERS (With Security Queries Applied)
+   6. REALTIME LISTENERS (LIVE DATA)
    ========================================================================= */
 function initRealtimeListeners() {
     let candRef = db.collection('candidates');
@@ -208,6 +208,9 @@ function initRealtimeListeners() {
         onbRef = onbRef.where('recruiter', '==', userNameQuery);
         placeRef = placeRef.where('recruiter', '==', userNameQuery);
     }
+
+    // Indicates that data is streaming live
+    if (dom.headerUpdated) dom.headerUpdated.innerHTML = '<i class="fa-solid fa-satellite-dish text-success"></i> Live System';
 
     candRef.onSnapshot(snap => {
         state.candidates = [];
@@ -228,8 +231,6 @@ function initRealtimeListeners() {
         renderDropdowns();
         updateDashboardStats();
         renderDashboardCharts();
-        
-        if (dom.headerUpdated) dom.headerUpdated.innerText = 'Synced Just Now';
     });
 
     hubRef.onSnapshot(snap => {
@@ -1511,7 +1512,7 @@ window.deletePlacement = async (id) => {
 };
 
 /* ==========================================================================
-   13. GMAIL ENGINE
+   13. GMAIL ENGINE (LIVE FETCH ONLY)
    ========================================================================= */
 function loadGoogleScripts() {
     const s1 = document.createElement('script');
@@ -1536,7 +1537,6 @@ function loadGoogleScripts() {
                 updateGmailUI(true);
                 renderGmailList('INBOX');
                 fetchGmailLabels();
-                startMailboxSync();
             }
         });
         state.gmail.gisInited = true;
@@ -1550,8 +1550,6 @@ function checkGmailAuth() {
         if (gapi.client.getToken()) {
             updateGmailUI(true);
             fetchGmailLabels();
-            startMailboxSync();
-            setInterval(startMailboxSync, 5 * 60 * 1000);
         } else {
             updateGmailUI(false);
         }
@@ -1616,79 +1614,6 @@ function parseMessageBody(payload) {
         attachments.push(...parsedParts.attachments);
     }
     return { text: bodyText, html: bodyHtml, attachments };
-}
-
-async function startMailboxSync() {
-    if (!state.user) return;
-    const metadataRef = db.collection('sync_metadata').doc(state.user.uid);
-    const metaDoc = await metadataRef.get();
-
-    if (!metaDoc.exists || !metaDoc.data().historyId) await runFullSync(null);
-    else await runIncrementalSync(metaDoc.data().historyId);
-}
-
-async function runFullSync(pageToken) {
-    try {
-        const res = await gapi.client.gmail.users.messages.list({ 'userId': 'me', 'maxResults': 20, 'pageToken': pageToken });
-        const messages = res.result.messages;
-        if (messages?.length > 0) {
-            await processMessageBatch(messages);
-            if (!pageToken) {
-                const firstMsgDetails = await gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': messages[0].id });
-                await db.collection('sync_metadata').doc(state.user.uid).set({ historyId: firstMsgDetails.result.historyId }, { merge: true });
-            }
-        }
-    } catch (e) { console.error("Full Sync Error:", e); }
-}
-
-async function runIncrementalSync(historyId) {
-    try {
-        const res = await gapi.client.gmail.users.history.list({ 'userId': 'me', 'startHistoryId': historyId });
-        const history = res.result.history;
-        if (!history?.length) return;
-
-        let newMsgIds = [];
-        history.forEach(record => {
-            if (record.messagesAdded) record.messagesAdded.forEach(m => newMsgIds.push(m.message));
-        });
-
-        if (newMsgIds.length > 0) {
-            await processMessageBatch(newMsgIds);
-            await db.collection('sync_metadata').doc(state.user.uid).set({ historyId: res.result.historyId }, { merge: true });
-        }
-    } catch (e) {
-        if (e.status === 404) await runFullSync(null);
-    }
-}
-
-async function processMessageBatch(messages) {
-    const promises = messages.map(async (msgStub) => {
-        try {
-            const docRef = db.collection('emails').doc(msgStub.id);
-            const docSnap = await docRef.get();
-            if (docSnap.exists) return;
-
-            const res = await gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': msgStub.id, 'format': 'full' });
-            const msg = res.result;
-            const parsedBody = parseMessageBody(msg.payload);
-            const headers = msg.payload.headers;
-
-            const emailData = {
-                id: msg.id, threadId: msg.threadId, historyId: msg.historyId,
-                labelIds: msg.labelIds || [], snippet: msg.snippet,
-                internalDate: parseInt(msg.internalDate),
-                from: getHeader(headers, 'From'), to: getHeader(headers, 'To'),
-                cc: getHeader(headers, 'Cc'), bcc: getHeader(headers, 'Bcc'),
-                subject: getHeader(headers, 'Subject'),
-                bodyText: parsedBody.text, bodyHtml: parsedBody.html,
-                attachments: parsedBody.attachments,
-                isRead: !msg.labelIds.includes('UNREAD'),
-                importedAt: Date.now(), ownerUid: state.user.uid
-            };
-            await docRef.set(emailData);
-        } catch (err) { }
-    });
-    await Promise.all(promises);
 }
 
 window.fetchGmailLabels = async () => {
@@ -1825,7 +1750,7 @@ window.renderGmailList = async (label = 'Inbox') => {
     document.getElementById('gmail-list-view').style.display = 'flex';
     document.getElementById('gmail-detail-view').style.display = 'none';
     const container = document.getElementById('gmail-rows-container');
-    container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 10px; color:var(--primary);"></i><br>Loading emails...</div>';
+    container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 10px; color:var(--primary);"></i><br>Fetching Live Emails...</div>';
 
     if (!gapi.client.getToken()) {
         container.innerHTML = `
@@ -1985,39 +1910,6 @@ window.resetSystem = async () => {
         } else {
             showToast("Reset cancelled.");
         }
-    }
-};
-
-window.manualSync = async () => {
-    const icon = document.getElementById('sync-icon');
-    const headerText = document.getElementById('header-updated');
-    if (icon) icon.classList.add('fa-spin');
-    if (headerText) headerText.innerText = 'Syncing...';
-    showToast("Pulling fresh data from server...");
-
-    try {
-        await db.enableNetwork();
-        showTableLoaders();
-        const snap = await db.collection('candidates').get({ source: 'server' });
-        state.candidates = [];
-        snap.forEach(doc => state.candidates.push({ id: doc.id, ...doc.data() }));
-        state.candidates.sort((a, b) => (a.orderIndex ?? -a.createdAt) - (b.orderIndex ?? -b.createdAt));
-        
-        renderCandidateTable();
-        renderHubTable();
-        updateDashboardStats();
-        renderDashboardCharts();
-
-        setTimeout(() => {
-            if (icon) icon.classList.remove('fa-spin');
-            if (headerText) headerText.innerText = 'Synced Just Now';
-            showToast("Data is fully synced across devices!");
-        }, 500);
-    } catch (error) {
-        console.error("Hard sync failed:", error);
-        if (icon) icon.classList.remove('fa-spin');
-        if (headerText) headerText.innerText = 'Sync Failed';
-        showToast("Network error. Could not reach server.");
     }
 };
 
