@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nileprise CRM</title>
 
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"  rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
@@ -42,7 +42,7 @@
                     <input type="password" id="login-pass" placeholder="Password">
                     <i class="fa-solid fa-eye eye-icon" onclick="togglePasswordVisibility('login-pass', this)"></i>
                 </div>
-                <button id="btn-login-action" class="btn-primary auth-btn" onclick="handleLogin()">Login to Dashboard</button>
+                <button id="btn-login-action" class="btn-primary auth-btn" onclick="handleLogin(event)">Login to Dashboard</button>
                 <div class="auth-links">
                     <span onclick="switchAuth('reset')">Forgot Password?</span>
                     <span onclick="switchAuth('register')">Activate Account</span>
@@ -57,14 +57,14 @@
                 </div>
                 <div class="input-group">
                     <i class="fa-solid fa-envelope"></i>
-                    <input type="email" id="reg-email" placeholder="Official Email">
+                    <input type="email" id="signup-email" placeholder="Official Email">
                 </div>
                 <div class="input-group">
                     <i class="fa-solid fa-lock"></i>
-                    <input type="password" id="reg-pass" placeholder="Create Password">
-                    <i class="fa-solid fa-eye eye-icon" onclick="togglePasswordVisibility('reg-pass', this)"></i>
+                    <input type="password" id="signup-pass" placeholder="Create Password">
+                    <i class="fa-solid fa-eye eye-icon" onclick="togglePasswordVisibility('signup-pass', this)"></i>
                 </div>
-                <button class="btn-primary auth-btn" onclick="handleSignup()">Register</button>
+                <button class="btn-primary auth-btn" onclick="handleSignup(event)">Register</button>
                 <div class="auth-links">
                     <span onclick="switchAuth('login')">Already have an account? Login</span>
                 </div>
@@ -77,7 +77,7 @@
                     <i class="fa-solid fa-envelope"></i>
                     <input type="email" id="reset-email" placeholder="Email Address">
                 </div>
-                <button class="btn-primary auth-btn" onclick="handleReset()">Send Link</button>
+                <button class="btn-primary auth-btn" onclick="handleResetPassword(event)">Send Link</button>
                 <div class="auth-links">
                     <span onclick="switchAuth('login')">Back to Login</span>
                 </div>
@@ -154,14 +154,13 @@
                     <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Dashboard</h2>
                 </div>
                 <div class="header-right">
-                    <span style="font-size: 0.8rem; color: var(--text-muted); margin-right: 15px;">
-                        Last Sync: <b id="header-updated">Pending...</b>
+                    <span id="header-updated" class="status-indicator" style="display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.85rem; margin-right: 15px;">
+                        <i class="fa-solid fa-satellite-dish" style="color: #22c55e;"></i> Live System
                     </span>
-                    <button onclick="manualSync()" class="btn-primary" style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 0.85rem;">
-                        <i id="sync-icon" class="fa-solid fa-arrows-rotate"></i> Sync Data
-                    </button>
-                    <div class="user-profile-mini">
-                        <i class="fa-solid fa-circle-user" style="font-size: 1.5rem; color: var(--primary);"></i>
+                    
+                    <div class="user-profile-mini" onclick="document.querySelector('.nav-item[data-target=\'view-profile\']').click()" style="cursor: pointer;">
+                        <i class="fa-solid fa-circle-user" id="profile-main-icon" style="font-size: 1.5rem; color: var(--primary);"></i>
+                        <img id="profile-main-img" src="" alt="Profile" style="display:none; width: 24px; height: 24px; border-radius:50%; object-fit:cover;">
                         <span id="display-username">User</span>
                     </div>
                 </div>
