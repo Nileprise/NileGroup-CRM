@@ -173,7 +173,7 @@
                                 <button class="btn-toggle text-success" data-status="Active">Active</button>
                                 <button class="btn-toggle text-danger" data-status="Inactive">Inactive</button>
                             </div>
-                            <button class="btn-primary" onclick="openCandidateModal()"><i class="fa-solid fa-user-plus"></i> Add Candidate</button>
+                            <button class="btn-primary" onclick="addInlineCandidateRow()"><i class="fa-solid fa-user-plus"></i> Add Candidate</button>
                             <button id="btn-delete-selected" class="btn-danger" style="display:none;" onclick="openDeleteModal('cand')">
                                 <i class="fa-solid fa-trash"></i> Delete (<span id="selected-count">0</span>)
                             </button>
@@ -265,7 +265,7 @@
                             <input type="number" id="placement-year-picker" class="date-input-modern" min="2020" max="2050" value="2026" style="display:none;" onchange="renderPlacementTable()">
                         </div>
                         <div class="control-group">
-                            <button class="btn-primary" onclick="openPlacementModal()"><i class="fa-solid fa-trophy"></i> Add Placement</button>
+                            <button class="btn-primary" onclick="addInlinePlacementRow()"><i class="fa-solid fa-trophy"></i> Add Placement</button>
                             <button id="btn-delete-placement" class="btn-danger" style="display:none;" onclick="openDeleteModal('place')">
                                 <i class="fa-solid fa-trash"></i> Delete (<span id="place-selected-count">0</span>)
                             </button>
@@ -302,7 +302,7 @@
                             </div>
                         </div>
                         <div class="control-group">
-                            <button class="btn-primary" onclick="openEmployeeModal()"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
+                            <button class="btn-primary" onclick="addInlineEmployeeRow()"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
                             <button id="btn-delete-employee" class="btn-danger" style="display:none;" onclick="openDeleteModal('emp')">
                                 <i class="fa-solid fa-trash"></i> Delete (<span id="emp-selected-count">0</span>)
                             </button>
@@ -338,7 +338,7 @@
                             </div>
                         </div>
                         <div class="control-group">
-                            <button class="btn-primary" onclick="openOnboardingModal()"><i class="fa-solid fa-file-signature"></i> Add Record</button>
+                            <button class="btn-primary" onclick="addInlineOnboardingRow()"><i class="fa-solid fa-file-signature"></i> Add Record</button>
                             <button id="btn-delete-onboarding" class="btn-danger" style="display:none;" onclick="openDeleteModal('onb')">
                                 <i class="fa-solid fa-trash"></i> Delete (<span id="onboarding-selected-count">0</span>)
                             </button>
@@ -372,14 +372,14 @@
                             <ul class="gmail-nav custom-scroll">
                                 <li onclick="renderGmailList('INBOX')" class="active"><span class="material-icons text-cyan">inbox</span> Inbox</li>
                                 <li onclick="renderGmailList('STARRED')"><span class="material-icons text-gold">star</span> Starred</li>
-                               
+                                
                                 <li class="gmail-nav-title" onclick="toggleCategories()">Categories <i class="fa-solid fa-caret-down" style="float:right; margin-top:4px;"></i></li>
                                 <div id="categories-submenu" style="display:none; padding-left: 15px;">
                                     <li onclick="renderGmailList('CATEGORY_SOCIAL')"><span class="material-icons text-blue">people</span> Social</li>
                                     <li onclick="renderGmailList('CATEGORY_UPDATES')"><span class="material-icons text-gold">info</span> Updates</li>
                                     <li onclick="renderGmailList('CATEGORY_PROMOTIONS')"><span class="material-icons text-success">local_offer</span> Promotions</li>
                                 </div>
-                               
+                                
                                 <li class="gmail-nav-title" onclick="toggleMore()">More <i class="fa-solid fa-caret-down" style="float:right; margin-top:4px;"></i></li>
                                 <div id="more-submenu" style="display:none; padding-left: 15px;">
                                     <li onclick="renderGmailList('IMPORTANT')"><span class="material-icons text-gold">label_important</span> Important</li>
@@ -446,7 +446,7 @@
                                 <div id="avatar-loading" class="avatar-loading" style="display:none;"><i class="fa-solid fa-spinner fa-spin"></i></div>
                             </div>
                             <input type="file" id="profile-upload-input" accept="image/*" style="display:none;" onchange="handlePhotoUpload(this)">
-                           
+                            
                             <div class="profile-title-info">
                                 <h2 id="prof-name-display">User Name</h2>
                                 <div id="prof-role-display" class="user-role-badge" style="display:inline-block; margin-top:5px;">Role</div>
@@ -456,7 +456,7 @@
 
                         <div class="profile-form-grid glass-panel">
                             <h3 style="grid-column: 1 / -1; border-bottom: 1px solid var(--glass-border); padding-bottom: 10px; margin-bottom: 10px;">Personal Information</h3>
-                           
+                            
                             <div class="form-group">
                                 <label>First Name</label>
                                 <input type="text" id="prof-first" class="form-input">
@@ -504,7 +504,7 @@
                     <div class="glass-panel" style="max-width: 600px; margin: 0 auto; padding: 30px;">
                         <h2><i class="fa-solid fa-gear text-cyan"></i> System Settings</h2>
                         <p style="color: var(--text-muted); margin-bottom: 30px;">Manage your CRM data and system preferences here.</p>
-                       
+                        
                         <div style="border-bottom: 1px solid var(--glass-border); padding-bottom: 20px; margin-bottom: 20px;">
                             <h3><i class="fa-solid fa-file-csv"></i> Export Data</h3>
                             <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Download a complete backup of all candidate records to a CSV file (Excel compatible).</p>
@@ -561,7 +561,7 @@
         <div class="glass-panel" style="padding: 25px; width: 350px;">
             <h3 style="margin-bottom: 20px;">Create New Label</h3>
             <input type="text" id="new-label-name" class="form-input" placeholder="Label name" style="margin-bottom: 20px;">
-           
+            
             <label style="font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 10px;">Select Color:</label>
             <div class="label-color-grid" style="margin-bottom: 25px;">
                 <div class="color-circle selected" style="background:#e91e63" onclick="selectColor(this, '#e91e63')"></div>
@@ -573,139 +573,11 @@
                 <div class="color-circle" style="background:#f44336" onclick="selectColor(this, '#f44336')"></div>
                 <div class="color-circle" style="background:#607d8b" onclick="selectColor(this, '#607d8b')"></div>
             </div>
-           
+            
             <div class="modal-actions">
                 <button class="btn-secondary" onclick="closeCreateLabelModal()">Cancel</button>
                 <button class="btn-primary" onclick="createLabel()">Create</button>
             </div>
-        </div>
-    </div>
-
-    <div id="add-candidate-modal" class="modal-overlay" style="display:none; z-index: 10000;">
-        <div class="glass-panel" style="padding: 30px; max-width: 500px; width: 100%;">
-            <h3><i class="fa-solid fa-user-plus text-cyan"></i> Add New Candidate</h3>
-            <form id="candidate-form">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px;">
-                    <div class="form-group">
-                        <label>First Name *</label>
-                        <input type="text" id="cand-first" class="form-input" placeholder="e.g. John" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Last Name</label>
-                        <input type="text" id="cand-last" class="form-input" placeholder="e.g. Doe">
-                    </div>
-                    <div class="form-group">
-                        <label>Mobile</label>
-                        <input type="text" id="cand-mobile" class="form-input" placeholder="+1 234 567 8900">
-                    </div>
-                    <div class="form-group">
-                        <label>WhatsApp</label>
-                        <input type="text" id="cand-wa" class="form-input" placeholder="+1 234 567 8900">
-                    </div>
-                    <div class="form-group">
-                        <label>Technology</label>
-                        <input type="text" id="cand-tech" class="form-input" placeholder="e.g. React, Java">
-                    </div>
-                    <div class="form-group" id="cand-recruiter-group">
-                        <label>Recruiter</label>
-                        <select id="cand-recruiter" class="form-input">
-                            <option value="">Unassigned</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="form-group" style="margin-top: 15px;">
-                    <label>Comments / Notes</label>
-                    <textarea id="cand-comments" class="form-input" style="min-height: 80px; resize: vertical;" placeholder="Initial notes..."></textarea>
-                </div>
-                
-                <div class="modal-actions" style="margin-top: 25px;">
-                    <button type="button" class="btn-secondary" onclick="closeCandidateModal()">Cancel</button>
-                    <button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Candidate</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="add-employee-modal" class="modal-overlay" style="display:none; z-index: 10000;">
-        <div class="glass-panel" style="padding: 30px; max-width: 600px; width: 100%;">
-            <h3><i class="fa-solid fa-id-badge text-cyan"></i> Add New Employee</h3>
-            <form id="employee-form">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px;">
-                    <div class="form-group"><label>First Name *</label><input type="text" id="emp-first" class="form-input" required></div>
-                    <div class="form-group"><label>Last Name</label><input type="text" id="emp-last" class="form-input"></div>
-                    <div class="form-group"><label>Date of Birth</label><input type="date" id="emp-dob" class="form-input"></div>
-                    <div class="form-group"><label>Designation</label><input type="text" id="emp-designation" class="form-input"></div>
-                    <div class="form-group"><label>Work Mobile</label><input type="text" id="emp-work-mobile" class="form-input"></div>
-                    <div class="form-group"><label>Personal Mobile</label><input type="text" id="emp-personal-mobile" class="form-input"></div>
-                    <div class="form-group"><label>Official Email</label><input type="email" id="emp-official-email" class="form-input"></div>
-                    <div class="form-group"><label>Personal Email</label><input type="email" id="emp-personal-email" class="form-input"></div>
-                </div>
-                <div class="modal-actions" style="margin-top: 25px;">
-                    <button type="button" class="btn-secondary" onclick="closeEmployeeModal()">Cancel</button>
-                    <button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Employee</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="add-onboarding-modal" class="modal-overlay" style="display:none; z-index: 10000;">
-        <div class="glass-panel" style="padding: 30px; max-width: 500px; width: 100%;">
-            <h3><i class="fa-solid fa-file-signature text-cyan"></i> Add Onboarding Record</h3>
-            <form id="onboarding-form">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px;">
-                    <div class="form-group"><label>First Name *</label><input type="text" id="onb-first" class="form-input" required></div>
-                    <div class="form-group"><label>Last Name</label><input type="text" id="onb-last" class="form-input"></div>
-                    <div class="form-group"><label>Date of Birth</label><input type="date" id="onb-dob" class="form-input"></div>
-                    <div class="form-group"><label>Mobile</label><input type="text" id="onb-mobile" class="form-input"></div>
-                    <div class="form-group" id="onb-recruiter-group">
-                        <label>Recruiter</label>
-                        <select id="onb-recruiter" class="form-input"><option value="">Unassigned</option></select>
-                    </div>
-                    <div class="form-group">
-                        <label>Status</label>
-                        <select id="onb-status" class="form-input">
-                            <option value="Onboarding" selected>Onboarding</option>
-                            <option value="Completed">Completed</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: 15px;">
-                    <label>Comments / Notes</label>
-                    <textarea id="onb-comments" class="form-input" style="min-height: 80px; resize: vertical;"></textarea>
-                </div>
-                <div class="modal-actions" style="margin-top: 25px;">
-                    <button type="button" class="btn-secondary" onclick="closeOnboardingModal()">Cancel</button>
-                    <button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Record</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="add-placement-modal" class="modal-overlay" style="display:none; z-index: 10000;">
-        <div class="glass-panel" style="padding: 30px; max-width: 500px; width: 100%;">
-            <h3><i class="fa-solid fa-trophy text-gold"></i> Log New Placement</h3>
-            <form id="placement-form">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px;">
-                    <div class="form-group"><label>First Name *</label><input type="text" id="place-first" class="form-input" required></div>
-                    <div class="form-group"><label>Last Name</label><input type="text" id="place-last" class="form-input"></div>
-                    <div class="form-group"><label>Technology</label><input type="text" id="place-tech" class="form-input"></div>
-                    <div class="form-group"><label>Location</label><input type="text" id="place-location" class="form-input"></div>
-                    <div class="form-group"><label>Contract / Rate</label><input type="text" id="place-contract" class="form-input"></div>
-                    <div class="form-group" id="place-recruiter-group">
-                        <label>Recruiter</label>
-                        <select id="place-recruiter" class="form-input"><option value="">Unassigned</option></select>
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: 15px;">
-                    <label>Actions / Notes</label>
-                    <textarea id="place-actions" class="form-input" style="min-height: 80px; resize: vertical;"></textarea>
-                </div>
-                <div class="modal-actions" style="margin-top: 25px;">
-                    <button type="button" class="btn-secondary" onclick="closePlacementModal()">Cancel</button>
-                    <button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Placement</button>
-                </div>
-            </form>
         </div>
     </div>
 
