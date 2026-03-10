@@ -4,7 +4,8 @@
 const firebaseConfig = {
     apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
     authDomain: "nile-group-crm.firebaseapp.com",
-    databaseURL: "https://nile-group-crm-default-rtdb.firebaseio.com",
+    databaseURL: "https://nileprise.github.io/Nileprise-CRM/",
+    projectId: "nile-group-crm",
     storageBucket: "nile-group-crm.firebasestorage.app",
     messagingSenderId: "575678017832",
     appId: "1:575678017832:web:8ae69a81cfaaf7a717601d",
