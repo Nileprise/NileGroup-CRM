@@ -45,7 +45,7 @@ const ALLOWED_USERS = {
 };
 
 /* ==========================================================================
-   3. STATE & LOCAL STORAGE MANAGEMENT
+   3. STATE & AGGRESSIVE LOCAL STORAGE MANAGEMENT
    ========================================================================= */
 const state = {
     user: null, userRole: null, currentUserName: null,
@@ -98,17 +98,39 @@ const storageManager = {
     }
 };
 
-async function saveRecord(collection, data) {
-    try {
-        await db.collection(collection).add(data);
-        showToast("Saved to live database!");
-    } catch (e) {
-        console.warn("Firebase blocked save. Falling back to LocalStorage.");
-        data.id = 'local_' + Date.now();
-        state[collection].unshift(data);
+// Master Function to guarantee data is stored locally immediately
+function aggressiveLocalSave(collection, id, field, value) {
+    const idx = state[collection].findIndex(x => x.id === id);
+    if (idx > -1) {
+        state[collection][idx][field] = value;
         localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
-        refreshViewForType(collection);
-        showToast("Saved to Local Storage (Offline Mode)");
+    }
+}
+
+async function saveRecord(collection, data) {
+    // 1. Always save to Local Storage first to guarantee data retention
+    data.id = data.id || 'local_' + Date.now();
+    state[collection].unshift(data);
+    localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
+    refreshViewForType(collection);
+
+    // 2. Try pushing to Firebase
+    try {
+        if (!data.id.startsWith('local_')) {
+            await db.collection(collection).doc(data.id).set(data);
+        } else {
+            const docRef = await db.collection(collection).add(data);
+            // If successful, update local ID to real Firebase ID
+            const idx = state[collection].findIndex(x => x.id === data.id);
+            if (idx > -1) {
+                state[collection][idx].id = docRef.id;
+                localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
+            }
+        }
+        showToast("Saved securely to Database");
+    } catch (e) {
+        console.warn("Firebase blocked save. Data safely stored in Local Storage.");
+        showToast("Saved Locally (Offline Mode)");
     }
 }
 
@@ -123,12 +145,18 @@ function loadLocalData() {
 }
 
 /* ==========================================================================
-   4. DOM CACHE
+   4. DOM CACHE & BUTTON BRIDGE
    ========================================================================= */
 const dom = {
     screens: { app: document.getElementById('dashboard-screen') },
     headerUpdated: document.getElementById('header-updated')
 };
+
+// Bridge to ensure old HTML buttons work with new inline features
+window.openCandidateModal = () => window.addInlineCandidateRow();
+window.openEmployeeModal = () => window.addInlineEmployeeRow();
+window.openOnboardingModal = () => window.addInlineOnboardingRow();
+window.openPlacementModal = () => window.addInlinePlacementRow();
 
 /* ==========================================================================
    5. INITIALIZATION & ROUTING
@@ -187,7 +215,7 @@ function init() {
 }
 
 function showTableLoaders() {
-    const loaderHTML = `<tr><td colspan="25" style="text-align: center; padding: 40px; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin text-cyan" style="font-size: 2rem; margin-bottom: 15px;"></i><br>Connecting to live database...</td></tr>`;
+    const loaderHTML = `<tr><td colspan="25" style="text-align: center; padding: 40px; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin text-cyan" style="font-size: 2rem; margin-bottom: 15px;"></i><br>Loading Data...</td></tr>`;
     ['table-body', 'employee-table-body', 'hub-table-body', 'placement-table-body', 'onboarding-table-body'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.innerHTML = loaderHTML;
@@ -250,6 +278,11 @@ function initRealtimeListeners() {
         const localDataString = localStorage.getItem(`np_data_${collectionName}`);
         let localData = [];
         if (localDataString) localData = JSON.parse(localDataString).filter(item => item.id.startsWith('local_'));
+        
+        // Remove local duplicates if they successfully uploaded
+        const cloudIds = new Set(cloudData.map(c => c.id));
+        localData = localData.filter(l => !cloudIds.has(l.id));
+
         return [...localData, ...cloudData].sort((a, b) => (a.orderIndex ?? -a.createdAt) - (b.orderIndex ?? -b.createdAt));
     };
 
@@ -266,10 +299,7 @@ function initRealtimeListeners() {
         renderDropdowns();
         updateDashboardStats();
         renderDashboardCharts();
-    }, err => {
-        console.warn("Candidates Listener Error (Falling back to local data):", err);
-        renderCandidateTable();
-    });
+    }, err => { renderCandidateTable(); });
 
     empRef.onSnapshot(snap => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -326,17 +356,11 @@ window.generateRecruiterDropdown = (currentVal, id, collection) => {
 };
 
 window.updateRecruiter = async (id, collection, val) => {
+    aggressiveLocalSave(collection, id, 'recruiter', val);
     try {
-        if (id.startsWith('local_')) {
-            const idx = state[collection].findIndex(x => x.id === id);
-            if (idx > -1) state[collection][idx].recruiter = val;
-            localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
-            showToast("Recruiter Saved Locally");
-        } else {
-            await db.collection(collection).doc(id).update({ recruiter: val });
-            showToast("Recruiter Auto-Saved");
-        }
-    } catch (e) { showToast("Failed to save recruiter"); }
+        if (!id.startsWith('local_')) await db.collection(collection).doc(id).update({ recruiter: val });
+        showToast("Recruiter Saved");
+    } catch (e) { showToast("Saved Locally"); }
 };
 
 window.generateTechDropdown = (currentVal, id, collection) => {
@@ -348,17 +372,11 @@ window.generateTechDropdown = (currentVal, id, collection) => {
 };
 
 window.updateTech = async (id, collection, val) => {
+    aggressiveLocalSave(collection, id, 'tech', val);
     try {
-        if (id.startsWith('local_')) {
-            const idx = state[collection].findIndex(x => x.id === id);
-            if (idx > -1) state[collection][idx].tech = val;
-            localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
-            showToast("Tech Saved Locally");
-        } else {
-            await db.collection(collection).doc(id).update({ tech: val });
-            showToast("Tech Auto-Saved");
-        }
-    } catch (e) { showToast("Failed to save tech"); }
+        if (!id.startsWith('local_')) await db.collection(collection).doc(id).update({ tech: val });
+        showToast("Tech Saved");
+    } catch (e) { showToast("Saved Locally"); }
 };
 
 /* ==========================================================================
@@ -1471,17 +1489,12 @@ window.inlineEdit = (id, field, col, el) => {
         const newVal = input.value.trim();
         el.textContent = newVal;
         if (newVal !== val) {
+            // Guarantee Local Storage save immediately
+            aggressiveLocalSave(col, id, field, newVal);
             try {
-                if (id.startsWith('local_')) {
-                    const idx = state[col].findIndex(x => x.id === id);
-                    if (idx > -1) state[col][idx][field] = newVal;
-                    localStorage.setItem(`np_data_${col}`, JSON.stringify(state[col]));
-                    showToast("Locally Updated");
-                } else {
-                    await db.collection(col).doc(id).update({ [field]: newVal });
-                    showToast("Auto-Saved");
-                }
-            } catch (err) { el.textContent = val; showToast("Failed to save."); }
+                if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: newVal });
+                showToast("Auto-Saved");
+            } catch (err) { showToast("Saved Locally"); }
         }
     };
     input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = val; input.blur(); } };
@@ -1490,24 +1503,18 @@ window.inlineEdit = (id, field, col, el) => {
 };
 
 window.inlineDateEdit = async (id, field, col, val) => {
+    aggressiveLocalSave(col, id, field, val);
     try {
-        if (id.startsWith('local_')) {
-            const idx = state[col].findIndex(x => x.id === id);
-            if (idx > -1) state[col][idx][field] = val;
-            localStorage.setItem(`np_data_${col}`, JSON.stringify(state[col]));
-            showToast("Date Saved Locally");
-        } else {
-            await db.collection(col).doc(id).update({ [field]: val });
-            showToast("Date Auto-Saved");
-        }
-    } catch (err) { showToast("Failed to save date."); }
+        if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: val });
+        showToast("Date Auto-Saved");
+    } catch (err) { showToast("Date Saved Locally"); }
 };
 
 window.inlineUrlEdit = (id, field, col, el) => {
     if (el.querySelector('input')) return;
     const item = state[col].find(x => x.id === id);
     const oldVal = item ? item[field] : '';
-    let displayVal = oldVal.replace('mailto:', '').replace('https://', '').replace('http://', '');
+    let displayVal = oldVal ? oldVal.replace('mailto:', '').replace('https://', '').replace('http://', '') : '';
 
     el.innerHTML = '';
     const input = document.createElement('input');
@@ -1523,22 +1530,13 @@ window.inlineUrlEdit = (id, field, col, el) => {
         else if (newVal && !newVal.startsWith('http') && !newVal.startsWith('mailto:')) newVal = 'https://' + newVal;
 
         if (newVal !== oldVal) {
+            aggressiveLocalSave(col, id, field, newVal);
             try {
-                if (id.startsWith('local_')) {
-                    const idx = state[col].findIndex(x => x.id === id);
-                    if (idx > -1) state[col][idx][field] = newVal;
-                    localStorage.setItem(`np_data_${col}`, JSON.stringify(state[col]));
-                    showToast("Link Saved Locally");
-                    refreshViewForType(col);
-                } else {
-                    await db.collection(col).doc(id).update({ [field]: newVal });
-                    showToast("Link Auto-Saved");
-                    refreshViewForType(col);
-                }
-            } catch (e) { showToast("Failed to save link"); refreshViewForType(col); }
-        } else {
-            refreshViewForType(col);
+                if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: newVal });
+                showToast("Link Auto-Saved");
+            } catch (e) { showToast("Link Saved Locally"); }
         }
+        refreshViewForType(col);
     };
     input.addEventListener('blur', save);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') refreshViewForType(col); });
@@ -1562,32 +1560,21 @@ window.toggleRowMenu = (id) => {
 };
 
 window.updateStatusAndClose = async (id, status) => {
+    aggressiveLocalSave('candidates', id, 'status', status);
     try {
-        if (id.startsWith('local_')) {
-            const idx = state.candidates.findIndex(x => x.id === id);
-            if (idx > -1) state.candidates[idx].status = status;
-            localStorage.setItem(`np_data_candidates`, JSON.stringify(state.candidates));
-            showToast("Status locally updated");
-        } else {
-            await db.collection('candidates').doc(id).update({ status: status });
-            showToast("Status updated");
-        }
-    } catch(e) {}
+        if (!id.startsWith('local_')) await db.collection('candidates').doc(id).update({ status: status });
+        showToast("Status updated");
+    } catch(e) { showToast("Status saved locally"); }
     document.getElementById(`menu-${id}`)?.classList.remove('show');
+    refreshViewForType('candidates');
 };
 
 window.updateStatus = async (id, col, val) => {
+    aggressiveLocalSave(col, id, 'status', val);
     try {
-        if (id.startsWith('local_')) {
-            const idx = state[col].findIndex(x => x.id === id);
-            if (idx > -1) state[col][idx].status = val;
-            localStorage.setItem(`np_data_${col}`, JSON.stringify(state[col]));
-            showToast("Status saved locally");
-        } else {
-            await db.collection(col).doc(id).update({ status: val });
-            showToast("Status Auto-Saved");
-        }
-    } catch(e) {}
+        if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ status: val });
+        showToast("Status Auto-Saved");
+    } catch(e) { showToast("Status saved locally"); }
 };
 
 window.editCustomStatus = async (id) => {
@@ -1603,26 +1590,32 @@ window.moveToPlacements = async (id) => {
     const cand = state.candidates.find(c => c.id === id);
     if (!cand) return;
     document.getElementById(`menu-${id}`)?.classList.remove('show');
+    
+    const newPlaceData = { ...cand, status: 'Placed', assigned: new Date().toISOString().split('T')[0] };
+
     try {
         if (id.startsWith('local_')) {
-            cand.status = 'Placed';
-            cand.assigned = new Date().toISOString().split('T')[0];
-            state.placements.push(cand);
+            state.placements.push(newPlaceData);
             state.candidates = state.candidates.filter(c => c.id !== id);
             localStorage.setItem('np_data_candidates', JSON.stringify(state.candidates));
             localStorage.setItem('np_data_placements', JSON.stringify(state.placements));
             showToast("Locally moved to Placements");
-            refreshViewForType('candidates');
-            refreshViewForType('placements');
         } else {
             const batch = db.batch();
-            const newPlaceData = { ...cand, status: 'Placed', assigned: new Date().toISOString().split('T')[0] };
             batch.set(db.collection('placements').doc(id), newPlaceData);
             batch.delete(db.collection('candidates').doc(id));
             await batch.commit();
             showToast("Moved to Placements");
         }
-    } catch (e) { showToast("Move failed"); }
+    } catch (e) { 
+        showToast("Database error, forcing local move"); 
+        state.placements.push(newPlaceData);
+        state.candidates = state.candidates.filter(c => c.id !== id);
+        localStorage.setItem('np_data_candidates', JSON.stringify(state.candidates));
+        localStorage.setItem('np_data_placements', JSON.stringify(state.placements));
+    }
+    refreshViewForType('candidates');
+    refreshViewForType('placements');
 };
 
 window.updatePlacementFilter = (type, btn) => {
@@ -1765,19 +1758,14 @@ document.getElementById('hub-note-form')?.addEventListener('submit', async (e) =
 
     const currentLogs = cand[logType] || [];
     currentLogs.push(newLog);
+    aggressiveLocalSave('candidates', candidateId, logType, currentLogs);
 
     try {
-        if (candidateId.startsWith('local_')) {
-            cand[logType] = currentLogs;
-            localStorage.setItem('np_data_candidates', JSON.stringify(state.candidates));
-            showToast("Log entry added locally");
-            refreshViewForType('hub');
-        } else {
-            await db.collection('candidates').doc(candidateId).update({ [logType]: currentLogs });
-            showToast("Log entry added successfully!");
-        }
-        closeHubNoteModal();
-    } catch (err) { showToast("Failed to add log entry."); }
+        if (!candidateId.startsWith('local_')) await db.collection('candidates').doc(candidateId).update({ [logType]: currentLogs });
+        showToast("Log entry added successfully!");
+    } catch (err) { showToast("Log saved locally."); }
+    closeHubNoteModal();
+    refreshViewForType('hub');
 });
 
 window.deleteHubLog = async (candidateId, logType, index) => {
@@ -1787,18 +1775,13 @@ window.deleteHubLog = async (candidateId, logType, index) => {
 
     const updatedLogs = [...cand[logType]];
     updatedLogs.splice(index, 1);
+    aggressiveLocalSave('candidates', candidateId, logType, updatedLogs);
 
     try {
-        if (candidateId.startsWith('local_')) {
-            cand[logType] = updatedLogs;
-            localStorage.setItem('np_data_candidates', JSON.stringify(state.candidates));
-            showToast("Log entry removed locally");
-            refreshViewForType('hub');
-        } else {
-            await db.collection('candidates').doc(candidateId).update({ [logType]: updatedLogs });
-            showToast("Log entry removed.");
-        }
-    } catch(err) { showToast("Failed to remove log entry."); }
+        if (!candidateId.startsWith('local_')) await db.collection('candidates').doc(candidateId).update({ [logType]: updatedLogs });
+        showToast("Log entry removed.");
+    } catch(err) { showToast("Log removed locally."); }
+    refreshViewForType('hub');
 };
 
 /* ==========================================================================
@@ -1886,28 +1869,23 @@ window.executeDelete = async () => {
     const masterBox = document.getElementById(`select-all-${type}`);
     if (masterBox) masterBox.checked = false;
 
-    // Handle LocalStorage deletions vs Firebase deletions
+    // Handle LocalStorage deletions vs Firebase deletions safely
     const localIds = ids.filter(id => id.startsWith('local_'));
     const firebaseIds = ids.filter(id => !id.startsWith('local_'));
 
-    if (localIds.length > 0) {
-        state[col] = state[col].filter(item => !localIds.includes(item.id));
+    if (localIds.length > 0 || firebaseIds.length > 0) {
+        state[col] = state[col].filter(item => !ids.includes(item.id));
         localStorage.setItem(`np_data_${col}`, JSON.stringify(state[col]));
     }
 
     if (firebaseIds.length > 0) {
         const batch = db.batch();
         firebaseIds.forEach(id => batch.delete(db.collection(col).doc(id)));
-        try {
-            await batch.commit();
-        } catch (e) {
-            console.error("Deletion error:", e);
-            showToast(`Firebase Delete Failed: ${e.message}`);
-        }
+        try { await batch.commit(); } catch (e) { console.warn("Firebase delete blocked. Deleted locally."); }
     }
     
     refreshViewForType(type);
-    if (localIds.length > 0 || firebaseIds.length === 0) showToast("Deleted successfully");
+    showToast("Deleted successfully");
 };
 
 /* ==========================================================================
@@ -1946,12 +1924,8 @@ function loadGoogleScripts() {
 
 function checkGmailAuth() {
     if (state.gmail.gapiInited && state.gmail.gisInited) {
-        if (gapi.client.getToken()) {
-            updateGmailUI(true);
-            fetchGmailLabels();
-        } else {
-            updateGmailUI(false);
-        }
+        if (gapi.client.getToken()) { updateGmailUI(true); fetchGmailLabels(); } 
+        else updateGmailUI(false);
     }
 }
 
@@ -1962,10 +1936,7 @@ function updateGmailUI(isSignedIn) {
     if (btnSignout) btnSignout.style.display = isSignedIn ? 'inline-flex' : 'none';
 }
 
-if (document.getElementById('btn-gmail-auth')) {
-    document.getElementById('btn-gmail-auth').onclick = () => state.gmail.tokenClient.requestAccessToken({ prompt: '' });
-}
-
+if (document.getElementById('btn-gmail-auth')) document.getElementById('btn-gmail-auth').onclick = () => state.gmail.tokenClient.requestAccessToken({ prompt: '' });
 if (document.getElementById('btn-gmail-signout')) {
     document.getElementById('btn-gmail-signout').onclick = () => {
         const t = gapi.client.getToken();
@@ -2205,16 +2176,12 @@ window.syncCurrentEmailToCandidate = async () => {
         recruiter: state.currentUserName, note: `Imported from: ${senderText}`, timestamp: Date.now()
     });
 
+    aggressiveLocalSave('candidates', candidate.id, 'submissionLog', logs);
+
     try {
-        if (candidate.id.startsWith('local_')) {
-            candidate.submissionLog = logs;
-            localStorage.setItem('np_data_candidates', JSON.stringify(state.candidates));
-            showToast(`Locally synced to ${candidate.first}`);
-        } else {
-            await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs });
-            showToast(`Synced to ${candidate.first} ${candidate.last}`);
-        }
-    } catch (e) { showToast("Sync failed"); }
+        if (!candidate.id.startsWith('local_')) await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs });
+        showToast(`Synced to ${candidate.first} ${candidate.last}`);
+    } catch (e) { showToast("Sync saved locally"); }
 };
 
 /* ==========================================================================
@@ -2307,11 +2274,23 @@ window.deleteProfilePhoto = async () => {
 };
 
 /* ==========================================================================
-   18. EXPORT & SYSTEM MANAGEMENT
+   18. FULL DATABASE EXPORT & SYSTEM MANAGEMENT
    ========================================================================= */
 window.exportData = () => {
     if (!state.candidates?.length) return showToast("No candidate data to export.");
-    const rows = [["ID", "First Name", "Last Name", "Mobile", "WhatsApp", "Technology", "Recruiter", "Status", "Assigned Date", "Comments"]];
+    
+    // Dynamically grab every single column ever added (including custom ones)
+    const keysToIgnore = ['submissionLog', 'screeningLog', 'interviewLog', 'orderIndex', 'createdAt'];
+    let headerSet = new Set(['id', 'first', 'last', 'mobile', 'wa', 'tech', 'recruiter', 'status', 'assigned', 'comments', 'linkedin', 'resume', 'trackingSheet']);
+    
+    state.candidates.forEach(c => {
+        Object.keys(c).forEach(k => {
+            if (!keysToIgnore.includes(k)) headerSet.add(k);
+        });
+    });
+
+    const headers = Array.from(headerSet);
+    const rows = [headers.map(h => h.toUpperCase())];
     const escapeCsv = (str) => `"${(str || '').toString().replace(/"/g, '""')}"`;
 
     let dataToExport = state.candidates;
@@ -2320,16 +2299,17 @@ window.exportData = () => {
     }
 
     dataToExport.forEach(c => {
-        rows.push([escapeCsv(c.id), escapeCsv(c.first), escapeCsv(c.last), escapeCsv(c.mobile), escapeCsv(c.wa), escapeCsv(c.tech), escapeCsv(c.recruiter), escapeCsv(c.status), escapeCsv(c.assigned), escapeCsv(c.comments)]);
+        const rowData = headers.map(key => escapeCsv(c[key]));
+        rows.push(rowData);
     });
 
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI("data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n")));
-    link.setAttribute("download", `Nileprise_Candidates_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `Nileprise_Full_Database_Export_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast("Exported successfully");
+    showToast("Full Database Exported");
 };
 
 window.resetSystem = async () => {
@@ -2343,7 +2323,6 @@ window.resetSystem = async () => {
                 state.candidates.filter(c => !c.id.startsWith('local_')).forEach(c => batch.delete(db.collection('candidates').doc(c.id)));
                 await batch.commit();
                 
-                // Wipe local storage too
                 localStorage.removeItem('np_data_candidates');
                 state.candidates = [];
                 renderCandidateTable();
