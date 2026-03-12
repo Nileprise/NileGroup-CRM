@@ -21,6 +21,11 @@ const GMAIL_CONFIG = {
 
 try {
     firebase.initializeApp(firebaseConfig);
+    // Enable offline persistence for multi-tab syncing
+    firebase.firestore().enablePersistence({ experimentalTabSynchronization: true })
+        .catch(function(err) {
+            console.warn("Firebase Persistence Error:", err.code);
+        });
 } catch (e) {
     console.error("Firebase Init Error:", e);
 }
@@ -107,33 +112,6 @@ function aggressiveLocalSave(collection, id, field, value) {
     }
 }
 
-async function saveRecord(collection, data) {
-    // 1. Always save to Local Storage first to guarantee data retention
-    data.id = data.id || 'local_' + Date.now();
-    state[collection].unshift(data);
-    localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
-    refreshViewForType(collection);
-
-    // 2. Try pushing to Firebase
-    try {
-        if (!data.id.startsWith('local_')) {
-            await db.collection(collection).doc(data.id).set(data);
-        } else {
-            const docRef = await db.collection(collection).add(data);
-            // If successful, update local ID to real Firebase ID
-            const idx = state[collection].findIndex(x => x.id === data.id);
-            if (idx > -1) {
-                state[collection][idx].id = docRef.id;
-                localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
-            }
-        }
-        showToast("Saved securely to Database");
-    } catch (e) {
-        console.warn("Firebase blocked save. Data safely stored in Local Storage.");
-        showToast("Saved Locally (Offline Mode)");
-    }
-}
-
 function loadLocalData() {
     ['candidates', 'employees', 'onboarding', 'placements'].forEach(col => {
         const localData = localStorage.getItem(`np_data_${col}`);
@@ -145,14 +123,14 @@ function loadLocalData() {
 }
 
 /* ==========================================================================
-   4. DOM CACHE & BUTTON BRIDGE
+   4. DOM CACHE
    ========================================================================= */
 const dom = {
     screens: { app: document.getElementById('dashboard-screen') },
     headerUpdated: document.getElementById('header-updated')
 };
 
-// Bridge to ensure old HTML buttons work with new inline features
+// Bridge functions for HTML buttons
 window.openCandidateModal = () => window.addInlineCandidateRow();
 window.openEmployeeModal = () => window.addInlineEmployeeRow();
 window.openOnboardingModal = () => window.addInlineOnboardingRow();
@@ -258,7 +236,7 @@ function showToast(msg) {
 }
 
 /* ==========================================================================
-   6. REALTIME FIREBASE LISTENERS
+   6. REALTIME FIREBASE LISTENERS (EMAIL BOUND)
    ========================================================================= */
 function initRealtimeListeners() {
     let candRef = db.collection('candidates');
@@ -266,10 +244,12 @@ function initRealtimeListeners() {
     let onbRef = db.collection('onboarding');
     let placeRef = db.collection('placements');
 
-    if (state.userRole === 'Employee' && state.currentUserName) {
-        candRef = candRef.where('recruiter', '==', state.currentUserName);
-        onbRef = onbRef.where('recruiter', '==', state.currentUserName);
-        placeRef = placeRef.where('recruiter', '==', state.currentUserName);
+    // BIND TO EMAIL: Filter live database by logged in email
+    if (state.userRole === 'Employee' && state.user) {
+        const myEmail = state.user.email.toLowerCase();
+        candRef = candRef.where('recruiter', '==', myEmail);
+        onbRef = onbRef.where('recruiter', '==', myEmail);
+        placeRef = placeRef.where('recruiter', '==', myEmail);
     }
 
     if (dom.headerUpdated) dom.headerUpdated.innerHTML = '<i class="fa-solid fa-satellite-dish text-success"></i> Live System';
@@ -279,12 +259,29 @@ function initRealtimeListeners() {
         let localData = [];
         if (localDataString) localData = JSON.parse(localDataString).filter(item => item.id.startsWith('local_'));
         
-        // Remove local duplicates if they successfully uploaded
         const cloudIds = new Set(cloudData.map(c => c.id));
         localData = localData.filter(l => !cloudIds.has(l.id));
 
         return [...localData, ...cloudData].sort((a, b) => (a.orderIndex ?? -a.createdAt) - (b.orderIndex ?? -b.createdAt));
     };
+
+    empRef.onSnapshot(snap => {
+        const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        state.employees = mergeWithLocal(cloudData, 'employees');
+        
+        const recruitersMap = new Map();
+        state.employees.forEach(e => {
+            if (e.first && e.officialEmail) {
+                recruitersMap.set(e.officialEmail.toLowerCase(), `${e.first} ${e.last || ''}`.trim());
+            }
+        });
+        
+        state.metadata.recruiters = Array.from(recruitersMap.entries()).map(([email, name]) => ({ value: email, display: name })).sort((a,b) => a.display.localeCompare(b.display));
+        
+        renderEmployeeTable();
+        renderDropdowns();
+        updateDashboardStats();
+    }, err => renderEmployeeTable());
 
     candRef.onSnapshot(snap => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -300,18 +297,6 @@ function initRealtimeListeners() {
         updateDashboardStats();
         renderDashboardCharts();
     }, err => { renderCandidateTable(); });
-
-    empRef.onSnapshot(snap => {
-        const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        state.employees = mergeWithLocal(cloudData, 'employees');
-        
-        const recruiters = new Set(state.employees.map(e => e.first?.trim()).filter(Boolean));
-        state.metadata.recruiters = Array.from(recruiters).map(r => ({ value: r, display: r })).sort((a, b) => a.value.localeCompare(b.value));
-        
-        renderEmployeeTable();
-        renderDropdowns();
-        updateDashboardStats();
-    }, err => renderEmployeeTable());
 
     onbRef.onSnapshot(snap => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -492,14 +477,16 @@ let techChartInstance = null;
 
 function renderDashboardCharts() {
     let candData = state.candidates.filter(c => c.status !== 'Placed');
-    if (state.userRole === 'Employee' && state.currentUserName) candData = candData.filter(c => c.recruiter === state.currentUserName);
+    if (state.userRole === 'Employee' && state.user) candData = candData.filter(c => c.recruiter === state.user.email.toLowerCase());
 
     const recCounts = {};
     const techCounts = {};
 
     candData.forEach(c => {
-        const r = c.recruiter?.trim() || 'Unassigned';
-        recCounts[r] = (recCounts[r] || 0) + 1;
+        const rEmail = c.recruiter?.trim();
+        const rName = state.metadata.recruiters.find(r => r.value === rEmail)?.display || 'Unassigned';
+        recCounts[rName] = (recCounts[rName] || 0) + 1;
+        
         let tRaw = c.tech?.trim() || 'Other';
         const existingKey = Object.keys(techCounts).find(k => k.toLowerCase() === tRaw.toLowerCase());
         const t = existingKey || tRaw;
@@ -545,9 +532,10 @@ function renderDashboardCharts() {
 function updateDashboardStats() {
     let candData = state.candidates.filter(c => c.status !== 'Placed');
     let placedData = state.placements;
-    if (state.userRole === 'Employee' && state.currentUserName) {
-        candData = candData.filter(c => c.recruiter === state.currentUserName);
-        placedData = placedData.filter(c => c.recruiter === state.currentUserName);
+    if (state.userRole === 'Employee' && state.user) {
+        const myEmail = state.user.email.toLowerCase();
+        candData = candData.filter(c => c.recruiter === myEmail);
+        placedData = placedData.filter(c => c.recruiter === myEmail);
     }
 
     const setStat = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
@@ -807,181 +795,62 @@ async function saveAndRefreshColumns(context, msg) {
 }
 
 /* ==========================================================================
-   11. INLINE ROW ADDITION
+   11. MODERN INSTANT ROW ADDITION (AIRTABLE/NOTION STYLE)
    ========================================================================= */
-window.cancelInlineRow = (rowId) => {
-    const row = document.getElementById(rowId);
-    if (row) row.remove();
-};
-
-window.addInlineCandidateRow = () => {
-    const tbody = document.getElementById('table-body');
-    if (document.getElementById('inline-add-row')) return;
-    const recruiterOptions = state.userRole === 'Employee' ? `<option value="${state.currentUserName}" selected>${state.currentUserName}</option>` : `<option value="">Unassigned</option>` + state.metadata.recruiters.map(r => `<option value="${r.value}">${r.display}</option>`).join('');
-    const customCells = (state.customColumns.candidates || []).map(col => `<td><input type="${col.type === 'date' ? 'date' : 'text'}" class="${col.type === 'date' ? 'date-input-modern' : 'inline-input-active'}" data-custom="${col.key}" placeholder="${col.name}"></td>`).join('');
-
-    const tr = document.createElement('tr');
-    tr.id = 'inline-add-row';
-    tr.style.backgroundColor = 'rgba(6, 182, 212, 0.1)';
-    tr.innerHTML = `
-        <td></td><td></td>
-        <td><i class="fa-solid fa-asterisk text-cyan" style="font-size: 0.6rem;"></i></td>
-        <td><input type="text" id="inline-first" class="inline-input-active" placeholder="First Name *" autofocus></td>
-        <td class="divider-col"><input type="text" id="inline-last" class="inline-input-active" placeholder="Last Name"></td>
-        <td><input type="text" id="inline-mobile" class="inline-input-active" placeholder="Mobile"></td>
-        <td><input type="text" id="inline-wa" class="inline-input-active" placeholder="WhatsApp"></td>
-        <td><input type="text" id="inline-tech" class="inline-input-active" placeholder="Tech"></td>
-        <td><select id="inline-recruiter" class="status-select" style="width:100%">${recruiterOptions}</select></td>
-        <td><select id="inline-status" class="status-select active"><option value="Active" selected>Active</option><option value="Inactive">Inactive</option></select></td>
-        <td><input type="date" id="inline-assigned" class="date-input-modern" value="${new Date().toISOString().split('T')[0]}"></td>
-        <td><input type="text" id="inline-comments" class="inline-input-active" placeholder="Comments..."></td>
-        <td colspan="3" style="text-align: right; padding-right: 15px;">
-            <button class="btn-icon-small text-success" onclick="saveInlineCandidate()"><i class="fa-solid fa-check"></i></button>
-            <button class="btn-icon-small text-danger" onclick="cancelInlineRow('inline-add-row')"><i class="fa-solid fa-xmark"></i></button>
-        </td>
-        ${customCells}
-    `;
-    tbody.insertBefore(tr, tbody.firstChild);
-    document.getElementById('inline-first').focus();
-    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveInlineCandidate(); if (e.key === 'Escape') cancelInlineRow('inline-add-row'); });
-};
-
-window.saveInlineCandidate = async () => {
-    const first = document.getElementById('inline-first').value.trim();
-    if (!first) return showToast("First Name is required!");
+window.addNewRecord = async (collection) => {
     const ts = Date.now();
-    const data = {
-        first: first, last: document.getElementById('inline-last').value.trim(),
-        mobile: document.getElementById('inline-mobile').value.trim(), wa: document.getElementById('inline-wa').value.trim(),
-        tech: document.getElementById('inline-tech').value.trim(), recruiter: document.getElementById('inline-recruiter').value,
-        status: document.getElementById('inline-status').value, assigned: document.getElementById('inline-assigned').value,
-        comments: document.getElementById('inline-comments').value.trim(),
-        linkedin: '', resume: '', trackingSheet: '', orderIndex: -ts, createdAt: ts, submissionLog: [], screeningLog: [], interviewLog: []
+    // BIND TO EMAIL: Automatically assign to the logged-in user's email
+    const recruiterEmail = (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : '';
+    const today = new Date().toISOString().split('T')[0];
+
+    let defaultData = { 
+        orderIndex: -ts, 
+        createdAt: ts,
+        recruiter: recruiterEmail 
     };
-    document.querySelectorAll('#inline-add-row input[data-custom]').forEach(input => data[input.dataset.custom] = input.value.trim());
-    document.getElementById('inline-first').disabled = true;
-    await saveRecord('candidates', data);
+
+    if (collection === 'candidates') {
+        Object.assign(defaultData, { first: 'New Candidate', last: '', mobile: '', wa: '', tech: '', status: 'Active', assigned: today, comments: '', linkedin: '', resume: '', trackingSheet: '', submissionLog: [], screeningLog: [], interviewLog: [] });
+    } else if (collection === 'employees') {
+        Object.assign(defaultData, { first: 'New Employee', last: '', dob: '', designation: '', workMobile: '', personalMobile: '', officialEmail: '', personalEmail: '' });
+    } else if (collection === 'onboarding') {
+        Object.assign(defaultData, { first: 'New Record', last: '', dob: '', mobile: '', status: 'Onboarding', assigned: today, comments: '' });
+    } else if (collection === 'placements') {
+        Object.assign(defaultData, { first: 'New Placement', last: '', tech: '', location: '', contract: '', assigned: today, actions: '', status: 'Placed' });
+    }
+
+    const customCols = state.customColumns[collection] || [];
+    customCols.forEach(col => defaultData[col.key] = '');
+
+    try {
+        const docRef = await db.collection(collection).add(defaultData);
+        setTimeout(() => {
+            const newRow = document.querySelector(`tr[data-id="${docRef.id}"]`);
+            if (newRow) {
+                const firstCell = newRow.querySelector('[data-field="first"]');
+                if (firstCell) firstCell.click();
+            }
+        }, 500);
+    } catch (e) {
+        defaultData.id = 'local_' + ts;
+        state[collection].unshift(defaultData);
+        localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
+        refreshViewForType(collection);
+        
+        setTimeout(() => {
+            const newRow = document.querySelector(`tr[data-id="${defaultData.id}"]`);
+            if (newRow) {
+                const firstCell = newRow.querySelector('[data-field="first"]');
+                if (firstCell) firstCell.click();
+            }
+        }, 100);
+    }
 };
 
-window.addInlineEmployeeRow = () => {
-    const tbody = document.getElementById('employee-table-body');
-    if (document.getElementById('inline-add-emp-row')) return;
-    const customCells = (state.customColumns.employees || []).map(col => `<td><input type="${col.type === 'date' ? 'date' : 'text'}" class="${col.type === 'date' ? 'date-input-modern' : 'inline-input-active'}" data-custom="${col.key}" placeholder="${col.name}"></td>`).join('');
-    const tr = document.createElement('tr');
-    tr.id = 'inline-add-emp-row';
-    tr.style.backgroundColor = 'rgba(6, 182, 212, 0.1)';
-    tr.innerHTML = `
-        <td></td><td></td>
-        <td style="text-align:center;"><button class="btn-icon-small text-success" onclick="saveInlineEmployee()"><i class="fa-solid fa-check"></i></button><button class="btn-icon-small text-danger" onclick="cancelInlineRow('inline-add-emp-row')"><i class="fa-solid fa-xmark"></i></button></td>
-        <td><input type="text" id="inline-emp-first" class="inline-input-active" placeholder="First Name *" autofocus></td>
-        <td><input type="text" id="inline-emp-last" class="inline-input-active" placeholder="Last Name"></td>
-        <td><input type="date" id="inline-emp-dob" class="date-input-modern"></td>
-        <td><input type="text" id="inline-emp-desig" class="inline-input-active" placeholder="Designation"></td>
-        <td><input type="text" id="inline-emp-wmob" class="inline-input-active" placeholder="Work Mobile"></td>
-        <td><input type="text" id="inline-emp-pmob" class="inline-input-active" placeholder="Personal Mobile"></td>
-        <td><input type="email" id="inline-emp-oemail" class="inline-input-active" placeholder="Official Email"></td>
-        <td><input type="email" id="inline-emp-pemail" class="inline-input-active" placeholder="Personal Email"></td>
-        ${customCells}
-    `;
-    tbody.insertBefore(tr, tbody.firstChild);
-    document.getElementById('inline-emp-first').focus();
-    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveInlineEmployee(); if (e.key === 'Escape') cancelInlineRow('inline-add-emp-row'); });
-};
-
-window.saveInlineEmployee = async () => {
-    const first = document.getElementById('inline-emp-first').value.trim();
-    if (!first) return showToast("First Name required!");
-    const ts = Date.now();
-    const data = {
-        first, last: document.getElementById('inline-emp-last').value.trim(), dob: document.getElementById('inline-emp-dob').value,
-        designation: document.getElementById('inline-emp-desig').value.trim(), workMobile: document.getElementById('inline-emp-wmob').value.trim(),
-        personalMobile: document.getElementById('inline-emp-pmob').value.trim(), officialEmail: document.getElementById('inline-emp-oemail').value.trim(),
-        personalEmail: document.getElementById('inline-emp-pemail').value.trim(), orderIndex: -ts, createdAt: ts
-    };
-    document.querySelectorAll('#inline-add-emp-row input[data-custom]').forEach(input => data[input.dataset.custom] = input.value.trim());
-    document.getElementById('inline-emp-first').disabled = true;
-    await saveRecord('employees', data);
-};
-
-window.addInlineOnboardingRow = () => {
-    const tbody = document.getElementById('onboarding-table-body');
-    if (document.getElementById('inline-add-onb-row')) return;
-    const recruiterOptions = state.userRole === 'Employee' ? `<option value="${state.currentUserName}" selected>${state.currentUserName}</option>` : `<option value="">Unassigned</option>` + state.metadata.recruiters.map(r => `<option value="${r.value}">${r.display}</option>`).join('');
-    const customCells = (state.customColumns.onboarding || []).map(col => `<td><input type="${col.type === 'date' ? 'date' : 'text'}" class="${col.type === 'date' ? 'date-input-modern' : 'inline-input-active'}" data-custom="${col.key}" placeholder="${col.name}"></td>`).join('');
-    const tr = document.createElement('tr');
-    tr.id = 'inline-add-onb-row';
-    tr.style.backgroundColor = 'rgba(6, 182, 212, 0.1)';
-    tr.innerHTML = `
-        <td></td><td></td>
-        <td style="text-align:center;"><button class="btn-icon-small text-success" onclick="saveInlineOnboarding()"><i class="fa-solid fa-check"></i></button><button class="btn-icon-small text-danger" onclick="cancelInlineRow('inline-add-onb-row')"><i class="fa-solid fa-xmark"></i></button></td>
-        <td><input type="text" id="inline-onb-first" class="inline-input-active" placeholder="First Name *" autofocus></td>
-        <td class="divider-col"><input type="text" id="inline-onb-last" class="inline-input-active" placeholder="Last Name"></td>
-        <td><input type="date" id="inline-onb-dob" class="date-input-modern"></td>
-        <td><select id="inline-onb-recruiter" class="status-select" style="width:100%">${recruiterOptions}</select></td>
-        <td><input type="text" id="inline-onb-mobile" class="inline-input-active" placeholder="Mobile"></td>
-        <td><select id="inline-onb-status" class="status-select active"><option value="Onboarding" selected>Onboarding</option><option value="Completed">Completed</option></select></td>
-        <td><input type="date" id="inline-onb-assigned" class="date-input-modern" value="${new Date().toISOString().split('T')[0]}"></td>
-        <td><input type="text" id="inline-onb-comments" class="inline-input-active" placeholder="Comments..."></td>
-        ${customCells}
-    `;
-    tbody.insertBefore(tr, tbody.firstChild);
-    document.getElementById('inline-onb-first').focus();
-    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveInlineOnboarding(); if (e.key === 'Escape') cancelInlineRow('inline-add-onb-row'); });
-};
-
-window.saveInlineOnboarding = async () => {
-    const first = document.getElementById('inline-onb-first').value.trim();
-    if (!first) return showToast("First Name required!");
-    const ts = Date.now();
-    const data = {
-        first, last: document.getElementById('inline-onb-last').value.trim(), dob: document.getElementById('inline-onb-dob').value,
-        recruiter: document.getElementById('inline-onb-recruiter').value, mobile: document.getElementById('inline-onb-mobile').value.trim(),
-        status: document.getElementById('inline-onb-status').value, assigned: document.getElementById('inline-onb-assigned').value,
-        comments: document.getElementById('inline-onb-comments').value.trim(), orderIndex: -ts, createdAt: ts
-    };
-    document.querySelectorAll('#inline-add-onb-row input[data-custom]').forEach(input => data[input.dataset.custom] = input.value.trim());
-    document.getElementById('inline-onb-first').disabled = true;
-    await saveRecord('onboarding', data);
-};
-
-window.addInlinePlacementRow = () => {
-    const tbody = document.getElementById('placement-table-body');
-    if (document.getElementById('inline-add-place-row')) return;
-    const customCells = (state.customColumns.placements || []).map(col => `<td><input type="${col.type === 'date' ? 'date' : 'text'}" class="${col.type === 'date' ? 'date-input-modern' : 'inline-input-active'}" data-custom="${col.key}" placeholder="${col.name}"></td>`).join('');
-    const tr = document.createElement('tr');
-    tr.id = 'inline-add-place-row';
-    tr.style.backgroundColor = 'rgba(245, 158, 11, 0.1)';
-    tr.innerHTML = `
-        <td></td><td></td>
-        <td style="text-align:center;"><button class="btn-icon-small text-success" onclick="saveInlinePlacement()"><i class="fa-solid fa-check"></i></button><button class="btn-icon-small text-danger" onclick="cancelInlineRow('inline-add-place-row')"><i class="fa-solid fa-xmark"></i></button></td>
-        <td><input type="text" id="inline-place-first" class="inline-input-active" placeholder="First Name *" autofocus></td>
-        <td class="divider-col"><input type="text" id="inline-place-last" class="inline-input-active" placeholder="Last Name"></td>
-        <td><input type="text" id="inline-place-tech" class="inline-input-active" placeholder="Tech"></td>
-        <td><input type="text" id="inline-place-location" class="inline-input-active" placeholder="Location"></td>
-        <td><input type="text" id="inline-place-contract" class="inline-input-active" placeholder="Contract/Rate"></td>
-        <td><input type="date" id="inline-place-assigned" class="date-input-modern" value="${new Date().toISOString().split('T')[0]}"></td>
-        <td><input type="text" id="inline-place-actions" class="inline-input-active" placeholder="Actions..."></td>
-        ${customCells}
-    `;
-    tbody.insertBefore(tr, tbody.firstChild);
-    document.getElementById('inline-place-first').focus();
-    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveInlinePlacement(); if (e.key === 'Escape') cancelInlineRow('inline-add-place-row'); });
-};
-
-window.saveInlinePlacement = async () => {
-    const first = document.getElementById('inline-place-first').value.trim();
-    if (!first) return showToast("First Name required!");
-    const ts = Date.now();
-    const data = {
-        first, last: document.getElementById('inline-place-last').value.trim(), tech: document.getElementById('inline-place-tech').value.trim(),
-        location: document.getElementById('inline-place-location').value.trim(), contract: document.getElementById('inline-place-contract').value.trim(),
-        assigned: document.getElementById('inline-place-assigned').value, actions: document.getElementById('inline-place-actions').value.trim(),
-        status: 'Placed', recruiter: state.userRole === 'Employee' ? state.currentUserName : '', orderIndex: -ts, createdAt: ts
-    };
-    document.querySelectorAll('#inline-add-place-row input[data-custom]').forEach(input => data[input.dataset.custom] = input.value.trim());
-    document.getElementById('inline-place-first').disabled = true;
-    await saveRecord('placements', data);
-};
+window.addInlineCandidateRow = () => window.addNewRecord('candidates');
+window.addInlineEmployeeRow = () => window.addNewRecord('employees');
+window.addInlineOnboardingRow = () => window.addNewRecord('onboarding');
+window.addInlinePlacementRow = () => window.addNewRecord('placements');
 
 /* ==========================================================================
    12. TABLE RENDERING, PAGINATION & DATA ISOLATION
@@ -1027,7 +896,10 @@ window.changePage = (type, direction) => {
 
 function getFilteredData(data, filters) {
     let subset = data;
-    if (state.userRole === 'Employee' && state.currentUserName) subset = subset.filter(item => item.recruiter === state.currentUserName);
+    // BIND TO EMAIL: Filter by logged in user for pagination/display
+    if (state.userRole === 'Employee' && state.user) {
+        subset = subset.filter(item => item.recruiter === state.user.email.toLowerCase());
+    }
     return subset.filter(item => {
         if (item.status === 'Placed') return false;
         const matchesText = `${item.first} ${item.last} ${item.tech || ''}`.toLowerCase().includes(filters.text);
@@ -1138,7 +1010,7 @@ function renderCandidateTable() {
 
 function renderEmployeeTable() {
     let filtered = state.employees;
-    if (state.userRole === 'Employee' && state.user) filtered = filtered.filter(e => e.officialEmail === state.user.email);
+    if (state.userRole === 'Employee' && state.user) filtered = filtered.filter(e => e.officialEmail === state.user.email.toLowerCase());
     filtered = filtered.filter(item => `${item.first} ${item.last}`.toLowerCase().includes(state.empFilters.text));
     
     const config = state.pagination.emp;
@@ -1182,14 +1054,14 @@ function renderEmployeeTable() {
             <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical"></i></td>
             <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td>
             <td>${actualIndex}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first || ''}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last || ''}</td>
+            <td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first || ''}</td>
+            <td tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last || ''}</td>
             <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation || ''}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile || ''}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile || ''}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail || ''}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail || ''}</td>
+            <td tabindex="0" data-field="designation" onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation || ''}</td>
+            <td tabindex="0" data-field="workMobile" onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile || ''}</td>
+            <td tabindex="0" data-field="personalMobile" onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile || ''}</td>
+            <td tabindex="0" data-field="officialEmail" onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail || ''}</td>
+            <td tabindex="0" data-field="personalEmail" onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail || ''}</td>
             ${renderCustomCells(c, 'employees')}
         </tr>`;
     }).join('');
@@ -1242,11 +1114,11 @@ function renderOnboardingTable() {
             <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical"></i></td>
             <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td>
             <td>${actualIndex}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first || ''}</td>
-            <td class="divider-col" tabindex="0" onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last || ''}</td>
+            <td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first || ''}</td>
+            <td class="divider-col" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last || ''}</td>
             <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td>
             <td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile || ''}</td>
+            <td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile || ''}</td>
             <td>
                 <select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)">
                     <option value="Onboarding" ${c.status === 'Onboarding' ? 'selected' : ''}>Onboarding</option>
@@ -1254,7 +1126,7 @@ function renderOnboardingTable() {
                 </select>
             </td>
             <td><input type="date" class="date-input-modern" value="${c.assigned || ''}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td>
-            <td tabindex="0" onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments || ''}</td>
+            <td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments || ''}</td>
             ${renderCustomCells(c, 'onboarding')}
         </tr>`;
     }).join('');
@@ -1269,7 +1141,7 @@ function renderPlacementTable() {
     const yVal = document.getElementById('placement-year-picker')?.value;
     let placed = state.placements;
 
-    if (state.userRole === 'Employee' && state.currentUserName) placed = placed.filter(c => c.recruiter === state.currentUserName);
+    if (state.userRole === 'Employee' && state.user) placed = placed.filter(c => c.recruiter === state.user.email.toLowerCase());
     placed = placed.filter(c => c.assigned && ((state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal)));
 
     const config = state.pagination.place;
@@ -1319,13 +1191,13 @@ function renderPlacementTable() {
                 <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical"></i></td>
                 <td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td>
                 <td>${actualIndex}</td>
-                <td style="font-weight:600; color:var(--text-main);" tabindex="0" onclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first || ''}</td>
-                <td class="divider-col" style="font-weight:600; color:var(--text-main);" tabindex="0" onclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last || ''}</td>
-                <td tabindex="0" onclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech || ''}</td>
-                <td tabindex="0" onclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location || ''}</td>
-                <td tabindex="0" onclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract || ''}</td>
+                <td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first || ''}</td>
+                <td class="divider-col" style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last || ''}</td>
+                <td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech || ''}</td>
+                <td tabindex="0" data-field="location" onclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location || ''}</td>
+                <td tabindex="0" data-field="contract" onclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract || ''}</td>
                 <td><input type="date" class="date-input-modern" value="${c.assigned || ''}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td>
-                <td tabindex="0" onclick="inlineEdit('${c.id}', 'actions', 'placements', this)">${c.actions || ''}</td>
+                <td tabindex="0" data-field="actions" onclick="inlineEdit('${c.id}', 'actions', 'placements', this)">${c.actions || ''}</td>
                 ${renderCustomCells(c, 'placements')}
             </tr>`;
         }).join('');
@@ -1338,7 +1210,7 @@ function renderPlacementTable() {
 
 function renderHubTable() {
     let data = state.candidates;
-    if (state.userRole === 'Employee' && state.currentUserName) data = data.filter(c => c.recruiter === state.currentUserName);
+    if (state.userRole === 'Employee' && state.user) data = data.filter(c => c.recruiter === state.user.email.toLowerCase());
     if (state.hubFilters?.text) data = data.filter(c => `${c.first} ${c.last} ${c.tech || ''}`.toLowerCase().includes(state.hubFilters.text));
 
     const { start, end } = state.hub.range;
@@ -1414,7 +1286,7 @@ function renderHubTable() {
             <td class="drag-handle-cell" onclick="event.stopPropagation()"><i class="fa-solid fa-grip-vertical"></i></td>
             <td onclick="event.stopPropagation()"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'hub')"></td>
             <td>${actualIndex}</td>
-            <td style="font-weight:600; color:var(--text-main);" tabindex="0" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first} ${c.last}</td>
+            <td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first} ${c.last}</td>
             <td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td>
             <td class="divider-col">${generateTechDropdown(c.tech, c.id, 'candidates')}</td>
             <td class="text-cyan" style="font-weight:bold; font-size:1.1rem; text-align:center;" onclick="toggleHubRow('${c.id}')">${sub}</td>
@@ -1474,22 +1346,30 @@ function renderHubTable() {
 }
 
 /* ==========================================================================
-   13. INLINE FIELD EDITING & STATUS ACTIONS
+   13. INLINE FIELD EDITING (AUTO-SAVE) & STATUS ACTIONS
    ========================================================================= */
 window.inlineEdit = (id, field, col, el) => {
     if (el.querySelector('input')) return;
-    const val = el.textContent;
+    
+    // Clear placeholder text on edit
+    let val = el.textContent.trim();
+    if (['New Candidate', 'New Employee', 'New Record', 'New Placement'].includes(val)) {
+        val = ''; 
+    }
+
     el.innerHTML = '';
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'inline-input-active';
     input.value = val;
     input.onclick = (e) => e.stopPropagation();
+    
+    // Auto-save triggers the moment the user clicks away or presses Enter
     input.onblur = async () => {
         const newVal = input.value.trim();
-        el.textContent = newVal;
+        el.textContent = newVal || (field === 'first' ? 'Untitled' : ''); // Fallback if left blank
+        
         if (newVal !== val) {
-            // Guarantee Local Storage save immediately
             aggressiveLocalSave(col, id, field, newVal);
             try {
                 if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: newVal });
@@ -1497,7 +1377,12 @@ window.inlineEdit = (id, field, col, el) => {
             } catch (err) { showToast("Saved Locally"); }
         }
     };
-    input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = val; input.blur(); } };
+    
+    input.onkeydown = (e) => { 
+        if (e.key === 'Enter') input.blur(); 
+        if (e.key === 'Escape') { input.value = val; input.blur(); } 
+    };
+    
     el.appendChild(input);
     input.focus();
 };
@@ -1693,7 +1578,7 @@ window.updateHubStats = (filterType, dateVal) => {
 
     let subs = 0, scrs = 0, ints = 0;
     let hubDataCount = state.candidates;
-    if (state.userRole === 'Employee' && state.currentUserName) hubDataCount = hubDataCount.filter(c => c.recruiter === state.currentUserName);
+    if (state.userRole === 'Employee' && state.user) hubDataCount = hubDataCount.filter(c => c.recruiter === state.user.email.toLowerCase());
 
     hubDataCount.forEach(c => {
         subs += (c.submissionLog || []).filter(isInRange).length;
@@ -1752,7 +1637,7 @@ document.getElementById('hub-note-form')?.addEventListener('submit', async (e) =
 
     const newLog = {
         date: date, subject: subject, type: 'Manual Entry', tech: cand.tech || 'General',
-        recruiter: state.userRole === 'Employee' ? state.currentUserName : (cand.recruiter || 'Unassigned'),
+        recruiter: (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : (cand.recruiter || 'Unassigned'),
         timestamp: Date.now()
     };
 
@@ -2173,7 +2058,8 @@ window.syncCurrentEmailToCandidate = async () => {
     logs.push({
         date: new Date().toISOString().split('T')[0],
         subject: subject, type: 'Imported Email', tech: candidate.tech || 'General',
-        recruiter: state.currentUserName, note: `Imported from: ${senderText}`, timestamp: Date.now()
+        recruiter: (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : state.currentUserName, 
+        note: `Imported from: ${senderText}`, timestamp: Date.now()
     });
 
     aggressiveLocalSave('candidates', candidate.id, 'submissionLog', logs);
@@ -2294,8 +2180,8 @@ window.exportData = () => {
     const escapeCsv = (str) => `"${(str || '').toString().replace(/"/g, '""')}"`;
 
     let dataToExport = state.candidates;
-    if (state.userRole === 'Employee' && state.currentUserName) {
-        dataToExport = dataToExport.filter(c => c.recruiter === state.currentUserName);
+    if (state.userRole === 'Employee' && state.user) {
+        dataToExport = dataToExport.filter(c => c.recruiter === state.user.email.toLowerCase());
     }
 
     dataToExport.forEach(c => {
