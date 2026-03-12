@@ -21,7 +21,7 @@ const GMAIL_CONFIG = {
 
 try {
     firebase.initializeApp(firebaseConfig);
-    // Enable offline persistence for multi-tab syncing
+    // Enable offline persistence for multi-tab/device syncing
     firebase.firestore().enablePersistence({ experimentalTabSynchronization: true })
         .catch(function(err) {
             console.warn("Firebase Persistence Error:", err.code);
@@ -123,14 +123,14 @@ function loadLocalData() {
 }
 
 /* ==========================================================================
-   4. DOM CACHE
+   4. DOM CACHE & BUTTON BRIDGES
    ========================================================================= */
 const dom = {
     screens: { app: document.getElementById('dashboard-screen') },
     headerUpdated: document.getElementById('header-updated')
 };
 
-// Bridge functions for HTML buttons
+// Bridge functions to map old HTML buttons to the new Instant Row system
 window.openCandidateModal = () => window.addInlineCandidateRow();
 window.openEmployeeModal = () => window.addInlineEmployeeRow();
 window.openOnboardingModal = () => window.addInlineOnboardingRow();
@@ -244,7 +244,7 @@ function initRealtimeListeners() {
     let onbRef = db.collection('onboarding');
     let placeRef = db.collection('placements');
 
-    // BIND TO EMAIL: Filter live database by logged in email
+    // BIND TO EMAIL: Filter live database by logged-in email for basic employees
     if (state.userRole === 'Employee' && state.user) {
         const myEmail = state.user.email.toLowerCase();
         candRef = candRef.where('recruiter', '==', myEmail);
@@ -269,6 +269,7 @@ function initRealtimeListeners() {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         state.employees = mergeWithLocal(cloudData, 'employees');
         
+        // Map Recruiter Emails to their First/Last Names for display
         const recruitersMap = new Map();
         state.employees.forEach(e => {
             if (e.first && e.officialEmail) {
@@ -484,6 +485,7 @@ function renderDashboardCharts() {
 
     candData.forEach(c => {
         const rEmail = c.recruiter?.trim();
+        // Lookup Display Name from Email
         const rName = state.metadata.recruiters.find(r => r.value === rEmail)?.display || 'Unassigned';
         recCounts[rName] = (recCounts[rName] || 0) + 1;
         
@@ -832,6 +834,7 @@ window.addNewRecord = async (collection) => {
             }
         }, 500);
     } catch (e) {
+        console.warn("Firebase save blocked. Data safely stored in Local Storage.");
         defaultData.id = 'local_' + ts;
         state[collection].unshift(defaultData);
         localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
