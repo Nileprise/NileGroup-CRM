@@ -112,102 +112,7 @@ body {
 }
 
 /* ==========================================================================
-   4. AUTHENTICATION & LOGIN
-   ========================================================================== */
-#auth-screen, #verify-screen {
-    justify-content: center;
-    align-items: center;
-    background: radial-gradient(circle at top right, #1e293b, #0f172a);
-}
-
-.auth-container {
-    width: 100%;
-    max-width: 400px;
-    padding: 40px;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-}
-
-.auth-logo {
-    text-align: center;
-    margin-bottom: 10px;
-}
-.auth-logo h2 {
-    color: var(--primary);
-    letter-spacing: 2px;
-    font-size: 1.8rem;
-}
-
-.auth-form {
-    display: none;
-    flex-direction: column;
-    gap: 15px;
-}
-.auth-form.active {
-    display: flex;
-    animation: fadeIn 0.3s ease;
-}
-
-.input-group {
-    position: relative;
-    display: flex;
-    align-items: center;
-}
-.input-group i:not(.eye-icon) {
-    position: absolute;
-    left: 15px;
-    color: var(--text-muted);
-}
-.input-group input {
-    width: 100%;
-    padding: 12px 15px 12px 40px;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--border-radius);
-    color: var(--text-main);
-    font-family: inherit;
-    outline: none;
-    transition: var(--transition);
-}
-.input-group input:focus {
-    border-color: var(--primary);
-    background: rgba(0, 0, 0, 0.4);
-}
-.eye-icon {
-    position: absolute;
-    right: 15px;
-    cursor: pointer;
-    color: var(--text-muted);
-}
-.eye-icon:hover {
-    color: var(--text-main);
-}
-
-.auth-btn {
-    padding: 12px;
-    font-size: 1rem;
-    width: 100%;
-    justify-content: center;
-}
-
-.auth-links {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-}
-.auth-links span {
-    cursor: pointer;
-    transition: var(--transition);
-}
-.auth-links span:hover {
-    color: var(--primary);
-    text-decoration: underline;
-}
-
-/* ==========================================================================
-   5. MAIN LAYOUT (Sidebar & Header)
+   4. MAIN LAYOUT (Sidebar & Header)
    ========================================================================== */
 .main-app {
     display: flex;
@@ -269,6 +174,22 @@ body {
     text-align: center;
 }
 
+/* Restricted Access Nav Items */
+.nav-item.locked {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+    background: transparent !important;
+    border-left-color: transparent !important;
+}
+.nav-item.locked:hover {
+    color: var(--text-muted); 
+}
+.lock-icon {
+    margin-left: auto; 
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 .sidebar-footer {
     padding: 10px 0;
     border-top: 1px solid var(--glass-border);
@@ -321,7 +242,7 @@ body {
 }
 
 /* ==========================================================================
-   6. VIEW CONTAINER & TABS
+   5. VIEW CONTAINER & TABS
    ========================================================================== */
 .view-container {
     flex: 1;
@@ -346,7 +267,7 @@ body {
 }
 
 /* ==========================================================================
-   7. DASHBOARD STATS & CHARTS
+   6. DASHBOARD STATS & CHARTS
    ========================================================================== */
 .stats-grid {
     display: grid;
@@ -423,7 +344,7 @@ body {
 }
 
 /* ==========================================================================
-   8. CONTROLS, BUTTONS & INPUTS
+   7. CONTROLS, BUTTONS & INPUTS
    ========================================================================== */
 .controls-bar {
     display: flex;
@@ -566,7 +487,7 @@ button:disabled {
 }
 
 /* ==========================================================================
-   9. TABLES & PAGINATION
+   8. TABLES & PAGINATION
    ========================================================================== */
 .table-container {
     background: var(--glass-bg);
@@ -642,6 +563,7 @@ input[type="checkbox"] {
     cursor: pointer;
 }
 
+/* Inline Editing Inputs */
 .inline-input-active {
     background: transparent;
     border: none;
@@ -703,13 +625,9 @@ input[type="checkbox"] {
 }
 .link-icon-btn.icon-empty { font-size: 0.9rem; opacity: 0.5; }
 .link-icon-btn.icon-empty:hover { opacity: 1; color: var(--primary); }
-.icon-gmail:hover { color: #ea4335; }
-.icon-linkedin:hover { color: #0a66c2; }
-.icon-resume:hover { color: var(--warning); }
-.icon-track:hover { color: var(--success); }
 
 /* ==========================================================================
-   10. DRAG & DROP ROWS/COLUMNS
+   9. DRAG & DROP ROWS/COLUMNS
    ========================================================================== */
 .drag-handle-cell {
     width: 30px;
@@ -738,7 +656,7 @@ th:hover .align-icon { opacity: 0.5; }
 .align-icon:hover { opacity: 1; color: var(--primary); }
 
 /* ==========================================================================
-   11. CUSTOM DROPDOWN MENUS (Action Menu)
+   10. CUSTOM DROPDOWN MENUS (Action Menu)
    ========================================================================== */
 .action-dropdown-container { position: relative; }
 .custom-dropdown-menu {
@@ -772,7 +690,7 @@ th:hover .align-icon { opacity: 0.5; }
 .dot-red { width:8px; height:8px; background:var(--danger); border-radius:50%; display:inline-block; }
 
 /* ==========================================================================
-   12. ACTIVITY HUB SPECIFICS
+   11. ACTIVITY HUB SPECIFICS
    ========================================================================== */
 .hub-stats-ribbon {
     display: grid;
@@ -816,11 +734,10 @@ th:hover .align-icon { opacity: 0.5; }
 .hub-action-btn:hover { opacity: 0.8; text-decoration: underline; }
 
 /* ==========================================================================
-   13. GMAIL INTEGRATION UI
+   12. GMAIL INTEGRATION UI
    ========================================================================== */
 .gmail-container { display: flex; height: 100%; overflow: hidden; }
 .gmail-sidebar { width: 220px; border-right: 1px solid var(--glass-border); display: flex; flex-direction: column; background: rgba(0,0,0,0.1); }
-.compose-btn { margin: 20px; border-radius: 20px; padding: 12px; font-size: 1rem; justify-content: center; }
 
 .gmail-nav { list-style: none; flex: 1; overflow-y: auto; }
 .gmail-nav li { padding: 10px 20px; display: flex; align-items: center; gap: 12px; cursor: pointer; color: var(--text-muted); font-size: 0.9rem; border-radius: 0 20px 20px 0; margin-right: 10px; transition: var(--transition); }
@@ -848,14 +765,6 @@ th:hover .align-icon { opacity: 0.5; }
 .detail-body { font-size: 0.95rem; line-height: 1.6; color: var(--text-main); }
 .detail-body img { max-width: 100%; height: auto; }
 
-/* Compose Modal */
-.compose-window { display: flex; flex-direction: column; width: 600px; max-width: 90vw; height: 550px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-.compose-header { padding: 15px; background: var(--secondary); display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0; }
-.compose-body { display: flex; flex-direction: column; flex: 1; }
-.compose-input { border: none; border-bottom: 1px solid var(--glass-border); background: transparent; padding: 12px 15px; color: var(--text-main); outline: none; }
-.compose-textarea { flex: 1; border: none; background: transparent; padding: 15px; color: var(--text-main); outline: none; resize: none; font-family: inherit; }
-.compose-footer { padding: 15px; border-top: 1px solid var(--glass-border); display: flex; justify-content: space-between; }
-
 /* Dynamic Labels */
 .label-item { display: flex; align-items: center; padding: 6px 10px 6px 20px; cursor: pointer; color: var(--text-muted); font-size: 0.85rem; transition: background 0.2s; position: relative; }
 .label-item:hover { background: rgba(255,255,255,0.05); }
@@ -879,7 +788,7 @@ th:hover .align-icon { opacity: 0.5; }
 .color-circle.selected { border-color: #fff; transform: scale(1.1); box-shadow: 0 0 10px rgba(255,255,255,0.5); }
 
 /* ==========================================================================
-   14. PROFILE & SETTINGS
+   13. PROFILE & SETTINGS
    ========================================================================== */
 .profile-container {
     max-width: 800px;
@@ -966,7 +875,7 @@ th:hover .align-icon { opacity: 0.5; }
 }
 
 /* ==========================================================================
-   15. MODALS & TOAST NOTIFICATIONS
+   14. MODALS & TOAST NOTIFICATIONS
    ========================================================================== */
 .modal-overlay {
     position: fixed;
@@ -1012,28 +921,8 @@ th:hover .align-icon { opacity: 0.5; }
     transform: translate(-50%, -90px);
 }
 
-/* Birthday Card */
-.birthday-card {
-    position: fixed;
-    top: 80px;
-    right: -300px;
-    background: var(--bg-card);
-    border-left: 4px solid var(--warning);
-    padding: 15px 20px;
-    border-radius: 6px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-    z-index: 900;
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    transition: right 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-.birthday-card.active {
-    right: 20px;
-}
-
 /* ==========================================================================
-   16. RESPONSIVE DESIGN (MOBILE SUPPORT)
+   15. RESPONSIVE DESIGN (MOBILE SUPPORT)
    ========================================================================== */
 @media (max-width: 900px) {
     #btn-mobile-menu { display: block; }
@@ -1074,34 +963,12 @@ th:hover .align-icon { opacity: 0.5; }
     .hub-stats-ribbon { grid-template-columns: 1fr; }
     .hub-details-wrapper { grid-template-columns: 1fr !important; }
     
-    /* Force new modal grids to single column on small screens */
     form > div[style*="grid-template-columns"] {
         grid-template-columns: 1fr !important;
     }
     
-    /* Stack footer items on mobile */
     .table-footer {
         flex-direction: column;
         gap: 15px;
     }
-}
-
-/* ==========================================================================
-   17. RESTRICTED ACCESS (LOCKED TABS)
-   ========================================================================== */
-.nav-item.locked {
-    opacity: 0.5;
-    cursor: not-allowed !important;
-    background: transparent !important;
-    border-left-color: transparent !important;
-}
-
-.nav-item.locked:hover {
-    color: var(--text-muted); 
-}
-
-.lock-icon {
-    margin-left: auto; 
-    font-size: 0.85rem;
-    color: var(--text-muted);
 }
