@@ -189,13 +189,9 @@
                     <div class="table-footer" style="display: flex; justify-content: space-between; align-items: center;">
                         <span id="cand-footer-count">Showing 0 total records</span>
                         <div class="pagination-controls" style="display: flex; align-items: center; gap: 10px;">
-                            <button class="btn-icon-small" onclick="changePage('cand', -1)" title="Previous Page">
-                                <i class="fa-solid fa-chevron-left"></i>
-                            </button>
+                            <button class="btn-icon-small" onclick="changePage('cand', -1)" title="Previous Page"><i class="fa-solid fa-chevron-left"></i></button>
                             <span id="cand-page-indicator" style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Page 1 of 1</span>
-                            <button class="btn-icon-small" onclick="changePage('cand', 1)" title="Next Page">
-                                <i class="fa-solid fa-chevron-right"></i>
-                            </button>
+                            <button class="btn-icon-small" onclick="changePage('cand', 1)" title="Next Page"><i class="fa-solid fa-chevron-right"></i></button>
                             <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" onchange="state.pagination.cand.limit = parseInt(this.value); state.pagination.cand.current = 1; refreshViewForType('cand');">
                                 <option value="25">25 / page</option>
                                 <option value="50" selected>50 / page</option>
@@ -367,7 +363,6 @@
 
                 <div id="view-inbox" class="content-view">
                     <div class="gmail-container glass-panel">
-                        
                         <div class="gmail-sidebar">
                             <ul class="gmail-nav custom-scroll">
                                 <li onclick="renderGmailList('INBOX')" class="active"><span class="material-icons text-cyan">inbox</span> Inbox</li>
@@ -507,13 +502,13 @@
                         
                         <div style="border-bottom: 1px solid var(--glass-border); padding-bottom: 20px; margin-bottom: 20px;">
                             <h3><i class="fa-solid fa-file-csv"></i> Export Data</h3>
-                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Download a complete backup of all candidate records to a CSV file (Excel compatible).</p>
-                            <button class="btn-primary" onclick="exportData()"><i class="fa-solid fa-download"></i> Download CSV Backup</button>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Download a complete backup of all records to a CSV file (Excel compatible). This includes all custom columns.</p>
+                            <button class="btn-primary" onclick="exportData()"><i class="fa-solid fa-download"></i> Download Full Backup</button>
                         </div>
 
                         <div>
                             <h3 class="text-danger"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone</h3>
-                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Permanently wipe all candidate data from the cloud database. Only Admins can perform this action.</p>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Permanently wipe all candidate data from the cloud and local storage. Only Admins can perform this action.</p>
                             <button class="btn-danger" onclick="resetSystem()"><i class="fa-solid fa-skull-crossbones"></i> Factory Reset System</button>
                         </div>
                     </div>
