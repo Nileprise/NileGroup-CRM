@@ -21,7 +21,6 @@ const GMAIL_CONFIG = {
 
 try {
     firebase.initializeApp(firebaseConfig);
-    // Enable offline persistence for multi-tab/device syncing
     firebase.firestore().enablePersistence({ experimentalTabSynchronization: true })
         .catch(function(err) {
             console.warn("Firebase Persistence Error:", err.code);
@@ -56,6 +55,7 @@ const state = {
     user: null, userRole: null, currentUserName: null,
     candidates: [], onboarding: [], employees: [], placements: [], hubData: [], labels: [], allUsers: [],
     selectedLabelColor: '#e91e63',
+    candidateViewMode: 'table', // 'table' or 'board'
     gmail: { tokenClient: null, gapiInited: false, gisInited: false, currentLabel: 'INBOX', currentEmailId: null },
     hub: { expandedRowId: null, filterType: 'daily', date: new Date().toISOString().split('T')[0], range: { start: 0, end: 0 } },
     placementFilter: 'monthly',
@@ -83,7 +83,8 @@ const storageManager = {
         const uiState = {
             activeView: document.querySelector('.content-view.active')?.id || 'view-dashboard',
             filters: state.filters, hubFilters: state.hubFilters,
-            placementFilter: state.placementFilter, pagination: state.pagination
+            placementFilter: state.placementFilter, pagination: state.pagination,
+            candidateViewMode: state.candidateViewMode
         };
         localStorage.setItem('nileprise_ui_state', JSON.stringify(uiState));
     },
@@ -96,6 +97,7 @@ const storageManager = {
                 state.hubFilters = { ...state.hubFilters, ...uiState.hubFilters };
                 state.placementFilter = uiState.placementFilter || state.placementFilter;
                 state.pagination = { ...state.pagination, ...uiState.pagination };
+                state.candidateViewMode = uiState.candidateViewMode || 'table';
                 return uiState.activeView;
             } catch (e) { console.error("Error parsing UI state:", e); }
         }
@@ -103,7 +105,6 @@ const storageManager = {
     }
 };
 
-// Master Function to guarantee data is stored locally immediately
 function aggressiveLocalSave(collection, id, field, value) {
     const idx = state[collection].findIndex(x => x.id === id);
     if (idx > -1) {
@@ -130,7 +131,6 @@ const dom = {
     headerUpdated: document.getElementById('header-updated')
 };
 
-// Bridge functions to map old HTML buttons to the new Instant Row system
 window.openCandidateModal = () => window.addInlineCandidateRow();
 window.openEmployeeModal = () => window.addInlineEmployeeRow();
 window.openOnboardingModal = () => window.addInlineOnboardingRow();
@@ -152,7 +152,9 @@ function init() {
                 if (data[key]) state[key === 'colOrders' ? key : 'customColumns'][key] = data[key];
             });
         }
-    }).catch(() => console.log("Using default column settings."));
+    }).catch(error => {
+        window.systemLog('warn', 'Failed to load custom table configurations', error.message);
+    });
 
     auth.onAuthStateChanged(async user => {
         if (user) {
@@ -163,7 +165,7 @@ function init() {
                 const knownUser = ALLOWED_USERS[email];
                 state.userRole = userDoc.exists ? (userDoc.data().role || 'Employee') : (knownUser?.role ?? 'Employee');
                 state.currentUserName = userDoc.exists ? (userDoc.data().firstName || user.displayName || 'Unknown') : (knownUser?.name ?? (user.displayName || 'Unknown'));
-            } catch (err) { console.error("Error fetching role:", err); }
+            } catch (err) { window.systemLog('error', 'Error fetching user role', err); }
 
             applyRoleBasedUI();
             updateUserProfile(user, ALLOWED_USERS[email]);
@@ -175,22 +177,34 @@ function init() {
                 switchScreen('app'); 
             }
             initRealtimeListeners();
+            
+            // Restore Kanban view if it was active
+            if (state.candidateViewMode === 'board' && document.getElementById('btn-toggle-view')) {
+                // Temporarily set to table to force toggle to run
+                state.candidateViewMode = 'table';
+                window.toggleCandidateView();
+            }
+
         } else {
-            state.userRole = 'Admin';
-            state.currentUserName = 'System Admin';
-            applyRoleBasedUI();
-            
-            const savedView = storageManager.loadUIState();
-            if (savedView) document.querySelector(`.nav-item[data-target="${savedView}"]`)?.click();
-            else switchScreen('app');
-            
-            initRealtimeListeners();
+            // Unauthenticated state
+            document.getElementById('dashboard-screen').innerHTML = `
+                <div style="display:flex; height:100vh; width:100vw; align-items:center; justify-content:center; flex-direction:column; background:var(--bg-main);">
+                    <h1 style="color:var(--primary); margin-bottom:20px;">NILEPRISE CRM</h1>
+                    <button class="btn-primary" onclick="forceLogin()"><i class="fa-brands fa-google"></i> Login with Google</button>
+                </div>
+            `;
+            document.getElementById('dashboard-screen').classList.add('active');
         }
         if (window.updateHubStats) updateHubStats('daily', new Date().toISOString().split('T')[0]);
     });
 
     if (localStorage.getItem('np_theme') === 'light') document.body.classList.add('light-mode');
 }
+
+window.forceLogin = () => {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    firebase.auth().signInWithPopup(provider).catch(err => alert("Login Failed: " + err.message));
+};
 
 function showTableLoaders() {
     const loaderHTML = `<tr><td colspan="25" style="text-align: center; padding: 40px; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin text-cyan" style="font-size: 2rem; margin-bottom: 15px;"></i><br>Loading Data...</td></tr>`;
@@ -236,7 +250,7 @@ function showToast(msg) {
 }
 
 /* ==========================================================================
-   6. REALTIME FIREBASE LISTENERS (EMAIL BOUND)
+   6. REALTIME FIREBASE LISTENERS
    ========================================================================= */
 function initRealtimeListeners() {
     let candRef = db.collection('candidates');
@@ -244,7 +258,6 @@ function initRealtimeListeners() {
     let onbRef = db.collection('onboarding');
     let placeRef = db.collection('placements');
 
-    // BIND TO EMAIL: Filter live database by logged-in email for basic employees
     if (state.userRole === 'Employee' && state.user) {
         const myEmail = state.user.email.toLowerCase();
         candRef = candRef.where('recruiter', '==', myEmail);
@@ -269,7 +282,6 @@ function initRealtimeListeners() {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         state.employees = mergeWithLocal(cloudData, 'employees');
         
-        // Map Recruiter Emails to their First/Last Names for display
         const recruitersMap = new Map();
         state.employees.forEach(e => {
             if (e.first && e.officialEmail) {
@@ -292,12 +304,12 @@ function initRealtimeListeners() {
         state.candidates.forEach(c => { if (c.tech) techs.add(c.tech); });
         state.metadata.techs = Array.from(techs).sort();
         
-        renderCandidateTable();
+        refreshViewForType('candidates');
         updateHubStats();
         renderDropdowns();
         updateDashboardStats();
         renderDashboardCharts();
-    }, err => { renderCandidateTable(); });
+    }, err => refreshViewForType('candidates'));
 
     onbRef.onSnapshot(snap => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -426,7 +438,7 @@ function setupEventListeners() {
         }));
     };
 
-    bindSearch('search-input', state.filters, renderCandidateTable);
+    bindSearch('search-input', state.filters, () => refreshViewForType('candidates'));
     bindSearch('hub-search-input', state.hubFilters, renderHubTable);
     bindSearch('emp-search-input', state.empFilters, renderEmployeeTable);
     bindSearch('onb-search-input', state.onbFilters, renderOnboardingTable);
@@ -434,14 +446,14 @@ function setupEventListeners() {
     document.getElementById('filter-recruiter')?.addEventListener('change', e => { 
         state.filters.recruiter = e.target.value; 
         state.pagination.cand.current = 1;
-        renderCandidateTable(); 
+        refreshViewForType('candidates'); 
         if (typeof storageManager !== 'undefined') storageManager.saveUIState();
     });
     
     document.getElementById('filter-tech')?.addEventListener('change', e => { 
         state.filters.tech = e.target.value; 
         state.pagination.cand.current = 1;
-        renderCandidateTable(); 
+        refreshViewForType('candidates'); 
         if (typeof storageManager !== 'undefined') storageManager.saveUIState();
     });
 
@@ -451,7 +463,7 @@ function setupEventListeners() {
             e.target.classList.add('active');
             state.filters.status = e.target.dataset.status;
             state.pagination.cand.current = 1;
-            renderCandidateTable();
+            refreshViewForType('candidates');
             if (typeof storageManager !== 'undefined') storageManager.saveUIState();
         });
     });
@@ -465,7 +477,7 @@ function setupEventListeners() {
         document.querySelectorAll('#view-candidates .btn-toggle').forEach(b => b.classList.remove('active'));
         document.querySelector('#view-candidates .btn-toggle[data-status=""]')?.classList.add('active');
         state.pagination.cand.current = 1;
-        renderCandidateTable();
+        refreshViewForType('candidates');
         if (typeof storageManager !== 'undefined') storageManager.saveUIState();
     });
 }
@@ -485,7 +497,6 @@ function renderDashboardCharts() {
 
     candData.forEach(c => {
         const rEmail = c.recruiter?.trim();
-        // Lookup Display Name from Email
         const rName = state.metadata.recruiters.find(r => r.value === rEmail)?.display || 'Unassigned';
         recCounts[rName] = (recCounts[rName] || 0) + 1;
         
@@ -792,6 +803,7 @@ async function saveAndRefreshColumns(context, msg) {
         showToast(msg);
         refreshViewForType(context);
     } catch (e) {
+        window.systemLog('error', 'Error saving custom column', e);
         showToast("Error saving configuration");
     }
 }
@@ -801,7 +813,6 @@ async function saveAndRefreshColumns(context, msg) {
    ========================================================================= */
 window.addNewRecord = async (collection) => {
     const ts = Date.now();
-    // BIND TO EMAIL: Automatically assign to the logged-in user's email
     const recruiterEmail = (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : '';
     const today = new Date().toISOString().split('T')[0];
 
@@ -834,7 +845,7 @@ window.addNewRecord = async (collection) => {
             }
         }, 500);
     } catch (e) {
-        console.warn("Firebase save blocked. Data safely stored in Local Storage.");
+        window.systemLog('warn', 'Firebase save blocked on new record, falling back to local storage', e);
         defaultData.id = 'local_' + ts;
         state[collection].unshift(defaultData);
         localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
@@ -899,7 +910,6 @@ window.changePage = (type, direction) => {
 
 function getFilteredData(data, filters) {
     let subset = data;
-    // BIND TO EMAIL: Filter by logged in user for pagination/display
     if (state.userRole === 'Employee' && state.user) {
         subset = subset.filter(item => item.recruiter === state.user.email.toLowerCase());
     }
@@ -928,6 +938,12 @@ const renderCustomCells = (item, collectionName) => {
 };
 
 function renderCandidateTable() {
+    // If in board mode, divert render to Kanban
+    if (state.candidateViewMode === 'board') {
+        renderKanbanBoard();
+        return; // Don't render the table HTML
+    }
+
     const filtered = getFilteredData(state.candidates, state.filters);
     const tbody = document.getElementById('table-body');
     const thead = document.getElementById('table-head');
@@ -1354,7 +1370,6 @@ function renderHubTable() {
 window.inlineEdit = (id, field, col, el) => {
     if (el.querySelector('input')) return;
     
-    // Clear placeholder text on edit
     let val = el.textContent.trim();
     if (['New Candidate', 'New Employee', 'New Record', 'New Placement'].includes(val)) {
         val = ''; 
@@ -1367,17 +1382,16 @@ window.inlineEdit = (id, field, col, el) => {
     input.value = val;
     input.onclick = (e) => e.stopPropagation();
     
-    // Auto-save triggers the moment the user clicks away or presses Enter
     input.onblur = async () => {
         const newVal = input.value.trim();
-        el.textContent = newVal || (field === 'first' ? 'Untitled' : ''); // Fallback if left blank
+        el.textContent = newVal || (field === 'first' ? 'Untitled' : '');
         
         if (newVal !== val) {
             aggressiveLocalSave(col, id, field, newVal);
             try {
                 if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: newVal });
                 showToast("Auto-Saved");
-            } catch (err) { showToast("Saved Locally"); }
+            } catch (err) { window.systemLog('warn', 'Saved locally due to error', err); showToast("Saved Locally"); }
         }
     };
     
@@ -1395,7 +1409,7 @@ window.inlineDateEdit = async (id, field, col, val) => {
     try {
         if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: val });
         showToast("Date Auto-Saved");
-    } catch (err) { showToast("Date Saved Locally"); }
+    } catch (err) { window.systemLog('warn', 'Saved locally due to error', err); showToast("Date Saved Locally"); }
 };
 
 window.inlineUrlEdit = (id, field, col, el) => {
@@ -1422,7 +1436,7 @@ window.inlineUrlEdit = (id, field, col, el) => {
             try {
                 if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: newVal });
                 showToast("Link Auto-Saved");
-            } catch (e) { showToast("Link Saved Locally"); }
+            } catch (e) { window.systemLog('warn', 'Saved locally due to error', e); showToast("Link Saved Locally"); }
         }
         refreshViewForType(col);
     };
@@ -1452,7 +1466,7 @@ window.updateStatusAndClose = async (id, status) => {
     try {
         if (!id.startsWith('local_')) await db.collection('candidates').doc(id).update({ status: status });
         showToast("Status updated");
-    } catch(e) { showToast("Status saved locally"); }
+    } catch(e) { window.systemLog('warn', 'Status saved locally', e); showToast("Status saved locally"); }
     document.getElementById(`menu-${id}`)?.classList.remove('show');
     refreshViewForType('candidates');
 };
@@ -1462,7 +1476,7 @@ window.updateStatus = async (id, col, val) => {
     try {
         if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ status: val });
         showToast("Status Auto-Saved");
-    } catch(e) { showToast("Status saved locally"); }
+    } catch(e) { window.systemLog('warn', 'Status saved locally', e); showToast("Status saved locally"); }
 };
 
 window.editCustomStatus = async (id) => {
@@ -1496,6 +1510,7 @@ window.moveToPlacements = async (id) => {
             showToast("Moved to Placements");
         }
     } catch (e) { 
+        window.systemLog('warn', 'Database error on Move to Placements, forcing local', e);
         showToast("Database error, forcing local move"); 
         state.placements.push(newPlaceData);
         state.candidates = state.candidates.filter(c => c.id !== id);
@@ -1535,7 +1550,7 @@ window.deletePlacement = async (id) => {
             await db.collection('placements').doc(id).delete();
         }
         showToast("Placement removed");
-    } catch(e) { showToast("Error removing placement"); }
+    } catch(e) { window.systemLog('error', 'Failed to delete placement', e); showToast("Error removing placement"); }
 };
 
 /* ==========================================================================
@@ -1651,7 +1666,7 @@ document.getElementById('hub-note-form')?.addEventListener('submit', async (e) =
     try {
         if (!candidateId.startsWith('local_')) await db.collection('candidates').doc(candidateId).update({ [logType]: currentLogs });
         showToast("Log entry added successfully!");
-    } catch (err) { showToast("Log saved locally."); }
+    } catch (err) { window.systemLog('warn', 'Log saved locally', err); showToast("Log saved locally."); }
     closeHubNoteModal();
     refreshViewForType('hub');
 });
@@ -1668,7 +1683,7 @@ window.deleteHubLog = async (candidateId, logType, index) => {
     try {
         if (!candidateId.startsWith('local_')) await db.collection('candidates').doc(candidateId).update({ [logType]: updatedLogs });
         showToast("Log entry removed.");
-    } catch(err) { showToast("Log removed locally."); }
+    } catch(err) { window.systemLog('warn', 'Log removed locally', err); showToast("Log removed locally."); }
     refreshViewForType('hub');
 };
 
@@ -1757,7 +1772,6 @@ window.executeDelete = async () => {
     const masterBox = document.getElementById(`select-all-${type}`);
     if (masterBox) masterBox.checked = false;
 
-    // Handle LocalStorage deletions vs Firebase deletions safely
     const localIds = ids.filter(id => id.startsWith('local_'));
     const firebaseIds = ids.filter(id => !id.startsWith('local_'));
 
@@ -1769,7 +1783,7 @@ window.executeDelete = async () => {
     if (firebaseIds.length > 0) {
         const batch = db.batch();
         firebaseIds.forEach(id => batch.delete(db.collection(col).doc(id)));
-        try { await batch.commit(); } catch (e) { console.warn("Firebase delete blocked. Deleted locally."); }
+        try { await batch.commit(); } catch (e) { window.systemLog('warn', 'Firebase delete blocked, deleted locally', e); }
     }
     
     refreshViewForType(type);
@@ -1787,7 +1801,7 @@ function loadGoogleScripts() {
             await gapi.client.init({ apiKey: GMAIL_CONFIG.API_KEY, discoveryDocs: [GMAIL_CONFIG.DISCOVERY_DOC] });
             state.gmail.gapiInited = true;
             checkGmailAuth();
-        } catch (e) { console.error(e); }
+        } catch (e) { window.systemLog('error', 'GAPI init failed', e); }
     });
     document.body.appendChild(s1);
 
@@ -1868,7 +1882,7 @@ window.fetchGmailLabels = async () => {
         const userLabels = response.result.labels.filter(l => l.type === 'user');
         state.labels = userLabels.map(l => ({ name: l.name, id: l.id, color: l.color?.backgroundColor || '#607d8b', type: 'api' }));
         renderLabels();
-    } catch (e) { console.error(e); }
+    } catch (e) { window.systemLog('error', 'Fetch Gmail labels failed', e); }
 };
 
 window.renderLabels = () => {
@@ -2014,7 +2028,7 @@ window.renderGmailList = async (label = 'Inbox') => {
             container.appendChild(div);
         });
     } catch (err) {
-        console.error("Gmail Error:", err);
+        window.systemLog('error', 'Gmail fetch error', err);
         container.innerHTML = `<div style="padding:40px; text-align:center; color: var(--danger);"><i class="fa-solid fa-triangle-exclamation" style="font-size: 2rem; margin-bottom: 10px;"></i><p>Error loading emails.</p></div>`;
     }
 };
@@ -2070,7 +2084,7 @@ window.syncCurrentEmailToCandidate = async () => {
     try {
         if (!candidate.id.startsWith('local_')) await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs });
         showToast(`Synced to ${candidate.first} ${candidate.last}`);
-    } catch (e) { showToast("Sync saved locally"); }
+    } catch (e) { window.systemLog('warn', 'Sync saved locally', e); showToast("Sync saved locally"); }
 };
 
 /* ==========================================================================
@@ -2124,7 +2138,7 @@ window.saveProfileData = async () => {
     try {
         await db.collection('users').doc(state.user.email).set(profileData, { merge: true });
         showToast("Profile Updated Successfully");
-    } catch (err) { showToast("Error updating profile"); }
+    } catch (err) { window.systemLog('error', 'Error updating profile', err); showToast("Error updating profile"); }
 };
 
 window.triggerPhotoUpload = () => document.getElementById('profile-upload-input')?.click();
@@ -2146,7 +2160,7 @@ window.handlePhotoUpload = async (input) => {
         document.getElementById('profile-main-icon').style.display = 'none';
         document.getElementById('btn-delete-photo').style.display = 'inline-flex';
         showToast("Photo uploaded");
-    } catch (err) { showToast("Photo upload failed"); } 
+    } catch (err) { window.systemLog('error', 'Photo upload failed', err); showToast("Photo upload failed"); } 
     finally { if (loadingEl) loadingEl.style.display = 'none'; }
 };
 
@@ -2159,7 +2173,7 @@ window.deleteProfilePhoto = async () => {
         document.getElementById('profile-main-icon').style.display = 'flex';
         document.getElementById('btn-delete-photo').style.display = 'none';
         showToast("Photo removed");
-    } catch (err) { showToast("Failed to remove photo"); }
+    } catch (err) { window.systemLog('error', 'Failed to remove photo', err); showToast("Failed to remove photo"); }
 };
 
 /* ==========================================================================
@@ -2168,7 +2182,6 @@ window.deleteProfilePhoto = async () => {
 window.exportData = () => {
     if (!state.candidates?.length) return showToast("No candidate data to export.");
     
-    // Dynamically grab every single column ever added (including custom ones)
     const keysToIgnore = ['submissionLog', 'screeningLog', 'interviewLog', 'orderIndex', 'createdAt'];
     let headerSet = new Set(['id', 'first', 'last', 'mobile', 'wa', 'tech', 'recruiter', 'status', 'assigned', 'comments', 'linkedin', 'resume', 'trackingSheet']);
     
@@ -2214,10 +2227,10 @@ window.resetSystem = async () => {
                 
                 localStorage.removeItem('np_data_candidates');
                 state.candidates = [];
-                renderCandidateTable();
+                refreshViewForType('candidates');
                 
                 showToast("System reset successfully.");
-            } catch (error) { showToast("Error resetting system."); }
+            } catch (error) { window.systemLog('error', 'Error resetting system', error); showToast("Error resetting system."); }
         } else {
             showToast("Reset cancelled.");
         }
@@ -2225,6 +2238,194 @@ window.resetSystem = async () => {
 };
 
 /* ==========================================================================
-   19. STARTUP
+   19. KANBAN BOARD LOGIC
+   ========================================================================= */
+window.toggleCandidateView = () => {
+    const tableContainer = document.querySelector('#view-candidates .table-container');
+    const tableFooter = document.querySelector('#view-candidates .table-footer');
+    const kanbanContainer = document.getElementById('kanban-container');
+    const toggleBtn = document.getElementById('btn-toggle-view');
+
+    if (state.candidateViewMode === 'table') {
+        state.candidateViewMode = 'board';
+        if (tableContainer) tableContainer.style.display = 'none';
+        if (tableFooter) tableFooter.style.display = 'none';
+        if (kanbanContainer) kanbanContainer.style.display = 'block';
+        if (toggleBtn) toggleBtn.innerHTML = '<i class="fa-solid fa-list"></i> Table View';
+        
+        const toggles = document.querySelector('#view-candidates .status-toggles');
+        if (toggles) toggles.style.display = 'none';
+        
+        renderKanbanBoard();
+    } else {
+        state.candidateViewMode = 'table';
+        if (tableContainer) tableContainer.style.display = 'block';
+        if (tableFooter) tableFooter.style.display = 'flex';
+        if (kanbanContainer) kanbanContainer.style.display = 'none';
+        if (toggleBtn) toggleBtn.innerHTML = '<i class="fa-solid fa-table-columns"></i> Board View';
+        
+        const toggles = document.querySelector('#view-candidates .status-toggles');
+        if (toggles) toggles.style.display = 'flex';
+        
+        refreshViewForType('candidates');
+    }
+    storageManager.saveUIState();
+};
+
+window.renderKanbanBoard = () => {
+    const kanban = document.getElementById('kanban-container');
+    if (!kanban || state.candidateViewMode !== 'board') return;
+
+    const stages = ['Active', 'Screening', 'Interview', 'Offered', 'Placed', 'Inactive'];
+
+    let boardData = state.candidates;
+    if (state.userRole === 'Employee' && state.user) {
+        boardData = boardData.filter(c => c.recruiter === state.user.email.toLowerCase());
+    }
+    if (state.filters.text) {
+        boardData = boardData.filter(c => `${c.first} ${c.last} ${c.tech || ''}`.toLowerCase().includes(state.filters.text));
+    }
+    if (state.filters.recruiter) boardData = boardData.filter(c => c.recruiter === state.filters.recruiter);
+    if (state.filters.tech) boardData = boardData.filter(c => c.tech === state.filters.tech);
+
+    let html = `<div class="kanban-board custom-scroll">`;
+
+    stages.forEach(stage => {
+        const stageCandidates = stage === 'Placed' 
+            ? state.placements 
+            : boardData.filter(c => (c.status || 'Active') === stage);
+        
+        let headerColor = "var(--text-main)";
+        if (stage === 'Active') headerColor = "var(--primary)";
+        if (stage === 'Placed') headerColor = "var(--success)";
+        if (stage === 'Inactive') headerColor = "var(--danger)";
+        if (stage === 'Interview') headerColor = "var(--purple)";
+
+        html += `
+        <div class="kanban-col" data-status="${stage}" ondragover="kanbanDragOver(event)" ondrop="kanbanDrop(event, '${stage}')">
+            <div class="kanban-col-header" style="border-top: 3px solid ${headerColor};">
+                <span style="color: ${headerColor};">${stage}</span>
+                <span class="user-role-badge">${stageCandidates.length}</span>
+            </div>
+            <div class="kanban-cards custom-scroll" id="kanban-cards-${stage}">
+                ${stageCandidates.map(c => `
+                    <div class="kanban-card" draggable="${stage !== 'Placed'}" ondragstart="kanbanDragStart(event, '${c.id}')" id="card-${c.id}">
+                        <div class="card-title">${c.first || 'Untitled'} ${c.last || ''}</div>
+                        <div class="card-subtitle"><i class="fa-solid fa-code"></i> ${c.tech || 'No Tech Profile'}</div>
+                        <div class="card-meta">
+                            <span title="${c.recruiter}"><i class="fa-solid fa-user-tie"></i> ${c.recruiter ? c.recruiter.split('@')[0] : 'Unassigned'}</span>
+                            <span><i class="fa-regular fa-clock"></i> ${c.assigned || 'No Date'}</span>
+                        </div>
+                    </div>
+                `).join('')}
+                ${stageCandidates.length === 0 ? `<div style="text-align:center; padding: 20px; opacity: 0.4; font-size: 0.85rem;">Drop cards here</div>` : ''}
+            </div>
+        </div>`;
+    });
+
+    html += `</div>`;
+    kanban.innerHTML = html;
+};
+
+window.kanbanDragStart = (e, id) => {
+    e.dataTransfer.setData('text/plain', id);
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => document.getElementById(`card-${id}`)?.classList.add('dragging'), 0);
+};
+
+window.kanbanDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const col = e.target.closest('.kanban-col');
+    if (col) {
+        document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+        col.classList.add('drag-over');
+    }
+};
+
+window.kanbanDrop = async (e, newStatus) => {
+    e.preventDefault();
+    document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+    
+    const id = e.dataTransfer.getData('text/plain');
+    const card = document.getElementById(`card-${id}`);
+    if (card) card.classList.remove('dragging');
+
+    if (newStatus === 'Placed') {
+        if (confirm("Move this candidate to Placements? This will lock their profile.")) {
+            moveToPlacements(id); 
+            setTimeout(renderKanbanBoard, 500);
+        }
+        return;
+    }
+
+    const candIndex = state.candidates.findIndex(c => c.id === id);
+    if (candIndex === -1) return;
+    
+    const oldStatus = state.candidates[candIndex].status;
+    if (oldStatus === newStatus) return; 
+
+    state.candidates[candIndex].status = newStatus;
+    renderKanbanBoard(); 
+
+    aggressiveLocalSave('candidates', id, 'status', newStatus);
+    try {
+        if (!id.startsWith('local_')) await db.collection('candidates').doc(id).update({ status: newStatus });
+        showToast(`Moved to ${newStatus}`);
+    } catch (err) {
+        window.systemLog('warn', 'Status saved locally from Kanban', err);
+        showToast("Status saved locally");
+    }
+};
+
+/* ==========================================================================
+   20. ERROR TRACKING & SYSTEM LOGGER
+   ========================================================================= */
+window.systemLog = async (method, message, details = null) => {
+    const validMethods = ['log', 'info', 'warn', 'error'];
+    const safeMethod = validMethods.includes(method) ? method : 'log';
+    
+    if (details) {
+        console[safeMethod](`[Nileprise CRM] ${message}`, details);
+    } else {
+        console[safeMethod](`[Nileprise CRM] ${message}`);
+    }
+
+    if (['error', 'warn'].includes(safeMethod)) {
+        try {
+            const logEntry = {
+                level: safeMethod,
+                message: message,
+                details: details ? (typeof details === 'object' ? JSON.stringify(details, Object.getOwnPropertyNames(details)) : details.toString()) : '',
+                user: (typeof state !== 'undefined' && state.user) ? state.user.email : 'Unauthenticated',
+                url: window.location.href,
+                userAgent: navigator.userAgent,
+                timestamp: Date.now(),
+                dateString: new Date().toISOString()
+            };
+
+            await db.collection('system_logs').add(logEntry);
+        } catch (firebaseErr) {
+            console.warn("Failed to save error to cloud:", firebaseErr);
+        }
+    }
+};
+
+window.addEventListener('error', function(event) {
+    window.systemLog('error', 'Uncaught Syntax/Reference Error', {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno
+    });
+});
+
+window.addEventListener('unhandledrejection', function(event) {
+    window.systemLog('error', 'Unhandled Promise Rejection', {
+        reason: event.reason
+    });
+});
+
+/* ==========================================================================
+   21. STARTUP
    ========================================================================= */
 window.onload = () => { init(); };
