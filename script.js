@@ -34,22 +34,7 @@ const auth = firebase.auth();
 const storage = firebase.storage();
 
 /* ==========================================================================
-   2. ACCESS CONTROL LIST (FALLBACK)
-   ========================================================================= */
-const ALLOWED_USERS = {
-    'ali@nileprise.com': { name: 'Asif', role: 'Employee' },
-    'mdi@nileprise.com': { name: 'Ikram', role: 'Employee' },
-    'mmr@nileprise.com': { name: 'Manikanta', role: 'Employee' },
-    'maj@nileprise.com': { name: 'Mazher', role: 'Employee' },
-    'msa@nileprise.com': { name: 'Shoeb', role: 'Employee' },
-    'fma@nileprise.com': { name: 'Fayaz', role: 'Manager' },
-    'an@nileprise.com': { name: 'Akhil', role: 'Manager' },
-    'aman@nileprise.com': { name: 'Sanketh', role: 'Manager' },
-    'careers@nileprise.com': { name: 'Nikhil Rapolu', role: 'Admin' },
-};
-
-/* ==========================================================================
-   3. STATE & AGGRESSIVE LOCAL STORAGE MANAGEMENT
+   2. STATE & AGGRESSIVE LOCAL STORAGE MANAGEMENT
    ========================================================================= */
 const state = {
     user: null, userRole: null, currentUserName: null,
@@ -124,7 +109,7 @@ function loadLocalData() {
 }
 
 /* ==========================================================================
-   4. DOM CACHE & BUTTON BRIDGES
+   3. DOM CACHE & BUTTON BRIDGES
    ========================================================================= */
 const dom = {
     screens: { app: document.getElementById('dashboard-screen') },
@@ -137,9 +122,10 @@ window.openOnboardingModal = () => window.addInlineOnboardingRow();
 window.openPlacementModal = () => window.addInlinePlacementRow();
 
 /* ==========================================================================
-   5. INITIALIZATION & ROUTING
+   4. INITIALIZATION & ROUTING
    ========================================================================= */
 function init() {
+    initNetworkMonitor(); // Real-time connection tracker
     setupEventListeners();
     loadGoogleScripts();
     showTableLoaders();
@@ -160,16 +146,29 @@ function init() {
         if (user) {
             state.user = user;
             const email = user.email.toLowerCase();
-            try {
-                const userDoc = await db.collection('users').doc(email).get();
-                const knownUser = ALLOWED_USERS[email];
-                state.userRole = userDoc.exists ? (userDoc.data().role || 'Employee') : (knownUser?.role ?? 'Employee');
-                state.currentUserName = userDoc.exists ? (userDoc.data().firstName || user.displayName || 'Unknown') : (knownUser?.name ?? (user.displayName || 'Unknown'));
-            } catch (err) { window.systemLog('error', 'Error fetching user role', err); }
-
-            applyRoleBasedUI();
-            updateUserProfile(user, ALLOWED_USERS[email]);
             
+            try {
+                // Fetch the user's profile and role strictly from Firestore
+                const userDoc = await db.collection('users').doc(email).get();
+                
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    state.userRole = userData.role || 'Employee';
+                    state.currentUserName = `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || user.displayName || 'Staff';
+                    
+                    applyRoleBasedUI();
+                    updateUserProfile(user, userData);
+                } else {
+                    console.warn(`Unregistered user logged in: ${email}`);
+                    state.userRole = 'Guest'; 
+                    state.currentUserName = user.displayName || email;
+                    showToast("Account pending Admin approval.");
+                    applyRoleBasedUI(); 
+                }
+            } catch (err) { 
+                window.systemLog('error', 'Error fetching user role from cloud', err); 
+            }
+
             const savedView = storageManager.loadUIState();
             if (savedView && !document.querySelector(`.nav-item[data-target="${savedView}"]`)?.classList.contains('locked')) {
                 document.querySelector(`.nav-item[data-target="${savedView}"]`)?.click();
@@ -178,9 +177,7 @@ function init() {
             }
             initRealtimeListeners();
             
-            // Restore Kanban view if it was active
             if (state.candidateViewMode === 'board' && document.getElementById('btn-toggle-view')) {
-                // Temporarily set to table to force toggle to run
                 state.candidateViewMode = 'table';
                 window.toggleCandidateView();
             }
@@ -216,17 +213,28 @@ function showTableLoaders() {
 
 function applyRoleBasedUI() {
     const isEmployee = state.userRole === 'Employee';
+    const isAdmin = state.userRole === 'Admin';
     const restrictedForEmployees = ['view-placements', 'view-onboarding', 'view-employees', 'view-settings'];
 
     document.querySelectorAll('.nav-item').forEach(item => {
         const target = item.getAttribute('data-target');
         if (!target) return;
+        
         if (isEmployee && restrictedForEmployees.includes(target)) {
             item.classList.add('locked');
             if (!item.querySelector('.lock-icon')) item.insertAdjacentHTML('beforeend', '<i class="fa-solid fa-lock lock-icon" title="Manager Access Only"></i>');
         } else {
             item.classList.remove('locked');
             item.querySelector('.lock-icon')?.remove();
+        }
+    });
+
+    // Lock Admin Panel
+    document.querySelectorAll('.admin-only').forEach(item => {
+        if (!isAdmin) {
+            item.style.display = 'none';
+        } else {
+            item.style.display = 'flex';
         }
     });
 
@@ -250,7 +258,7 @@ function showToast(msg) {
 }
 
 /* ==========================================================================
-   6. REALTIME FIREBASE LISTENERS
+   5. REALTIME FIREBASE LISTENERS
    ========================================================================= */
 function initRealtimeListeners() {
     let candRef = db.collection('candidates');
@@ -378,7 +386,7 @@ window.updateTech = async (id, collection, val) => {
 };
 
 /* ==========================================================================
-   7. EVENT LISTENERS & UI ROUTING
+   6. EVENT LISTENERS & UI ROUTING
    ========================================================================= */
 function debounce(func, timeout = 300) {
     let timer;
@@ -403,7 +411,7 @@ function setupEventListeners() {
             if (targetView) targetView.classList.add('active');
 
             const titleEl = document.getElementById('page-title');
-            if (titleEl) {
+            if (titleEl && !targetId.includes('admin')) {
                 const icon = btn.querySelector('i, .material-icons')?.outerHTML || '';
                 const text = btn.querySelector('span:not(.material-icons)')?.innerText || btn.innerText;
                 titleEl.innerHTML = `${icon} ${text}`;
@@ -414,6 +422,7 @@ function setupEventListeners() {
                 document.getElementById('sidebar-overlay')?.classList.remove('active');
             }
             if (targetId === 'view-dashboard') updateDashboardStats();
+            if (targetId === 'view-admin') loadAdminUsers(); // Admin Panel Router
             if (typeof storageManager !== 'undefined') storageManager.saveUIState();
         });
     });
@@ -483,7 +492,7 @@ function setupEventListeners() {
 }
 
 /* ==========================================================================
-   8. DASHBOARD CHARTS & STATS
+   7. DASHBOARD CHARTS & STATS
    ========================================================================= */
 let recChartInstance = null;
 let techChartInstance = null;
@@ -563,7 +572,7 @@ function updateDashboardStats() {
 }
 
 /* ==========================================================================
-   9. ALIGNMENT, DRAG/DROP & RESIZING
+   8. ALIGNMENT, DRAG/DROP & RESIZING
    ========================================================================= */
 window.cycleAlign = (context, colName) => {
     const modes = ['left', 'center', 'right'];
@@ -738,7 +747,7 @@ function stopResize() {
 }
 
 /* ==========================================================================
-   10. CUSTOM COLUMNS
+   9. CUSTOM COLUMNS
    ========================================================================= */
 let activeColumnContext = null;
 window.openAddColumnModal = (context) => {
@@ -809,7 +818,7 @@ async function saveAndRefreshColumns(context, msg) {
 }
 
 /* ==========================================================================
-   11. MODERN INSTANT ROW ADDITION (AIRTABLE/NOTION STYLE)
+   10. MODERN INSTANT ROW ADDITION (AIRTABLE/NOTION STYLE)
    ========================================================================= */
 window.addNewRecord = async (collection) => {
     const ts = Date.now();
@@ -867,7 +876,7 @@ window.addInlineOnboardingRow = () => window.addNewRecord('onboarding');
 window.addInlinePlacementRow = () => window.addNewRecord('placements');
 
 /* ==========================================================================
-   12. TABLE RENDERING, PAGINATION & DATA ISOLATION
+   11. TABLE RENDERING, PAGINATION & DATA ISOLATION
    ========================================================================= */
 function refreshViewForType(type) {
     const renderMap = {
@@ -1365,7 +1374,7 @@ function renderHubTable() {
 }
 
 /* ==========================================================================
-   13. INLINE FIELD EDITING (AUTO-SAVE) & STATUS ACTIONS
+   12. INLINE FIELD EDITING (AUTO-SAVE) & STATUS ACTIONS
    ========================================================================= */
 window.inlineEdit = (id, field, col, el) => {
     if (el.querySelector('input')) return;
@@ -1554,7 +1563,7 @@ window.deletePlacement = async (id) => {
 };
 
 /* ==========================================================================
-   14. HUB LOGS & TIMELINES
+   13. HUB LOGS & TIMELINES
    ========================================================================= */
 window.updateHubStats = (filterType, dateVal) => {
     if (filterType) state.hub.filterType = filterType;
@@ -1688,7 +1697,7 @@ window.deleteHubLog = async (candidateId, logType, index) => {
 };
 
 /* ==========================================================================
-   15. SELECTION & DELETION
+   14. SELECTION & DELETION
    ========================================================================= */
 window.toggleSelect = (id, type) => {
     if (!state.selection[type]) state.selection[type] = new Set();
@@ -1791,7 +1800,7 @@ window.executeDelete = async () => {
 };
 
 /* ==========================================================================
-   16. GMAIL INTEGRATION
+   15. GMAIL INTEGRATION
    ========================================================================= */
 function loadGoogleScripts() {
     const s1 = document.createElement('script');
@@ -2088,11 +2097,11 @@ window.syncCurrentEmailToCandidate = async () => {
 };
 
 /* ==========================================================================
-   17. PROFILE MANAGEMENT
+   16. PROFILE MANAGEMENT
    ========================================================================= */
-function updateUserProfile(user, knownUser) {
-    const displayName = knownUser?.name ?? (user.displayName || 'User');
-    const role = knownUser?.role ?? 'Employee';
+function updateUserProfile(user, userData) {
+    const displayName = userData ? `${userData.firstName || ''} ${userData.lastName || ''}`.trim() : (user.displayName || 'User');
+    const role = userData?.role || 'Guest';
     const email = user.email;
 
     const setHtml = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
@@ -2177,41 +2186,31 @@ window.deleteProfilePhoto = async () => {
 };
 
 /* ==========================================================================
-   18. FULL DATABASE EXPORT & SYSTEM MANAGEMENT
+   17. FULL DATABASE EXPORT (JSON) & SYSTEM MANAGEMENT
    ========================================================================= */
 window.exportData = () => {
     if (!state.candidates?.length) return showToast("No candidate data to export.");
-    
-    const keysToIgnore = ['submissionLog', 'screeningLog', 'interviewLog', 'orderIndex', 'createdAt'];
-    let headerSet = new Set(['id', 'first', 'last', 'mobile', 'wa', 'tech', 'recruiter', 'status', 'assigned', 'comments', 'linkedin', 'resume', 'trackingSheet']);
-    
-    state.candidates.forEach(c => {
-        Object.keys(c).forEach(k => {
-            if (!keysToIgnore.includes(k)) headerSet.add(k);
-        });
-    });
-
-    const headers = Array.from(headerSet);
-    const rows = [headers.map(h => h.toUpperCase())];
-    const escapeCsv = (str) => `"${(str || '').toString().replace(/"/g, '""')}"`;
 
     let dataToExport = state.candidates;
+    
+    // If an employee clicks export, only give them their own candidates
     if (state.userRole === 'Employee' && state.user) {
         dataToExport = dataToExport.filter(c => c.recruiter === state.user.email.toLowerCase());
     }
 
-    dataToExport.forEach(c => {
-        const rowData = headers.map(key => escapeCsv(c[key]));
-        rows.push(rowData);
-    });
-
+    const jsonString = JSON.stringify(dataToExport, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    
     const link = document.createElement("a");
-    link.setAttribute("href", encodeURI("data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n")));
-    link.setAttribute("download", `Nileprise_Full_Database_Export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.href = url;
+    link.download = `Nileprise_Database_Backup_${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(link);
     link.click();
+    
     document.body.removeChild(link);
-    showToast("Full Database Exported");
+    URL.revokeObjectURL(url);
+    showToast("JSON Database Backup Downloaded!");
 };
 
 window.resetSystem = async () => {
@@ -2238,7 +2237,7 @@ window.resetSystem = async () => {
 };
 
 /* ==========================================================================
-   19. KANBAN BOARD LOGIC
+   18. KANBAN BOARD LOGIC
    ========================================================================= */
 window.toggleCandidateView = () => {
     const tableContainer = document.querySelector('#view-candidates .table-container');
@@ -2379,7 +2378,7 @@ window.kanbanDrop = async (e, newStatus) => {
 };
 
 /* ==========================================================================
-   20. ERROR TRACKING & SYSTEM LOGGER
+   19. ERROR TRACKING & SYSTEM LOGGER
    ========================================================================= */
 window.systemLog = async (method, message, details = null) => {
     const validMethods = ['log', 'info', 'warn', 'error'];
@@ -2426,6 +2425,191 @@ window.addEventListener('unhandledrejection', function(event) {
 });
 
 /* ==========================================================================
-   21. STARTUP
+   20. MANUAL CLOUD SYNC UTILITY
    ========================================================================= */
-window.onload = () => { init(); };/* ==========================================================================
+window.triggerCloudSync = async (btnElement) => {
+    const originalText = btnElement.innerHTML;
+    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing to Cloud...';
+    btnElement.disabled = true;
+    btnElement.style.opacity = '0.7';
+
+    const collections = ['candidates', 'employees', 'onboarding', 'placements'];
+    let syncedCount = 0;
+
+    try {
+        for (const col of collections) {
+            const localDataString = localStorage.getItem(`np_data_${col}`);
+            if (!localDataString) continue;
+
+            let items = JSON.parse(localDataString);
+            const stuckLocalItems = items.filter(item => item.id.startsWith('local_'));
+
+            for (const item of stuckLocalItems) {
+                const { id, ...dataToSave } = item; 
+                await db.collection(col).add(dataToSave);
+                items = items.filter(i => i.id !== id);
+                localStorage.setItem(`np_data_${col}`, JSON.stringify(items));
+                syncedCount++;
+            }
+        }
+
+        if (syncedCount > 0) {
+            showToast(`Success! Pushed ${syncedCount} records to the cloud.`);
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            showToast("System is already fully synced!");
+        }
+
+    } catch (error) {
+        window.systemLog('error', 'Manual cloud sync failed', error);
+        showToast("Sync failed. Please check your internet connection.");
+    } finally {
+        btnElement.innerHTML = originalText;
+        btnElement.disabled = false;
+        btnElement.style.opacity = '1';
+    }
+};
+
+/* ==========================================================================
+   21. REAL-TIME NETWORK MONITOR
+   ========================================================================= */
+function initNetworkMonitor() {
+    const statusEl = document.getElementById('network-status-indicator');
+    if (!statusEl) return;
+
+    const icon = statusEl.querySelector('i');
+    const text = statusEl.querySelector('span');
+
+    const updateNetworkStatus = () => {
+        if (navigator.onLine) {
+            icon.className = 'fa-solid fa-wifi text-success';
+            icon.style.color = '#22c55e';
+            text.innerText = 'Online';
+            
+            const needsSync = ['candidates', 'employees', 'onboarding', 'placements'].some(col => {
+                const local = localStorage.getItem(`np_data_${col}`);
+                return local && local.includes('"local_');
+            });
+
+            if (needsSync) {
+                text.innerText = 'Online (Sync Required)';
+                icon.style.color = '#f59e0b';
+                showToast("You're back online! Please go to Settings to Force Sync your offline work.");
+            } else {
+                showToast("Connection restored. You are live.");
+            }
+
+        } else {
+            icon.className = 'fa-solid fa-wifi-slash text-danger';
+            icon.style.color = '#ef4444';
+            text.innerText = 'Offline (Saving Locally)';
+            showToast("You are offline. Don't worry, changes are saving locally.");
+        }
+    };
+
+    window.addEventListener('online', updateNetworkStatus);
+    window.addEventListener('offline', updateNetworkStatus);
+    updateNetworkStatus();
+}
+
+/* ==========================================================================
+   22. ADMIN PANEL & USER MANAGEMENT
+   ========================================================================= */
+window.loadAdminUsers = () => {
+    if (state.userRole !== 'Admin') return;
+    
+    db.collection('users').onSnapshot(snap => {
+        const tbody = document.getElementById('admin-users-table-body');
+        if (!tbody) return;
+        
+        tbody.innerHTML = snap.docs.map(doc => {
+            const u = doc.data();
+            const email = doc.id;
+            const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Pending Registration';
+            
+            const isMe = state.user && state.user.email.toLowerCase() === email.toLowerCase();
+            const disabledAttr = isMe ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : '';
+            
+            return `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <td style="padding: 12px; font-weight: 600; color: var(--text-main);">${name}</td>
+                <td style="padding: 12px; color: var(--text-muted);">${email}</td>
+                <td style="padding: 12px;">
+                    <select class="status-select" style="width: 130px;" onchange="changeUserRole('${email}', this.value)" ${disabledAttr}>
+                        <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
+                        <option value="Manager" ${u.role === 'Manager' ? 'selected' : ''}>Manager</option>
+                        <option value="Admin" ${u.role === 'Admin' ? 'selected' : ''}>Admin</option>
+                    </select>
+                </td>
+                <td style="padding: 12px; text-align: right;">
+                    <button class="hub-action-btn delete" style="color: #ef4444; background:none; border:none; cursor:pointer;" onclick="removeSystemUser('${email}')" ${disabledAttr}>
+                        <i class="fa-solid fa-trash"></i> Revoke
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+    });
+};
+
+window.changeUserRole = async (email, newRole) => {
+    try {
+        await db.collection('users').doc(email).update({ role: newRole });
+        showToast(`Success: ${email} is now a ${newRole}`);
+    } catch(e) {
+        window.systemLog('error', `Failed to change role for ${email}`, e);
+        showToast("Error updating role. Check your permissions.");
+    }
+};
+
+window.removeSystemUser = async (email) => {
+    if(!confirm(`CRITICAL: Are you sure you want to permanently revoke CRM access for ${email}?`)) return;
+    try {
+        await db.collection('users').doc(email).delete();
+        showToast(`Access revoked for ${email}`);
+    } catch(e) {
+        window.systemLog('error', `Failed to remove user ${email}`, e);
+        showToast("Error removing user. Check your permissions.");
+    }
+};
+
+window.quickAddUser = async () => {
+    const email = prompt("Enter the new user's Google Workspace Email:");
+    if (!email || !email.includes('@')) return showToast("Valid email required.");
+    
+    const role = prompt("Enter their starting role (Employee, Manager, Admin):", "Employee");
+    if (!['Employee', 'Manager', 'Admin'].includes(role)) return showToast("Invalid role entered.");
+
+    try {
+        await db.collection('users').doc(email.toLowerCase()).set({
+            email: email.toLowerCase(),
+            role: role,
+            createdAt: Date.now()
+        }, { merge: true });
+        
+        showToast(`User ${email} invited as ${role}!`);
+    } catch(e) {
+        window.systemLog('error', 'Failed to add new user', e);
+        showToast("Error adding user.");
+    }
+};
+
+/* ==========================================================================
+   23. STARTUP
+   ========================================================================= */
+window.onload = () => { init(); };
+
+
+/* ==========================================================================
+   DEVELOPER UTILITIES (DO NOT RUN IN PRODUCTION CODE)
+   Run these manually in the browser console (F12) if needed.
+   ========================================================================= */
+/*
+// SCRIPT 1: Push offline local_ records to Firestore
+window.forceSyncLocalToCloud = async () => { ... }
+
+// SCRIPT 2: Migrate hardcoded ALLOWED_USERS array to Firestore `users` collection
+window.migrateUsersToCloud = async () => { ... }
+
+// SCRIPT 3: Bulk Import JSON data directly to Firestore
+window.importJsonToFirestore = async () => { ... }
+*/
