@@ -6,84 +6,79 @@
     <title>Nileprise CRM</title>
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-storage.js"></script>
 
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <div id="toast" class="toast-notification"><span id="toast-msg"></span></div>
+    <div id="toast" class="toast-notification" role="alert" aria-live="assertive"><span id="toast-msg"></span></div>
 
     <div id="dashboard-screen" class="screen main-app active">
         
-        <nav id="sidebar" class="sidebar">
+        <nav id="sidebar" class="sidebar" aria-label="Main Navigation">
             <div class="sidebar-header">
                 <h2>NILEPRISE</h2>
                 <div id="prof-email-display-sidebar" class="user-role-badge"></div>
             </div>
             
             <div class="nav-links">
-                <div class="nav-item active" data-target="view-dashboard">
-                    <i class="fa-solid fa-chart-pie"></i> <span>Dashboard</span>
+                <div class="nav-item active" data-target="view-dashboard" role="button" tabindex="0">
+                    <i class="fa-solid fa-chart-pie" aria-hidden="true"></i> <span>Dashboard</span>
                 </div>
-                <div class="nav-item" data-target="view-inbox">
-                    <i class="fa-solid fa-inbox"></i> <span>Workspace Inbox</span>
+                <div class="nav-item" data-target="view-inbox" role="button" tabindex="0">
+                    <i class="fa-solid fa-inbox" aria-hidden="true"></i> <span>Workspace Inbox</span>
                 </div>
-                <div class="nav-item" data-target="view-hub">
-                    <i class="fa-solid fa-arrows-to-circle"></i> <span>Activity Hub</span>
+                <div class="nav-item" data-target="view-hub" role="button" tabindex="0">
+                    <i class="fa-solid fa-arrows-to-circle" aria-hidden="true"></i> <span>Activity Hub</span>
                 </div>
-                <div class="nav-item" data-target="view-candidates">
-                    <i class="fa-solid fa-users"></i> <span>Candidates</span>
+                <div class="nav-item" data-target="view-candidates" role="button" tabindex="0">
+                    <i class="fa-solid fa-users" aria-hidden="true"></i> <span>Candidates</span>
                 </div>
-                <div class="nav-item" data-target="view-placements">
-                    <i class="fa-solid fa-trophy"></i> <span>Placements</span>
+                <div class="nav-item" data-target="view-placements" role="button" tabindex="0">
+                    <i class="fa-solid fa-trophy" aria-hidden="true"></i> <span>Placements</span>
                 </div>
-                <div class="nav-item" data-target="view-onboarding">
-                    <i class="fa-solid fa-file-signature"></i> <span>Onboarding</span>
+                <div class="nav-item" data-target="view-onboarding" role="button" tabindex="0">
+                    <i class="fa-solid fa-file-signature" aria-hidden="true"></i> <span>Onboarding</span>
                 </div>
-                <div class="nav-item" data-target="view-employees">
-                    <i class="fa-solid fa-id-badge"></i> <span>Staff Directory</span>
+                <div class="nav-item" data-target="view-employees" role="button" tabindex="0">
+                    <i class="fa-solid fa-id-badge" aria-hidden="true"></i> <span>Staff Directory</span>
                 </div>
             </div>
 
             <div class="sidebar-footer">
-                <div class="nav-item" data-target="view-profile">
-                    <i class="fa-solid fa-user-gear"></i> <span>My Profile</span>
+                <div class="nav-item" data-target="view-profile" role="button" tabindex="0">
+                    <i class="fa-solid fa-user-gear" aria-hidden="true"></i> <span>My Profile</span>
                 </div>
-                <div class="nav-item" data-target="view-settings">
-                    <i class="fa-solid fa-gear"></i> <span>Settings</span>
+                <div class="nav-item" data-target="view-settings" role="button" tabindex="0">
+                    <i class="fa-solid fa-gear" aria-hidden="true"></i> <span>Settings</span>
                 </div>
-                <div class="nav-item text-danger" id="btn-logout">
-                    <i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span>
+                <div class="nav-item text-danger" id="btn-logout" role="button" tabindex="0">
+                    <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> <span>Logout</span>
                 </div>
             </div>
         </nav>
 
-        <div id="sidebar-overlay"></div>
+        <div id="sidebar-overlay" aria-hidden="true"></div>
 
         <main class="main-content">
             
             <header class="top-header">
                 <div class="header-left">
-                    <button id="btn-mobile-menu" class="btn-icon-small"><i class="fa-solid fa-bars"></i></button>
-                    <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Dashboard</h2>
+                    <button id="btn-mobile-menu" class="btn-icon-small" aria-label="Open Mobile Menu"><i class="fa-solid fa-bars" aria-hidden="true"></i></button>
+                    <h2 id="page-title"><i class="fa-solid fa-chart-pie" aria-hidden="true"></i> Dashboard</h2>
                 </div>
                 <div class="header-right">
                     <span id="header-updated" class="status-indicator" style="display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.85rem; margin-right: 15px;">
-                        <i class="fa-solid fa-satellite-dish" style="color: #22c55e;"></i> Live System
+                        <i class="fa-solid fa-satellite-dish" style="color: #22c55e;" aria-hidden="true"></i> Live System
                     </span>
                     
-                    <div class="user-profile-mini" onclick="document.querySelector('.nav-item[data-target=\'view-profile\']').click()" style="cursor: pointer;">
-                        <i class="fa-solid fa-circle-user" id="profile-main-icon" style="font-size: 1.5rem; color: var(--primary);"></i>
-                        <img id="profile-main-img" src="" alt="Profile" style="display:none; width: 24px; height: 24px; border-radius:50%; object-fit:cover;">
+                    <div class="user-profile-mini" onclick="document.querySelector('.nav-item[data-target=\'view-profile\']').click()" style="cursor: pointer;" role="button" tabindex="0" aria-label="View Profile">
+                        <i class="fa-solid fa-circle-user" id="profile-main-icon" style="font-size: 1.5rem; color: var(--primary);" aria-hidden="true"></i>
+                        <img id="profile-main-img" src="" alt="User Profile Image" style="display:none; width: 24px; height: 24px; border-radius:50%; object-fit:cover;">
                         <span id="display-username">User</span>
                     </div>
                 </div>
@@ -94,42 +89,42 @@
                 <div id="view-dashboard" class="content-view active">
                     <div class="stats-grid">
                         <div class="stat-card">
-                            <div class="stat-icon cyan"><i class="fa-solid fa-users"></i></div>
+                            <div class="stat-icon cyan"><i class="fa-solid fa-users" aria-hidden="true"></i></div>
                             <div class="stat-details">
                                 <h3>Total Candidates</h3>
                                 <h2 id="stat-total">0</h2>
                             </div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-icon green"><i class="fa-solid fa-user-check"></i></div>
+                            <div class="stat-icon green"><i class="fa-solid fa-user-check" aria-hidden="true"></i></div>
                             <div class="stat-details">
                                 <h3>Active Pipeline</h3>
                                 <h2 id="stat-active">0</h2>
                             </div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-icon gold"><i class="fa-solid fa-trophy"></i></div>
+                            <div class="stat-icon gold"><i class="fa-solid fa-trophy" aria-hidden="true"></i></div>
                             <div class="stat-details">
                                 <h3>Placements</h3>
                                 <h2 id="stat-placed">0</h2>
                             </div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-icon purple"><i class="fa-solid fa-code"></i></div>
+                            <div class="stat-icon purple"><i class="fa-solid fa-code" aria-hidden="true"></i></div>
                             <div class="stat-details">
                                 <h3>Technologies</h3>
                                 <h2 id="stat-tech">0</h2>
                             </div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-icon red"><i class="fa-solid fa-user-xmark"></i></div>
+                            <div class="stat-icon red"><i class="fa-solid fa-user-xmark" aria-hidden="true"></i></div>
                             <div class="stat-details">
                                 <h3>Inactive</h3>
                                 <h2 id="stat-inactive">0</h2>
                             </div>
                         </div>
                         <div class="stat-card">
-                            <div class="stat-icon blue"><i class="fa-solid fa-id-card-clip"></i></div>
+                            <div class="stat-icon blue"><i class="fa-solid fa-id-card-clip" aria-hidden="true"></i></div>
                             <div class="stat-details">
                                 <h3>Recruiters</h3>
                                 <h2 id="stat-rec">0</h2>
@@ -139,13 +134,13 @@
 
                     <div class="charts-grid" style="margin-top: 20px;">
                         <div class="chart-container large-chart glass-panel">
-                            <h3><i class="fa-solid fa-chart-column"></i> Candidates per Recruiter</h3>
+                            <h3><i class="fa-solid fa-chart-column" aria-hidden="true"></i> Candidates per Recruiter</h3>
                             <div class="canvas-wrapper">
                                 <canvas id="chart-recruiter"></canvas>
                             </div>
                         </div>
                         <div class="chart-container small-chart glass-panel">
-                            <h3><i class="fa-solid fa-chart-pie"></i> Top Technologies</h3>
+                            <h3><i class="fa-solid fa-chart-pie" aria-hidden="true"></i> Top Technologies</h3>
                             <div class="canvas-wrapper">
                                 <canvas id="chart-tech"></canvas>
                             </div>
@@ -157,23 +152,23 @@
                     <div class="controls-bar glass-panel">
                         <div class="control-group">
                             <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="text" id="search-input" placeholder="Search name or tech...">
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <input type="text" id="search-input" placeholder="Search name or tech..." aria-label="Search Candidates">
                             </div>
-                            <select id="filter-recruiter" class="filter-dropdown"></select>
-                            <select id="filter-tech" class="filter-dropdown"></select>
-                            <button id="btn-reset-filters" class="btn-secondary" title="Reset Filters"><i class="fa-solid fa-filter-circle-xmark"></i></button>
+                            <select id="filter-recruiter" class="filter-dropdown" aria-label="Filter by Recruiter"></select>
+                            <select id="filter-tech" class="filter-dropdown" aria-label="Filter by Technology"></select>
+                            <button id="btn-reset-filters" class="btn-secondary" title="Reset Filters" aria-label="Reset Filters"><i class="fa-solid fa-filter-circle-xmark" aria-hidden="true"></i></button>
                         </div>
                         
                         <div class="control-group">
-                            <div class="status-toggles">
+                            <div class="status-toggles" role="group" aria-label="Status Filters">
                                 <button class="btn-toggle active" data-status="">All</button>
                                 <button class="btn-toggle text-success" data-status="Active">Active</button>
                                 <button class="btn-toggle text-danger" data-status="Inactive">Inactive</button>
                             </div>
-                            <button class="btn-primary" onclick="addInlineCandidateRow()"><i class="fa-solid fa-user-plus"></i> Add Candidate</button>
+                            <button class="btn-primary" onclick="addInlineCandidateRow()"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add Candidate</button>
                             <button id="btn-delete-selected" class="btn-danger" style="display:none;" onclick="openDeleteModal('cand')">
-                                <i class="fa-solid fa-trash"></i> Delete (<span id="selected-count">0</span>)
+                                <i class="fa-solid fa-trash" aria-hidden="true"></i> Delete (<span id="selected-count">0</span>)
                             </button>
                         </div>
                     </div>
@@ -185,329 +180,35 @@
                         </table>
                     </div>
                     <div class="table-footer" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="cand-footer-count">Showing 0 total records</span>
+                        <span id="cand-footer-count" aria-live="polite">Showing 0 total records</span>
                         <div class="pagination-controls" style="display: flex; align-items: center; gap: 10px;">
-                            <button class="btn-icon-small" onclick="changePage('cand', -1)" title="Previous Page"><i class="fa-solid fa-chevron-left"></i></button>
+                            <button class="btn-icon-small" onclick="changePage('cand', -1)" aria-label="Previous Page"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
                             <span id="cand-page-indicator" style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Page 1 of 1</span>
-                            <button class="btn-icon-small" onclick="changePage('cand', 1)" title="Next Page"><i class="fa-solid fa-chevron-right"></i></button>
-                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" onchange="state.pagination.cand.limit = parseInt(this.value); state.pagination.cand.current = 1; refreshViewForType('cand');">
+                            <button class="btn-icon-small" onclick="changePage('cand', 1)" aria-label="Next Page"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>
+                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" aria-label="Records per page" onchange="state.pagination.cand.limit = parseInt(this.value); state.pagination.cand.current = 1; refreshViewForType('cand');">
                                 <option value="25">25 / page</option>
                                 <option value="50" selected>50 / page</option>
                                 <option value="100">100 / page</option>
                             </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="view-hub" class="content-view">
-                    <div class="hub-stats-ribbon glass-panel">
-                        <div class="hub-stat-box cyan"><div class="hub-stat-num" id="stat-sub">0</div><div>Submissions</div></div>
-                        <div class="hub-stat-box gold"><div class="hub-stat-num" id="stat-scr">0</div><div>Screenings</div></div>
-                        <div class="hub-stat-box purple"><div class="hub-stat-num" id="stat-int">0</div><div>Interviews</div></div>
-                    </div>
-
-                    <div class="controls-bar glass-panel" style="margin-top: 20px;">
-                        <div class="control-group">
-                            <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="text" id="hub-search-input" placeholder="Search candidate...">
-                            </div>
-                        </div>
-                        <div class="control-group hub-controls">
-                            <span id="hub-range-label" style="color: var(--primary); font-weight: bold; font-size: 0.9rem;"></span>
-                            <input type="date" id="hub-date-picker" class="date-input-modern" onchange="updateHubStats(null, this.value)">
-                            <div class="status-toggles">
-                                <button class="filter-btn btn-toggle active" data-filter="daily" onclick="updateHubStats('daily')">Daily</button>
-                                <button class="filter-btn btn-toggle" data-filter="weekly" onclick="updateHubStats('weekly')">Weekly</button>
-                                <button class="filter-btn btn-toggle" data-filter="monthly" onclick="updateHubStats('monthly')">Monthly</button>
-                            </div>
-                            <button id="btn-delete-hub" class="btn-danger" style="display:none;" onclick="openDeleteModal('hub')">
-                                <i class="fa-solid fa-trash"></i> Delete (<span id="hub-selected-count">0</span>)
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="table-container custom-scroll">
-                        <table id="hub-table">
-                            <thead id="hub-table-head"></thead>
-                            <tbody id="hub-table-body"></tbody>
-                        </table>
-                    </div>
-                    <div class="table-footer" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="hub-footer-count">Showing 0 active records</span>
-                        <div class="pagination-controls" style="display: flex; align-items: center; gap: 10px;">
-                            <button class="btn-icon-small" onclick="changePage('hub', -1)"><i class="fa-solid fa-chevron-left"></i></button>
-                            <span id="hub-page-indicator" style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Page 1 of 1</span>
-                            <button class="btn-icon-small" onclick="changePage('hub', 1)"><i class="fa-solid fa-chevron-right"></i></button>
-                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" onchange="state.pagination.hub.limit = parseInt(this.value); state.pagination.hub.current = 1; refreshViewForType('hub');">
-                                <option value="25">25 / page</option>
-                                <option value="50" selected>50 / page</option>
-                                <option value="100">100 / page</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="view-placements" class="content-view">
-                    <div class="controls-bar glass-panel">
-                        <div class="control-group">
-                            <div class="status-toggles" style="margin-right: 15px;">
-                                <button class="filter-btn btn-toggle active" onclick="updatePlacementFilter('monthly', this)">Monthly</button>
-                                <button class="filter-btn btn-toggle" onclick="updatePlacementFilter('yearly', this)">Yearly</button>
-                            </div>
-                            <input type="month" id="placement-month-picker" class="date-input-modern" onchange="renderPlacementTable()">
-                            <input type="number" id="placement-year-picker" class="date-input-modern" min="2020" max="2050" value="2026" style="display:none;" onchange="renderPlacementTable()">
-                        </div>
-                        <div class="control-group">
-                            <button class="btn-primary" onclick="addInlinePlacementRow()"><i class="fa-solid fa-trophy"></i> Add Placement</button>
-                            <button id="btn-delete-placement" class="btn-danger" style="display:none;" onclick="openDeleteModal('place')">
-                                <i class="fa-solid fa-trash"></i> Delete (<span id="place-selected-count">0</span>)
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div class="table-container custom-scroll">
-                        <table id="placement-table">
-                            <thead id="placement-table-head"></thead>
-                            <tbody id="placement-table-body"></tbody>
-                        </table>
-                    </div>
-                    <div class="table-footer" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="placement-footer-count">Showing 0 total records</span>
-                        <div class="pagination-controls" style="display: flex; align-items: center; gap: 10px;">
-                            <button class="btn-icon-small" onclick="changePage('place', -1)"><i class="fa-solid fa-chevron-left"></i></button>
-                            <span id="place-page-indicator" style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Page 1 of 1</span>
-                            <button class="btn-icon-small" onclick="changePage('place', 1)"><i class="fa-solid fa-chevron-right"></i></button>
-                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" onchange="state.pagination.place.limit = parseInt(this.value); state.pagination.place.current = 1; refreshViewForType('place');">
-                                <option value="25">25 / page</option>
-                                <option value="50" selected>50 / page</option>
-                                <option value="100">100 / page</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="view-employees" class="content-view">
-                    <div class="controls-bar glass-panel">
-                        <div class="control-group">
-                            <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="text" id="emp-search-input" placeholder="Search staff...">
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <button class="btn-primary" onclick="addInlineEmployeeRow()"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
-                            <button id="btn-delete-employee" class="btn-danger" style="display:none;" onclick="openDeleteModal('emp')">
-                                <i class="fa-solid fa-trash"></i> Delete (<span id="emp-selected-count">0</span>)
-                            </button>
-                        </div>
-                    </div>
-                    <div class="table-container custom-scroll">
-                        <table id="employee-table">
-                            <thead id="employee-table-head"></thead>
-                            <tbody id="employee-table-body"></tbody>
-                        </table>
-                    </div>
-                    <div class="table-footer" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="emp-footer-count">Showing 0 total records</span>
-                        <div class="pagination-controls" style="display: flex; align-items: center; gap: 10px;">
-                            <button class="btn-icon-small" onclick="changePage('emp', -1)"><i class="fa-solid fa-chevron-left"></i></button>
-                            <span id="emp-page-indicator" style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Page 1 of 1</span>
-                            <button class="btn-icon-small" onclick="changePage('emp', 1)"><i class="fa-solid fa-chevron-right"></i></button>
-                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" onchange="state.pagination.emp.limit = parseInt(this.value); state.pagination.emp.current = 1; refreshViewForType('emp');">
-                                <option value="25">25 / page</option>
-                                <option value="50" selected>50 / page</option>
-                                <option value="100">100 / page</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="view-onboarding" class="content-view">
-                    <div class="controls-bar glass-panel">
-                        <div class="control-group">
-                            <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="text" id="onb-search-input" placeholder="Search onboarding...">
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <button class="btn-primary" onclick="addInlineOnboardingRow()"><i class="fa-solid fa-file-signature"></i> Add Record</button>
-                            <button id="btn-delete-onboarding" class="btn-danger" style="display:none;" onclick="openDeleteModal('onb')">
-                                <i class="fa-solid fa-trash"></i> Delete (<span id="onboarding-selected-count">0</span>)
-                            </button>
-                        </div>
-                    </div>
-                    <div class="table-container custom-scroll">
-                        <table id="onboarding-table">
-                            <thead id="onboarding-table-head"></thead>
-                            <tbody id="onboarding-table-body"></tbody>
-                        </table>
-                    </div>
-                    <div class="table-footer" style="display: flex; justify-content: space-between; align-items: center;">
-                        <span id="onb-footer-count">Showing 0 total records</span>
-                        <div class="pagination-controls" style="display: flex; align-items: center; gap: 10px;">
-                            <button class="btn-icon-small" onclick="changePage('onb', -1)"><i class="fa-solid fa-chevron-left"></i></button>
-                            <span id="onb-page-indicator" style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Page 1 of 1</span>
-                            <button class="btn-icon-small" onclick="changePage('onb', 1)"><i class="fa-solid fa-chevron-right"></i></button>
-                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" onchange="state.pagination.onb.limit = parseInt(this.value); state.pagination.onb.current = 1; refreshViewForType('onb');">
-                                <option value="25">25 / page</option>
-                                <option value="50" selected>50 / page</option>
-                                <option value="100">100 / page</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="view-inbox" class="content-view">
-                    <div class="gmail-container glass-panel">
-                        <div class="gmail-sidebar">
-                            <ul class="gmail-nav custom-scroll">
-                                <li onclick="renderGmailList('INBOX')" class="active"><span class="material-icons text-cyan">inbox</span> Inbox</li>
-                                <li onclick="renderGmailList('STARRED')"><span class="material-icons text-gold">star</span> Starred</li>
-                                
-                                <li class="gmail-nav-title" onclick="toggleCategories()">Categories <i class="fa-solid fa-caret-down" style="float:right; margin-top:4px;"></i></li>
-                                <div id="categories-submenu" style="display:none; padding-left: 15px;">
-                                    <li onclick="renderGmailList('CATEGORY_SOCIAL')"><span class="material-icons text-blue">people</span> Social</li>
-                                    <li onclick="renderGmailList('CATEGORY_UPDATES')"><span class="material-icons text-gold">info</span> Updates</li>
-                                    <li onclick="renderGmailList('CATEGORY_PROMOTIONS')"><span class="material-icons text-success">local_offer</span> Promotions</li>
-                                </div>
-                                
-                                <li class="gmail-nav-title" onclick="toggleMore()">More <i class="fa-solid fa-caret-down" style="float:right; margin-top:4px;"></i></li>
-                                <div id="more-submenu" style="display:none; padding-left: 15px;">
-                                    <li onclick="renderGmailList('IMPORTANT')"><span class="material-icons text-gold">label_important</span> Important</li>
-                                    <li onclick="renderGmailList('SPAM')"><span class="material-icons text-danger">report_gmailerrorred</span> Spam</li>
-                                    <li onclick="renderGmailList('TRASH')"><span class="material-icons text-muted">delete</span> Trash</li>
-                                </div>
-
-                                <li class="gmail-nav-title" style="display:flex; justify-content:space-between; align-items:center;">
-                                    Labels 
-                                    <i class="fa-solid fa-plus hover-primary" style="cursor:pointer;" onclick="openCreateLabelModal()" title="Create Label"></i>
-                                </li>
-                                <div id="manage-indicator" style="font-size: 0.75rem; color: var(--text-muted); padding-left: 15px; font-style: italic;">Syncing labels...</div>
-                                <div id="dynamic-labels-container"></div>
-                            </ul>
-                        </div>
-
-                        <div class="gmail-main">
-                            <div class="gmail-toolbar">
-                                <div class="toolbar-left">
-                                    <button class="btn-icon-small" onclick="refreshEmails()"><i class="fa-solid fa-rotate-right"></i></button>
-                                    <div class="search-box" style="margin-left: 10px; width: 300px;">
-                                        <i class="fa-solid fa-magnifying-glass"></i>
-                                        <input type="text" id="gmail-search-input" placeholder="Search mail..." onkeydown="if(event.key==='Enter') renderGmailList('INBOX')">
-                                    </div>
-                                </div>
-                                <div class="toolbar-right">
-                                    <button id="btn-gmail-auth" class="btn-primary" style="display:none;"><i class="fa-brands fa-google"></i> Connect Gmail</button>
-                                    <button id="btn-gmail-signout" class="btn-secondary" style="display:none;">Disconnect</button>
-                                </div>
-                            </div>
-
-                            <div id="gmail-list-view" class="gmail-list custom-scroll">
-                                <div id="gmail-rows-container">
-                                    <div style="padding:40px; text-align:center; color:var(--text-muted);">
-                                        <i class="fa-brands fa-google" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.5;"></i>
-                                        <p>Connecting to secure workspace...</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div id="gmail-detail-view" class="gmail-detail custom-scroll" style="display: none;">
-                                <div class="detail-header">
-                                    <button class="btn-icon-small" onclick="backToGmailList()"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                                    <button class="btn-primary" onclick="syncCurrentEmailToCandidate()"><i class="fa-solid fa-link"></i> Sync to Candidate</button>
-                                </div>
-                                <h2 id="detail-subject" style="margin: 15px 0;"></h2>
-                                <div class="detail-meta">
-                                    <div><i class="fa-solid fa-user-circle"></i> <strong id="detail-sender"></strong></div>
-                                    <div id="detail-date" style="color: var(--text-muted); font-size: 0.85rem;"></div>
-                                </div>
-                                <div id="detail-message" class="detail-body"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="view-profile" class="content-view">
-                    <div class="profile-container">
-                        <div class="profile-header-card glass-panel">
-                            <div class="profile-avatar-wrapper" onclick="triggerPhotoUpload()">
-                                <img id="profile-main-img" src="" alt="Profile" style="display:none; width:100%; height:100%; object-fit:cover;">
-                                <i id="profile-main-icon" class="fa-solid fa-user"></i>
-                                <div class="avatar-overlay"><i class="fa-solid fa-camera"></i></div>
-                                <div id="avatar-loading" class="avatar-loading" style="display:none;"><i class="fa-solid fa-spinner fa-spin"></i></div>
-                            </div>
-                            <input type="file" id="profile-upload-input" accept="image/*" style="display:none;" onchange="handlePhotoUpload(this)">
-                            
-                            <div class="profile-title-info">
-                                <h2 id="prof-name-display">User Name</h2>
-                                <div id="prof-role-display" class="user-role-badge" style="display:inline-block; margin-top:5px;">Role</div>
-                                <button id="btn-delete-photo" class="btn-icon-small text-danger" style="display:none; margin-top:10px;" onclick="deleteProfilePhoto()"><i class="fa-solid fa-trash"></i> Remove Photo</button>
-                            </div>
-                        </div>
-
-                        <div class="profile-form-grid glass-panel">
-                            <h3 style="grid-column: 1 / -1; border-bottom: 1px solid var(--glass-border); padding-bottom: 10px; margin-bottom: 10px;">Personal Information</h3>
-                            
-                            <div class="form-group">
-                                <label>First Name</label>
-                                <input type="text" id="prof-first" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label>Last Name</label>
-                                <input type="text" id="prof-last" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label>Date of Birth</label>
-                                <input type="date" id="prof-dob" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label>Designation</label>
-                                <input type="text" id="prof-designation" class="form-input" readonly style="opacity:0.7;">
-                            </div>
-
-                            <h3 style="grid-column: 1 / -1; border-bottom: 1px solid var(--glass-border); padding-bottom: 10px; margin-bottom: 10px; margin-top: 20px;">Contact Information</h3>
-
-                            <div class="form-group">
-                                <label>Official Email</label>
-                                <input type="email" id="prof-office-email" class="form-input" readonly style="opacity:0.7;">
-                            </div>
-                            <div class="form-group">
-                                <label>Personal Email</label>
-                                <input type="email" id="prof-personal-email" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label>Work Mobile</label>
-                                <input type="text" id="prof-work-mobile" class="form-input">
-                            </div>
-                            <div class="form-group">
-                                <label>Personal Mobile</label>
-                                <input type="text" id="prof-personal-mobile" class="form-input">
-                            </div>
-
-                            <div style="grid-column: 1 / -1; text-align: right; margin-top: 20px;">
-                                <button id="btn-save-profile" class="btn-primary" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Profile</button>
-                            </div>
                         </div>
                     </div>
                 </div>
 
                 <div id="view-settings" class="content-view">
                     <div class="glass-panel" style="max-width: 600px; margin: 0 auto; padding: 30px;">
-                        <h2><i class="fa-solid fa-gear text-cyan"></i> System Settings</h2>
+                        <h2><i class="fa-solid fa-gear text-cyan" aria-hidden="true"></i> System Settings</h2>
                         <p style="color: var(--text-muted); margin-bottom: 30px;">Manage your CRM data and system preferences here.</p>
                         
                         <div style="border-bottom: 1px solid var(--glass-border); padding-bottom: 20px; margin-bottom: 20px;">
-                            <h3><i class="fa-solid fa-file-csv"></i> Export Data</h3>
+                            <h3><i class="fa-solid fa-file-csv" aria-hidden="true"></i> Export Data</h3>
                             <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Download a complete backup of all records to a CSV file (Excel compatible). This includes all custom columns.</p>
-                            <button class="btn-primary" onclick="exportData()"><i class="fa-solid fa-download"></i> Download Full Backup</button>
+                            <button class="btn-primary" onclick="exportData()"><i class="fa-solid fa-download" aria-hidden="true"></i> Download Full Backup</button>
                         </div>
 
                         <div>
-                            <h3 class="text-danger"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone</h3>
+                            <h3 class="text-danger"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Danger Zone</h3>
                             <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Permanently wipe all candidate data from the cloud and local storage. Only Admins can perform this action.</p>
-                            <button class="btn-danger" onclick="resetSystem()"><i class="fa-solid fa-skull-crossbones"></i> Factory Reset System</button>
+                            <button class="btn-danger" onclick="resetSystem()"><i class="fa-solid fa-skull-crossbones" aria-hidden="true"></i> Factory Reset System</button>
                         </div>
                     </div>
                 </div>
@@ -516,10 +217,10 @@
         </main>
     </div>
 
-    <div id="delete-modal" class="modal-overlay" style="display:none;">
+    <div id="delete-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title" style="display:none;">
         <div class="glass-panel" style="padding: 30px; text-align: center; max-width: 400px;">
-            <i class="fa-solid fa-triangle-exclamation text-danger" style="font-size: 3rem; margin-bottom: 15px;"></i>
-            <h3>Confirm Deletion</h3>
+            <i class="fa-solid fa-triangle-exclamation text-danger" style="font-size: 3rem; margin-bottom: 15px;" aria-hidden="true"></i>
+            <h3 id="delete-modal-title">Confirm Deletion</h3>
             <p style="margin: 15px 0;">Are you sure you want to permanently delete <b id="del-count" class="text-danger">0</b> selected record(s)?</p>
             <div class="modal-actions" style="justify-content: center; margin-top: 20px;">
                 <button class="btn-secondary" onclick="closeDeleteModal()">Cancel</button>
@@ -528,15 +229,15 @@
         </div>
     </div>
 
-    <div id="add-column-modal" class="modal-overlay" style="display:none;">
+    <div id="add-column-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-col-title" style="display:none;">
         <div class="glass-panel" style="padding: 30px; max-width: 400px; width: 100%;">
-            <h3><i class="fa-solid fa-table-columns text-cyan"></i> Add Custom Column</h3>
+            <h3 id="add-col-title"><i class="fa-solid fa-table-columns text-cyan" aria-hidden="true"></i> Add Custom Column</h3>
             <div class="form-group" style="margin-top: 20px;">
-                <label>Column Name</label>
+                <label for="new-col-name">Column Name</label>
                 <input type="text" id="new-col-name" class="form-input" placeholder="e.g., Skype ID, Rate">
             </div>
             <div class="form-group">
-                <label>Data Type</label>
+                <label for="new-col-type">Data Type</label>
                 <select id="new-col-type" class="form-input">
                     <option value="text">Text (Default)</option>
                     <option value="url">Link / URL</option>
@@ -550,52 +251,28 @@
         </div>
     </div>
 
-    <div id="create-label-modal" class="modal-overlay" style="display:none;">
-        <div class="glass-panel" style="padding: 25px; width: 350px;">
-            <h3 style="margin-bottom: 20px;">Create New Label</h3>
-            <input type="text" id="new-label-name" class="form-input" placeholder="Label name" style="margin-bottom: 20px;">
-            
-            <label style="font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 10px;">Select Color:</label>
-            <div class="label-color-grid" style="margin-bottom: 25px;">
-                <div class="color-circle selected" style="background:#e91e63" onclick="selectColor(this, '#e91e63')"></div>
-                <div class="color-circle" style="background:#9c27b0" onclick="selectColor(this, '#9c27b0')"></div>
-                <div class="color-circle" style="background:#2196f3" onclick="selectColor(this, '#2196f3')"></div>
-                <div class="color-circle" style="background:#00bcd4" onclick="selectColor(this, '#00bcd4')"></div>
-                <div class="color-circle" style="background:#4caf50" onclick="selectColor(this, '#4caf50')"></div>
-                <div class="color-circle" style="background:#ff9800" onclick="selectColor(this, '#ff9800')"></div>
-                <div class="color-circle" style="background:#f44336" onclick="selectColor(this, '#f44336')"></div>
-                <div class="color-circle" style="background:#607d8b" onclick="selectColor(this, '#607d8b')"></div>
-            </div>
-            
-            <div class="modal-actions">
-                <button class="btn-secondary" onclick="closeCreateLabelModal()">Cancel</button>
-                <button class="btn-primary" onclick="createLabel()">Create</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="add-hub-note-modal" class="modal-overlay" style="display:none; z-index: 10000;">
+    <div id="add-hub-note-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="hub-note-modal-title" style="display:none; z-index: 10000;">
         <div class="glass-panel" style="padding: 30px; max-width: 400px; width: 100%;">
-            <h3 id="hub-note-modal-title"><i class="fa-solid fa-plus text-cyan"></i> Add Log Entry</h3>
+            <h3 id="hub-note-modal-title"><i class="fa-solid fa-plus text-cyan" aria-hidden="true"></i> Add Log Entry</h3>
             <form id="hub-note-form">
                 <input type="hidden" id="hub-note-candidate-id">
                 <input type="hidden" id="hub-note-log-type">
                 <div class="form-group" style="margin-top: 20px;">
-                    <label>Date</label>
+                    <label for="hub-note-date">Date</label>
                     <input type="date" id="hub-note-date" class="form-input" required>
                 </div>
                 <div class="form-group">
-                    <label>Subject / Note *</label>
+                    <label for="hub-note-subject">Subject / Note *</label>
                     <input type="text" id="hub-note-subject" class="form-input" placeholder="e.g., Sent RTR, Technical Round 1..." required>
                 </div>
                 <div class="modal-actions" style="margin-top: 25px;">
                     <button type="button" class="btn-secondary" onclick="closeHubNoteModal()">Cancel</button>
-                    <button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Entry</button>
+                    <button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Entry</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>
