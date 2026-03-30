@@ -1,15 +1,29 @@
 /* ==========================================================================
-   1. CONFIGURATION (FIREBASE + GMAIL API)
+   1. CONFIGURATION (FIREBASE v12 MODULAR + GMAIL API)
    ========================================================================= */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-analytics.js";
+import { 
+    getFirestore, enableMultiTabIndexedDbPersistence, 
+    collection, doc, getDoc, setDoc, updateDoc, deleteDoc, 
+    onSnapshot, writeBatch, addDoc, query, where, deleteField 
+} from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
+import { 
+    getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword,
+    sendPasswordResetEmail, createUserWithEmailAndPassword
+} from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
+import { 
+    getStorage, ref, uploadBytes, getDownloadURL 
+} from "https://www.gstatic.com/firebasejs/12.11.0/firebase-storage.js";
+
 const firebaseConfig = {
-    apiKey: "AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE",
-    authDomain: "nile-group-crm.firebaseapp.com",
-    databaseURL: "https://nile-group-crm-default-rtdb.firebaseio.com",
-    projectId: "nile-group-crm",
-    storageBucket: "nile-group-crm.firebasestorage.app",
-    messagingSenderId: "575678017832",
-    appId: "1:575678017832:web:8ae69a81cfaaf7a717601d",
-    measurementId: "G-11XNH0CYY1"
+    apiKey: "AIzaSyDTX7cHfS8sQEREb2qwOR50YuZsdsPhr40",
+    authDomain: "nilegroup-crm-448c4.firebaseapp.com",
+    projectId: "nilegroup-crm-448c4",
+    storageBucket: "nilegroup-crm-448c4.firebasestorage.app",
+    messagingSenderId: "96773475717",
+    appId: "1:96773475717:web:79b2537606b9dc524488ec",
+    measurementId: "G-HXSGWX9LE5"
 };
 
 const GMAIL_CONFIG = {
@@ -19,19 +33,26 @@ const GMAIL_CONFIG = {
     SCOPES: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.labels'
 };
 
+// Initialize Firebase Services
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const storage = getStorage(app);
+
+// Enable Offline Persistence
 try {
-    firebase.initializeApp(firebaseConfig);
-    firebase.firestore().enablePersistence({ experimentalTabSynchronization: true })
-        .catch(function(err) {
-            console.warn("Firebase Persistence Error:", err.code);
-        });
+    enableMultiTabIndexedDbPersistence(db).catch((err) => {
+        console.warn("Firebase Persistence Error:", err.code);
+    });
 } catch (e) {
     console.error("Firebase Init Error:", e);
 }
 
-const db = firebase.firestore();
-const auth = firebase.auth();
-const storage = firebase.storage();
+// Attach to window for inline HTML handlers
+window.db = db;
+window.auth = auth;
+window.storage = storage;
 
 /* ==========================================================================
    2. STATE & AGGRESSIVE LOCAL STORAGE MANAGEMENT
@@ -90,11 +111,11 @@ const storageManager = {
     }
 };
 
-function aggressiveLocalSave(collection, id, field, value) {
-    const idx = state[collection].findIndex(x => x.id === id);
+function aggressiveLocalSave(collectionName, id, field, value) {
+    const idx = state[collectionName].findIndex(x => x.id === id);
     if (idx > -1) {
-        state[collection][idx][field] = value;
-        localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
+        state[collectionName][idx][field] = value;
+        localStorage.setItem(`np_data_${collectionName}`, JSON.stringify(state[collectionName]));
     }
 }
 
@@ -125,15 +146,16 @@ window.openPlacementModal = () => window.addInlinePlacementRow();
    4. INITIALIZATION & ROUTING
    ========================================================================= */
 function init() {
-    initNetworkMonitor(); // Real-time connection tracker
+    initNetworkMonitor();
     setupEventListeners();
     loadGoogleScripts();
     showTableLoaders();
     loadLocalData();
 
-    db.collection('settings').doc('table_config').get().then(doc => {
-        if (doc.exists) {
-            const data = doc.data();
+    // Fetch table config
+    getDoc(doc(db, 'settings', 'table_config')).then(docSnap => {
+        if (docSnap.exists()) {
+            const data = docSnap.data();
             ['colOrders', 'candidates', 'employees', 'onboarding', 'placements', 'hub'].forEach(key => {
                 if (data[key]) state[key === 'colOrders' ? key : 'customColumns'][key] = data[key];
             });
@@ -142,16 +164,17 @@ function init() {
         window.systemLog('warn', 'Failed to load custom table configurations', error.message);
     });
 
-    auth.onAuthStateChanged(async user => {
+    // Auth listener
+    onAuthStateChanged(auth, async user => {
         if (user) {
             state.user = user;
             const email = user.email.toLowerCase();
             
             try {
-                // Fetch the user's profile and role strictly from Firestore
-                const userDoc = await db.collection('users').doc(email).get();
+                // Fetch user profile
+                const userDoc = await getDoc(doc(db, 'users', email));
                 
-                if (userDoc.exists) {
+                if (userDoc.exists()) {
                     const userData = userDoc.data();
                     state.userRole = userData.role || 'Employee';
                     state.currentUserName = `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || user.displayName || 'Staff';
@@ -183,11 +206,58 @@ function init() {
             }
 
         } else {
-            // Unauthenticated state
+            // Unauthenticated state: Login / Sign Up Dashboard
+            window.isSignUpMode = false;
+
             document.getElementById('dashboard-screen').innerHTML = `
-                <div style="display:flex; height:100vh; width:100vw; align-items:center; justify-content:center; flex-direction:column; background:var(--bg-main);">
-                    <h1 style="color:var(--primary); margin-bottom:20px;">NILEPRISE CRM</h1>
-                    <button class="btn-primary" onclick="forceLogin()"><i class="fa-brands fa-google"></i> Login with Google</button>
+                <div style="display:flex; height:100vh; width:100vw; align-items:center; justify-content:center; background:var(--bg-main);">
+                    <div class="glass-panel" style="padding: 40px; width: 100%; max-width: 400px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+                        <h1 style="color:var(--primary); margin-bottom:10px; letter-spacing: 2px;">NILEPRISE</h1>
+                        <p id="auth-subtitle" style="color:var(--text-muted); margin-bottom: 30px; font-size: 0.9rem;">Workspace Authentication</p>
+                        
+                        <form id="auth-form" onsubmit="handleAuthSubmit(event)" style="display:flex; flex-direction:column; gap:15px; text-align: left;">
+                            
+                            <div id="signup-name-fields" style="display:none; gap:10px;">
+                                <div class="form-group" style="flex:1;">
+                                    <label style="font-size: 0.8rem; padding-left: 5px;">First Name</label>
+                                    <input type="text" id="auth-first" class="form-input" placeholder="First" style="width: 100%;">
+                                </div>
+                                <div class="form-group" style="flex:1;">
+                                    <label style="font-size: 0.8rem; padding-left: 5px;">Last Name</label>
+                                    <input type="text" id="auth-last" class="form-input" placeholder="Last" style="width: 100%;">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label style="font-size: 0.8rem; padding-left: 5px;" for="login-email">Email Address</label>
+                                <div class="search-box" style="width: 100%;">
+                                    <i class="fa-regular fa-envelope"></i>
+                                    <input type="email" id="login-email" placeholder="name@nileprise.com" required style="width: 100%;">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label style="font-size: 0.8rem; padding-left: 5px;" for="login-password">Password</label>
+                                <div class="search-box" style="width: 100%; position: relative;">
+                                    <i class="fa-solid fa-lock"></i>
+                                    <input type="password" id="login-password" placeholder="••••••••" required style="width: 100%; padding-right: 40px;">
+                                    <i class="fa-regular fa-eye" id="toggle-password-icon" style="position: absolute; right: 12px; left: auto; cursor: pointer; color: var(--text-muted); transition: color 0.2s;" onclick="togglePasswordVisibility()"></i>
+                                </div>
+                                <div id="forgot-pwd-wrapper" style="text-align: right; margin-top: 5px;">
+                                    <a href="#" onclick="triggerForgotPassword(event)" style="color: var(--primary); font-size: 0.8rem; text-decoration: none; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">Forgot Password?</a>
+                                </div>
+                            </div>
+
+                            <button type="submit" id="btn-auth-submit" class="btn-primary" style="justify-content: center; padding: 12px; margin-top: 10px; font-size: 1rem;">
+                                Sign In
+                            </button>
+                        </form>
+
+                        <div style="text-align: center; margin-top: 25px; font-size: 0.85rem; color: var(--text-muted);">
+                            <span id="auth-toggle-text">Don't have an account?</span> 
+                            <a href="#" onclick="toggleAuthMode(event)" id="auth-toggle-link" style="color: var(--primary); text-decoration: none; font-weight: 600;">Sign Up</a>
+                        </div>
+                    </div>
                 </div>
             `;
             document.getElementById('dashboard-screen').classList.add('active');
@@ -198,9 +268,122 @@ function init() {
     if (localStorage.getItem('np_theme') === 'light') document.body.classList.add('light-mode');
 }
 
-window.forceLogin = () => {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).catch(err => alert("Login Failed: " + err.message));
+/* ==========================================================================
+   4A. AUTHENTICATION LOGIC
+   ========================================================================= */
+window.toggleAuthMode = (e) => {
+    e.preventDefault();
+    window.isSignUpMode = !window.isSignUpMode;
+    
+    const nameFields = document.getElementById('signup-name-fields');
+    const forgotPwd = document.getElementById('forgot-pwd-wrapper');
+    const submitBtn = document.getElementById('btn-auth-submit');
+    const toggleText = document.getElementById('auth-toggle-text');
+    const toggleLink = document.getElementById('auth-toggle-link');
+    const subtitle = document.getElementById('auth-subtitle');
+
+    if (window.isSignUpMode) {
+        nameFields.style.display = 'flex';
+        forgotPwd.style.display = 'none';
+        submitBtn.innerText = 'Create Account';
+        toggleText.innerText = 'Already have an account?';
+        toggleLink.innerText = 'Sign In';
+        subtitle.innerText = 'Create a New Workspace Account';
+        document.getElementById('auth-first').required = true;
+    } else {
+        nameFields.style.display = 'none';
+        forgotPwd.style.display = 'block';
+        submitBtn.innerText = 'Sign In';
+        toggleText.innerText = "Don't have an account?";
+        toggleLink.innerText = 'Sign Up';
+        subtitle.innerText = 'Workspace Authentication';
+        document.getElementById('auth-first').required = false;
+    }
+};
+
+window.handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    const btn = document.getElementById('btn-auth-submit');
+    
+    const originalText = btn.innerText;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
+    btn.disabled = true;
+
+    try {
+        if (window.isSignUpMode) {
+            const first = document.getElementById('auth-first').value.trim();
+            const last = document.getElementById('auth-last').value.trim();
+            
+            await createUserWithEmailAndPassword(auth, email, password);
+            
+            await setDoc(doc(db, 'users', email.toLowerCase()), {
+                email: email.toLowerCase(),
+                firstName: first,
+                lastName: last,
+                role: 'Guest', 
+                createdAt: Date.now()
+            });
+            
+            showToast("Account created successfully!");
+        } else {
+            await signInWithEmailAndPassword(auth, email, password);
+        }
+    } catch (error) {
+        window.systemLog('error', 'Auth Failed', error);
+        let msg = "Authentication failed.";
+        
+        if (error.code === 'auth/email-already-in-use') msg = "Email is already registered.";
+        else if (error.code === 'auth/weak-password') msg = "Password should be at least 6 characters.";
+        else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') msg = "Incorrect credentials. Please try again.";
+        else if (error.code === 'auth/too-many-requests') msg = "Too many failed attempts. Try again later.";
+        
+        showToast(msg);
+        btn.innerText = originalText;
+        btn.disabled = false;
+    }
+};
+
+window.togglePasswordVisibility = () => {
+    const pwdInput = document.getElementById('login-password');
+    const icon = document.getElementById('toggle-password-icon');
+    
+    if (pwdInput.type === 'password') {
+        pwdInput.type = 'text';
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+        icon.style.color = 'var(--primary)'; 
+    } else {
+        pwdInput.type = 'password';
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+        icon.style.color = 'var(--text-muted)';
+    }
+};
+
+window.triggerForgotPassword = async (e) => {
+    e.preventDefault();
+    const emailInput = document.getElementById('login-email').value.trim();
+    
+    if (!emailInput) {
+        showToast("Please enter your email address first.");
+        document.getElementById('login-email').focus();
+        return;
+    }
+
+    try {
+        await sendPasswordResetEmail(auth, emailInput);
+        showToast(`Password reset link sent to ${emailInput}`);
+    } catch (error) {
+        window.systemLog('error', 'Password Reset Failed', error);
+        
+        let msg = "Failed to send reset email.";
+        if (error.code === 'auth/invalid-email') msg = "Invalid email format.";
+        if (error.code === 'auth/user-not-found') msg = "No account found with that email.";
+        
+        showToast(msg);
+    }
 };
 
 function showTableLoaders() {
@@ -229,13 +412,8 @@ function applyRoleBasedUI() {
         }
     });
 
-    // Lock Admin Panel
     document.querySelectorAll('.admin-only').forEach(item => {
-        if (!isAdmin) {
-            item.style.display = 'none';
-        } else {
-            item.style.display = 'flex';
-        }
+        item.style.display = isAdmin ? 'flex' : 'none';
     });
 
     const activeView = document.querySelector('.content-view.active');
@@ -261,16 +439,17 @@ function showToast(msg) {
    5. REALTIME FIREBASE LISTENERS
    ========================================================================= */
 function initRealtimeListeners() {
-    let candRef = db.collection('candidates');
-    let empRef = db.collection('employees');
-    let onbRef = db.collection('onboarding');
-    let placeRef = db.collection('placements');
+    let candRef = collection(db, 'candidates');
+    let empRef = collection(db, 'employees');
+    let onbRef = collection(db, 'onboarding');
+    let placeRef = collection(db, 'placements');
+    const usersRef = collection(db, 'users');
 
     if (state.userRole === 'Employee' && state.user) {
         const myEmail = state.user.email.toLowerCase();
-        candRef = candRef.where('recruiter', '==', myEmail);
-        onbRef = onbRef.where('recruiter', '==', myEmail);
-        placeRef = placeRef.where('recruiter', '==', myEmail);
+        candRef = query(candRef, where('recruiter', '==', myEmail));
+        onbRef = query(onbRef, where('recruiter', '==', myEmail));
+        placeRef = query(placeRef, where('recruiter', '==', myEmail));
     }
 
     if (dom.headerUpdated) dom.headerUpdated.innerHTML = '<i class="fa-solid fa-satellite-dish text-success"></i> Live System';
@@ -286,7 +465,7 @@ function initRealtimeListeners() {
         return [...localData, ...cloudData].sort((a, b) => (a.orderIndex ?? -a.createdAt) - (b.orderIndex ?? -b.createdAt));
     };
 
-    empRef.onSnapshot(snap => {
+    onSnapshot(empRef, (snap) => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         state.employees = mergeWithLocal(cloudData, 'employees');
         
@@ -302,9 +481,9 @@ function initRealtimeListeners() {
         renderEmployeeTable();
         renderDropdowns();
         updateDashboardStats();
-    }, err => renderEmployeeTable());
+    }, (err) => renderEmployeeTable());
 
-    candRef.onSnapshot(snap => {
+    onSnapshot(candRef, (snap) => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         state.candidates = mergeWithLocal(cloudData, 'candidates');
         
@@ -317,22 +496,22 @@ function initRealtimeListeners() {
         renderDropdowns();
         updateDashboardStats();
         renderDashboardCharts();
-    }, err => refreshViewForType('candidates'));
+    }, (err) => refreshViewForType('candidates'));
 
-    onbRef.onSnapshot(snap => {
+    onSnapshot(onbRef, (snap) => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         state.onboarding = mergeWithLocal(cloudData, 'onboarding');
         renderOnboardingTable();
-    }, err => renderOnboardingTable());
+    }, (err) => renderOnboardingTable());
 
-    placeRef.onSnapshot(snap => {
+    onSnapshot(placeRef, (snap) => {
         const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         state.placements = mergeWithLocal(cloudData, 'placements');
         renderPlacementTable();
         updateDashboardStats();
-    }, err => renderPlacementTable());
+    }, (err) => renderPlacementTable());
 
-    db.collection('users').onSnapshot(snap => {
+    onSnapshot(usersRef, (snap) => {
         state.allUsers = snap.docs.map(doc => {
             const data = doc.data();
             return { id: doc.id, name: (data.firstName && data.lastName) ? `${data.firstName} ${data.lastName}` : (data.displayName || 'Staff Member'), dob: data.dob };
@@ -355,32 +534,32 @@ function renderDropdowns() {
     });
 }
 
-window.generateRecruiterDropdown = (currentVal, id, collection) => {
+window.generateRecruiterDropdown = (currentVal, id, collectionName) => {
     const list = state.metadata.recruiters || [];
     const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join('');
-    return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`;
+    return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collectionName}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`;
 };
 
-window.updateRecruiter = async (id, collection, val) => {
-    aggressiveLocalSave(collection, id, 'recruiter', val);
+window.updateRecruiter = async (id, collectionName, val) => {
+    aggressiveLocalSave(collectionName, id, 'recruiter', val);
     try {
-        if (!id.startsWith('local_')) await db.collection(collection).doc(id).update({ recruiter: val });
+        if (!id.startsWith('local_')) await updateDoc(doc(db, collectionName, id), { recruiter: val });
         showToast("Recruiter Saved");
     } catch (e) { showToast("Saved Locally"); }
 };
 
-window.generateTechDropdown = (currentVal, id, collection) => {
+window.generateTechDropdown = (currentVal, id, collectionName) => {
     const list = [...(state.metadata.techs || [])];
     if (currentVal && !list.includes(currentVal)) list.push(currentVal);
     list.sort();
     const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join('');
-    return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`;
+    return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collectionName}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`;
 };
 
-window.updateTech = async (id, collection, val) => {
-    aggressiveLocalSave(collection, id, 'tech', val);
+window.updateTech = async (id, collectionName, val) => {
+    aggressiveLocalSave(collectionName, id, 'tech', val);
     try {
-        if (!id.startsWith('local_')) await db.collection(collection).doc(id).update({ tech: val });
+        if (!id.startsWith('local_')) await updateDoc(doc(db, collectionName, id), { tech: val });
         showToast("Tech Saved");
     } catch (e) { showToast("Saved Locally"); }
 };
@@ -422,7 +601,7 @@ function setupEventListeners() {
                 document.getElementById('sidebar-overlay')?.classList.remove('active');
             }
             if (targetId === 'view-dashboard') updateDashboardStats();
-            if (targetId === 'view-admin') loadAdminUsers(); // Admin Panel Router
+            if (targetId === 'view-admin') loadAdminUsers();
             if (typeof storageManager !== 'undefined') storageManager.saveUIState();
         });
     });
@@ -433,7 +612,7 @@ function setupEventListeners() {
     if (overlay) overlay.addEventListener('click', () => { document.getElementById('sidebar').classList.remove('mobile-open'); overlay.classList.remove('active'); });
 
     document.getElementById('btn-logout')?.addEventListener('click', () => {
-        if (confirm("Are you sure you want to log out?")) auth.signOut();
+        if (confirm("Are you sure you want to log out?")) signOut(auth);
     });
 
     const bindSearch = (id, targetState, renderFunc) => {
@@ -686,7 +865,7 @@ function moveColumnDOM(table, fromIdx, toIdx) {
     }
 }
 
-function saveColumnOrder(tableId, context) {
+async function saveColumnOrder(tableId, context) {
     const table = document.getElementById(tableId);
     const headers = table.querySelectorAll('th');
     const order = [];
@@ -696,7 +875,9 @@ function saveColumnOrder(tableId, context) {
         if (div?.dataset.colname) order.push(div.dataset.colname);
     });
     state.colOrders[context] = order;
-    try { db.collection('settings').doc('table_config').set({ colOrders: state.colOrders }, { merge: true }); } catch(e) {}
+    try { 
+        await setDoc(doc(db, 'settings', 'table_config'), { colOrders: state.colOrders }, { merge: true }); 
+    } catch(e) {}
 }
 
 function restoreColumnOrder(tableId, context) {
@@ -808,7 +989,7 @@ window.deleteCustomColumn = async (context, index) => {
 
 async function saveAndRefreshColumns(context, msg) {
     try {
-        await db.collection('settings').doc('table_config').set({ [context]: state.customColumns[context] }, { merge: true });
+        await setDoc(doc(db, 'settings', 'table_config'), { [context]: state.customColumns[context] }, { merge: true });
         showToast(msg);
         refreshViewForType(context);
     } catch (e) {
@@ -818,9 +999,9 @@ async function saveAndRefreshColumns(context, msg) {
 }
 
 /* ==========================================================================
-   10. MODERN INSTANT ROW ADDITION (AIRTABLE/NOTION STYLE)
+   10. MODERN INSTANT ROW ADDITION
    ========================================================================= */
-window.addNewRecord = async (collection) => {
+window.addNewRecord = async (collectionName) => {
     const ts = Date.now();
     const recruiterEmail = (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : '';
     const today = new Date().toISOString().split('T')[0];
@@ -831,21 +1012,21 @@ window.addNewRecord = async (collection) => {
         recruiter: recruiterEmail 
     };
 
-    if (collection === 'candidates') {
+    if (collectionName === 'candidates') {
         Object.assign(defaultData, { first: 'New Candidate', last: '', mobile: '', wa: '', tech: '', status: 'Active', assigned: today, comments: '', linkedin: '', resume: '', trackingSheet: '', submissionLog: [], screeningLog: [], interviewLog: [] });
-    } else if (collection === 'employees') {
+    } else if (collectionName === 'employees') {
         Object.assign(defaultData, { first: 'New Employee', last: '', dob: '', designation: '', workMobile: '', personalMobile: '', officialEmail: '', personalEmail: '' });
-    } else if (collection === 'onboarding') {
+    } else if (collectionName === 'onboarding') {
         Object.assign(defaultData, { first: 'New Record', last: '', dob: '', mobile: '', status: 'Onboarding', assigned: today, comments: '' });
-    } else if (collection === 'placements') {
+    } else if (collectionName === 'placements') {
         Object.assign(defaultData, { first: 'New Placement', last: '', tech: '', location: '', contract: '', assigned: today, actions: '', status: 'Placed' });
     }
 
-    const customCols = state.customColumns[collection] || [];
+    const customCols = state.customColumns[collectionName] || [];
     customCols.forEach(col => defaultData[col.key] = '');
 
     try {
-        const docRef = await db.collection(collection).add(defaultData);
+        const docRef = await addDoc(collection(db, collectionName), defaultData);
         setTimeout(() => {
             const newRow = document.querySelector(`tr[data-id="${docRef.id}"]`);
             if (newRow) {
@@ -856,9 +1037,9 @@ window.addNewRecord = async (collection) => {
     } catch (e) {
         window.systemLog('warn', 'Firebase save blocked on new record, falling back to local storage', e);
         defaultData.id = 'local_' + ts;
-        state[collection].unshift(defaultData);
-        localStorage.setItem(`np_data_${collection}`, JSON.stringify(state[collection]));
-        refreshViewForType(collection);
+        state[collectionName].unshift(defaultData);
+        localStorage.setItem(`np_data_${collectionName}`, JSON.stringify(state[collectionName]));
+        refreshViewForType(collectionName);
         
         setTimeout(() => {
             const newRow = document.querySelector(`tr[data-id="${defaultData.id}"]`);
@@ -947,10 +1128,9 @@ const renderCustomCells = (item, collectionName) => {
 };
 
 function renderCandidateTable() {
-    // If in board mode, divert render to Kanban
     if (state.candidateViewMode === 'board') {
         renderKanbanBoard();
-        return; // Don't render the table HTML
+        return; 
     }
 
     const filtered = getFilteredData(state.candidates, state.filters);
@@ -1376,7 +1556,7 @@ function renderHubTable() {
 /* ==========================================================================
    12. INLINE FIELD EDITING (AUTO-SAVE) & STATUS ACTIONS
    ========================================================================= */
-window.inlineEdit = (id, field, col, el) => {
+window.inlineEdit = (id, field, colName, el) => {
     if (el.querySelector('input')) return;
     
     let val = el.textContent.trim();
@@ -1396,11 +1576,16 @@ window.inlineEdit = (id, field, col, el) => {
         el.textContent = newVal || (field === 'first' ? 'Untitled' : '');
         
         if (newVal !== val) {
-            aggressiveLocalSave(col, id, field, newVal);
+            aggressiveLocalSave(colName, id, field, newVal);
             try {
-                if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: newVal });
+                if (!id.startsWith('local_')) {
+                    await updateDoc(doc(db, colName, id), { [field]: newVal });
+                }
                 showToast("Auto-Saved");
-            } catch (err) { window.systemLog('warn', 'Saved locally due to error', err); showToast("Saved Locally"); }
+            } catch (err) { 
+                window.systemLog('warn', 'Saved locally due to error', err); 
+                showToast("Saved Locally"); 
+            }
         }
     };
     
@@ -1413,17 +1598,22 @@ window.inlineEdit = (id, field, col, el) => {
     input.focus();
 };
 
-window.inlineDateEdit = async (id, field, col, val) => {
-    aggressiveLocalSave(col, id, field, val);
+window.inlineDateEdit = async (id, field, colName, val) => {
+    aggressiveLocalSave(colName, id, field, val);
     try {
-        if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: val });
+        if (!id.startsWith('local_')) {
+            await updateDoc(doc(db, colName, id), { [field]: val });
+        }
         showToast("Date Auto-Saved");
-    } catch (err) { window.systemLog('warn', 'Saved locally due to error', err); showToast("Date Saved Locally"); }
+    } catch (err) { 
+        window.systemLog('warn', 'Saved locally due to error', err); 
+        showToast("Date Saved Locally"); 
+    }
 };
 
-window.inlineUrlEdit = (id, field, col, el) => {
+window.inlineUrlEdit = (id, field, colName, el) => {
     if (el.querySelector('input')) return;
-    const item = state[col].find(x => x.id === id);
+    const item = state[colName].find(x => x.id === id);
     const oldVal = item ? item[field] : '';
     let displayVal = oldVal ? oldVal.replace('mailto:', '').replace('https://', '').replace('http://', '') : '';
 
@@ -1441,16 +1631,21 @@ window.inlineUrlEdit = (id, field, col, el) => {
         else if (newVal && !newVal.startsWith('http') && !newVal.startsWith('mailto:')) newVal = 'https://' + newVal;
 
         if (newVal !== oldVal) {
-            aggressiveLocalSave(col, id, field, newVal);
+            aggressiveLocalSave(colName, id, field, newVal);
             try {
-                if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ [field]: newVal });
+                if (!id.startsWith('local_')) {
+                    await updateDoc(doc(db, colName, id), { [field]: newVal });
+                }
                 showToast("Link Auto-Saved");
-            } catch (e) { window.systemLog('warn', 'Saved locally due to error', e); showToast("Link Saved Locally"); }
+            } catch (e) { 
+                window.systemLog('warn', 'Saved locally due to error', e); 
+                showToast("Link Saved Locally"); 
+            }
         }
-        refreshViewForType(col);
+        refreshViewForType(colName);
     };
     input.addEventListener('blur', save);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') refreshViewForType(col); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') refreshViewForType(colName); });
     el.appendChild(input);
     input.focus();
     input.select();
@@ -1473,19 +1668,29 @@ window.toggleRowMenu = (id) => {
 window.updateStatusAndClose = async (id, status) => {
     aggressiveLocalSave('candidates', id, 'status', status);
     try {
-        if (!id.startsWith('local_')) await db.collection('candidates').doc(id).update({ status: status });
+        if (!id.startsWith('local_')) {
+            await updateDoc(doc(db, 'candidates', id), { status: status });
+        }
         showToast("Status updated");
-    } catch(e) { window.systemLog('warn', 'Status saved locally', e); showToast("Status saved locally"); }
+    } catch(e) { 
+        window.systemLog('warn', 'Status saved locally', e); 
+        showToast("Status saved locally"); 
+    }
     document.getElementById(`menu-${id}`)?.classList.remove('show');
     refreshViewForType('candidates');
 };
 
-window.updateStatus = async (id, col, val) => {
-    aggressiveLocalSave(col, id, 'status', val);
+window.updateStatus = async (id, colName, val) => {
+    aggressiveLocalSave(colName, id, 'status', val);
     try {
-        if (!id.startsWith('local_')) await db.collection(col).doc(id).update({ status: val });
+        if (!id.startsWith('local_')) {
+            await updateDoc(doc(db, colName, id), { status: val });
+        }
         showToast("Status Auto-Saved");
-    } catch(e) { window.systemLog('warn', 'Status saved locally', e); showToast("Status saved locally"); }
+    } catch(e) { 
+        window.systemLog('warn', 'Status saved locally', e); 
+        showToast("Status saved locally"); 
+    }
 };
 
 window.editCustomStatus = async (id) => {
@@ -1512,9 +1717,9 @@ window.moveToPlacements = async (id) => {
             localStorage.setItem('np_data_placements', JSON.stringify(state.placements));
             showToast("Locally moved to Placements");
         } else {
-            const batch = db.batch();
-            batch.set(db.collection('placements').doc(id), newPlaceData);
-            batch.delete(db.collection('candidates').doc(id));
+            const batch = writeBatch(db);
+            batch.set(doc(db, 'placements', id), newPlaceData);
+            batch.delete(doc(db, 'candidates', id));
             await batch.commit();
             showToast("Moved to Placements");
         }
@@ -1556,7 +1761,7 @@ window.deletePlacement = async (id) => {
             localStorage.setItem('np_data_placements', JSON.stringify(state.placements));
             refreshViewForType('placements');
         } else {
-            await db.collection('placements').doc(id).delete();
+            await deleteDoc(doc(db, 'placements', id));
         }
         showToast("Placement removed");
     } catch(e) { window.systemLog('error', 'Failed to delete placement', e); showToast("Error removing placement"); }
@@ -1673,9 +1878,14 @@ document.getElementById('hub-note-form')?.addEventListener('submit', async (e) =
     aggressiveLocalSave('candidates', candidateId, logType, currentLogs);
 
     try {
-        if (!candidateId.startsWith('local_')) await db.collection('candidates').doc(candidateId).update({ [logType]: currentLogs });
+        if (!candidateId.startsWith('local_')) {
+            await updateDoc(doc(db, 'candidates', candidateId), { [logType]: currentLogs });
+        }
         showToast("Log entry added successfully!");
-    } catch (err) { window.systemLog('warn', 'Log saved locally', err); showToast("Log saved locally."); }
+    } catch (err) { 
+        window.systemLog('warn', 'Log saved locally', err); 
+        showToast("Log saved locally."); 
+    }
     closeHubNoteModal();
     refreshViewForType('hub');
 });
@@ -1690,9 +1900,14 @@ window.deleteHubLog = async (candidateId, logType, index) => {
     aggressiveLocalSave('candidates', candidateId, logType, updatedLogs);
 
     try {
-        if (!candidateId.startsWith('local_')) await db.collection('candidates').doc(candidateId).update({ [logType]: updatedLogs });
+        if (!candidateId.startsWith('local_')) {
+            await updateDoc(doc(db, 'candidates', candidateId), { [logType]: updatedLogs });
+        }
         showToast("Log entry removed.");
-    } catch(err) { window.systemLog('warn', 'Log removed locally', err); showToast("Log removed locally."); }
+    } catch(err) { 
+        window.systemLog('warn', 'Log removed locally', err); 
+        showToast("Log removed locally."); 
+    }
     refreshViewForType('hub');
 };
 
@@ -1773,7 +1988,7 @@ window.executeDelete = async () => {
     if (!type) return;
 
     const colMap = { cand: 'candidates', hub: 'candidates', place: 'placements', emp: 'employees', onb: 'onboarding' };
-    const col = colMap[type];
+    const colName = colMap[type];
     const ids = Array.from(state.selection[type]);
 
     state.selection[type].clear();
@@ -1785,14 +2000,18 @@ window.executeDelete = async () => {
     const firebaseIds = ids.filter(id => !id.startsWith('local_'));
 
     if (localIds.length > 0 || firebaseIds.length > 0) {
-        state[col] = state[col].filter(item => !ids.includes(item.id));
-        localStorage.setItem(`np_data_${col}`, JSON.stringify(state[col]));
+        state[colName] = state[colName].filter(item => !ids.includes(item.id));
+        localStorage.setItem(`np_data_${colName}`, JSON.stringify(state[colName]));
     }
 
     if (firebaseIds.length > 0) {
-        const batch = db.batch();
-        firebaseIds.forEach(id => batch.delete(db.collection(col).doc(id)));
-        try { await batch.commit(); } catch (e) { window.systemLog('warn', 'Firebase delete blocked, deleted locally', e); }
+        const batch = writeBatch(db);
+        firebaseIds.forEach(id => batch.delete(doc(db, colName, id)));
+        try { 
+            await batch.commit(); 
+        } catch (e) { 
+            window.systemLog('warn', 'Firebase delete blocked, deleted locally', e); 
+        }
     }
     
     refreshViewForType(type);
@@ -2091,13 +2310,18 @@ window.syncCurrentEmailToCandidate = async () => {
     aggressiveLocalSave('candidates', candidate.id, 'submissionLog', logs);
 
     try {
-        if (!candidate.id.startsWith('local_')) await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs });
+        if (!candidate.id.startsWith('local_')) {
+            await updateDoc(doc(db, 'candidates', candidate.id), { submissionLog: logs });
+        }
         showToast(`Synced to ${candidate.first} ${candidate.last}`);
-    } catch (e) { window.systemLog('warn', 'Sync saved locally', e); showToast("Sync saved locally"); }
+    } catch (e) { 
+        window.systemLog('warn', 'Sync saved locally', e); 
+        showToast("Sync saved locally"); 
+    }
 };
 
 /* ==========================================================================
-   16. PROFILE MANAGEMENT
+   16. PROFILE & SETTINGS
    ========================================================================= */
 function updateUserProfile(user, userData) {
     const displayName = userData ? `${userData.firstName || ''} ${userData.lastName || ''}`.trim() : (user.displayName || 'User');
@@ -2114,9 +2338,9 @@ function updateUserProfile(user, userData) {
     setVal('prof-office-email', email);
     setVal('prof-designation', role);
 
-    db.collection('users').doc(email).get().then(doc => {
-        if (doc.exists) {
-            const data = doc.data();
+    getDoc(doc(db, 'users', email)).then(docSnap => {
+        if (docSnap.exists()) {
+            const data = docSnap.data();
             ['firstName', 'lastName', 'dob', 'workMobile', 'personalMobile', 'personalEmail'].forEach(key => {
                 if (data[key]) setVal(`prof-${key.replace(/([A-Z])/g, '-$1').toLowerCase()}`, data[key]);
             });
@@ -2145,9 +2369,12 @@ window.saveProfileData = async () => {
     };
 
     try {
-        await db.collection('users').doc(state.user.email).set(profileData, { merge: true });
+        await setDoc(doc(db, 'users', state.user.email), profileData, { merge: true });
         showToast("Profile Updated Successfully");
-    } catch (err) { window.systemLog('error', 'Error updating profile', err); showToast("Error updating profile"); }
+    } catch (err) { 
+        window.systemLog('error', 'Error updating profile', err); 
+        showToast("Error updating profile"); 
+    }
 };
 
 window.triggerPhotoUpload = () => document.getElementById('profile-upload-input')?.click();
@@ -2159,41 +2386,48 @@ window.handlePhotoUpload = async (input) => {
     if (loadingEl) loadingEl.style.display = 'flex';
 
     try {
-        const ref = storage.ref(`profiles/${state.user.email}_${Date.now()}`);
-        await ref.put(file);
-        const url = await ref.getDownloadURL();
-        await db.collection('users').doc(state.user.email).set({ photoURL: url }, { merge: true });
+        const storageRef = ref(storage, `profiles/${state.user.email}_${Date.now()}`);
+        await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(storageRef);
+        
+        await setDoc(doc(db, 'users', state.user.email), { photoURL: url }, { merge: true });
         
         document.getElementById('profile-main-img').src = url;
         document.getElementById('profile-main-img').style.display = 'block';
         document.getElementById('profile-main-icon').style.display = 'none';
         document.getElementById('btn-delete-photo').style.display = 'inline-flex';
         showToast("Photo uploaded");
-    } catch (err) { window.systemLog('error', 'Photo upload failed', err); showToast("Photo upload failed"); } 
+    } catch (err) { 
+        window.systemLog('error', 'Photo upload failed', err); 
+        showToast("Photo upload failed"); 
+    } 
     finally { if (loadingEl) loadingEl.style.display = 'none'; }
 };
 
 window.deleteProfilePhoto = async () => {
     if (!state.user || !confirm("Remove profile photo?")) return;
     try {
-        await db.collection('users').doc(state.user.email).update({ photoURL: firebase.firestore.FieldValue.delete() });
+        await updateDoc(doc(db, 'users', state.user.email), { photoURL: deleteField() });
+        
         document.getElementById('profile-main-img').style.display = 'none';
         document.getElementById('profile-main-img').src = '';
         document.getElementById('profile-main-icon').style.display = 'flex';
         document.getElementById('btn-delete-photo').style.display = 'none';
         showToast("Photo removed");
-    } catch (err) { window.systemLog('error', 'Failed to remove photo', err); showToast("Failed to remove photo"); }
+    } catch (err) { 
+        window.systemLog('error', 'Failed to remove photo', err); 
+        showToast("Failed to remove photo"); 
+    }
 };
 
 /* ==========================================================================
-   17. FULL DATABASE EXPORT (JSON) & SYSTEM MANAGEMENT
+   17. FULL DATABASE EXPORT & SYSTEM MANAGEMENT
    ========================================================================= */
 window.exportData = () => {
     if (!state.candidates?.length) return showToast("No candidate data to export.");
 
     let dataToExport = state.candidates;
     
-    // If an employee clicks export, only give them their own candidates
     if (state.userRole === 'Employee' && state.user) {
         dataToExport = dataToExport.filter(c => c.recruiter === state.user.email.toLowerCase());
     }
@@ -2220,8 +2454,8 @@ window.resetSystem = async () => {
         if (confirmText === 'DELETE') {
             showToast("Wiping database...");
             try {
-                const batch = db.batch();
-                state.candidates.filter(c => !c.id.startsWith('local_')).forEach(c => batch.delete(db.collection('candidates').doc(c.id)));
+                const batch = writeBatch(db);
+                state.candidates.filter(c => !c.id.startsWith('local_')).forEach(c => batch.delete(doc(db, 'candidates', c.id)));
                 await batch.commit();
                 
                 localStorage.removeItem('np_data_candidates');
@@ -2229,7 +2463,10 @@ window.resetSystem = async () => {
                 refreshViewForType('candidates');
                 
                 showToast("System reset successfully.");
-            } catch (error) { window.systemLog('error', 'Error resetting system', error); showToast("Error resetting system."); }
+            } catch (error) { 
+                window.systemLog('error', 'Error resetting system', error); 
+                showToast("Error resetting system."); 
+            }
         } else {
             showToast("Reset cancelled.");
         }
@@ -2369,7 +2606,9 @@ window.kanbanDrop = async (e, newStatus) => {
 
     aggressiveLocalSave('candidates', id, 'status', newStatus);
     try {
-        if (!id.startsWith('local_')) await db.collection('candidates').doc(id).update({ status: newStatus });
+        if (!id.startsWith('local_')) {
+            await updateDoc(doc(db, 'candidates', id), { status: newStatus });
+        }
         showToast(`Moved to ${newStatus}`);
     } catch (err) {
         window.systemLog('warn', 'Status saved locally from Kanban', err);
@@ -2403,7 +2642,7 @@ window.systemLog = async (method, message, details = null) => {
                 dateString: new Date().toISOString()
             };
 
-            await db.collection('system_logs').add(logEntry);
+            await addDoc(collection(db, 'system_logs'), logEntry);
         } catch (firebaseErr) {
             console.warn("Failed to save error to cloud:", firebaseErr);
         }
@@ -2437,8 +2676,8 @@ window.triggerCloudSync = async (btnElement) => {
     let syncedCount = 0;
 
     try {
-        for (const col of collections) {
-            const localDataString = localStorage.getItem(`np_data_${col}`);
+        for (const colName of collections) {
+            const localDataString = localStorage.getItem(`np_data_${colName}`);
             if (!localDataString) continue;
 
             let items = JSON.parse(localDataString);
@@ -2446,9 +2685,11 @@ window.triggerCloudSync = async (btnElement) => {
 
             for (const item of stuckLocalItems) {
                 const { id, ...dataToSave } = item; 
-                await db.collection(col).add(dataToSave);
+                
+                await addDoc(collection(db, colName), dataToSave);
+                
                 items = items.filter(i => i.id !== id);
-                localStorage.setItem(`np_data_${col}`, JSON.stringify(items));
+                localStorage.setItem(`np_data_${colName}`, JSON.stringify(items));
                 syncedCount++;
             }
         }
@@ -2518,13 +2759,13 @@ function initNetworkMonitor() {
 window.loadAdminUsers = () => {
     if (state.userRole !== 'Admin') return;
     
-    db.collection('users').onSnapshot(snap => {
+    onSnapshot(collection(db, 'users'), snap => {
         const tbody = document.getElementById('admin-users-table-body');
         if (!tbody) return;
         
-        tbody.innerHTML = snap.docs.map(doc => {
-            const u = doc.data();
-            const email = doc.id;
+        tbody.innerHTML = snap.docs.map(docSnap => {
+            const u = docSnap.data();
+            const email = docSnap.id;
             const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Pending Registration';
             
             const isMe = state.user && state.user.email.toLowerCase() === email.toLowerCase();
@@ -2553,7 +2794,7 @@ window.loadAdminUsers = () => {
 
 window.changeUserRole = async (email, newRole) => {
     try {
-        await db.collection('users').doc(email).update({ role: newRole });
+        await updateDoc(doc(db, 'users', email), { role: newRole });
         showToast(`Success: ${email} is now a ${newRole}`);
     } catch(e) {
         window.systemLog('error', `Failed to change role for ${email}`, e);
@@ -2564,7 +2805,7 @@ window.changeUserRole = async (email, newRole) => {
 window.removeSystemUser = async (email) => {
     if(!confirm(`CRITICAL: Are you sure you want to permanently revoke CRM access for ${email}?`)) return;
     try {
-        await db.collection('users').doc(email).delete();
+        await deleteDoc(doc(db, 'users', email));
         showToast(`Access revoked for ${email}`);
     } catch(e) {
         window.systemLog('error', `Failed to remove user ${email}`, e);
@@ -2580,7 +2821,7 @@ window.quickAddUser = async () => {
     if (!['Employee', 'Manager', 'Admin'].includes(role)) return showToast("Invalid role entered.");
 
     try {
-        await db.collection('users').doc(email.toLowerCase()).set({
+        await setDoc(doc(db, 'users', email.toLowerCase()), {
             email: email.toLowerCase(),
             role: role,
             createdAt: Date.now()
@@ -2597,19 +2838,3 @@ window.quickAddUser = async () => {
    23. STARTUP
    ========================================================================= */
 window.onload = () => { init(); };
-
-
-/* ==========================================================================
-   DEVELOPER UTILITIES (DO NOT RUN IN PRODUCTION CODE)
-   Run these manually in the browser console (F12) if needed.
-   ========================================================================= */
-/*
-// SCRIPT 1: Push offline local_ records to Firestore
-window.forceSyncLocalToCloud = async () => { ... }
-
-// SCRIPT 2: Migrate hardcoded ALLOWED_USERS array to Firestore `users` collection
-window.migrateUsersToCloud = async () => { ... }
-
-// SCRIPT 3: Bulk Import JSON data directly to Firestore
-window.importJsonToFirestore = async () => { ... }
-*/
