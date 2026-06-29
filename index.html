@@ -76,7 +76,7 @@
                         <i class="fa-solid fa-satellite-dish" style="color: #22c55e;" aria-hidden="true"></i> Live System
                     </span>
                     
-                    <div class="user-profile-mini" onclick="document.querySelector('.nav-item[data-target=\'view-profile\']').click()" style="cursor: pointer;" role="button" tabindex="0" aria-label="View Profile">
+                    <div class="user-profile-mini" onclick="document.querySelector('.nav-item[data-target=\'view-profile\']').click()" style="cursor: pointer;" role="button" tabindex="0" aria-label="User Profile">
                         <i class="fa-solid fa-circle-user" id="profile-main-icon" style="font-size: 1.5rem; color: var(--primary);" aria-hidden="true"></i>
                         <img id="profile-main-img" src="" alt="User Profile Image" style="display:none; width: 24px; height: 24px; border-radius:50%; object-fit:cover;">
                         <span id="display-username">User</span>
@@ -185,7 +185,7 @@
                             <button class="btn-icon-small" onclick="changePage('cand', -1)" aria-label="Previous Page"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
                             <span id="cand-page-indicator" style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">Page 1 of 1</span>
                             <button class="btn-icon-small" onclick="changePage('cand', 1)" aria-label="Next Page"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>
-                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" aria-label="Records per page" onchange="state.pagination.cand.limit = parseInt(this.value); state.pagination.cand.current = 1; refreshViewForType('cand');">
+                            <select class="filter-dropdown" style="padding: 2px 5px; height: auto;" aria-label="Records per page" onchange="state.pagination.cand.limit = parseInt(this.value); state.pagination.cand.offset = 0; renderCandidates();">
                                 <option value="25">25 / page</option>
                                 <option value="50" selected>50 / page</option>
                                 <option value="100">100 / page</option>
@@ -201,7 +201,7 @@
                         
                         <div style="border-bottom: 1px solid var(--glass-border); padding-bottom: 20px; margin-bottom: 20px;">
                             <h3><i class="fa-solid fa-file-csv" aria-hidden="true"></i> Export Data</h3>
-                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Download a complete backup of all records to a CSV file (Excel compatible). This includes all custom columns.</p>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Download a complete backup of all records to a CSV file (Excel compatible). This includes all candidates, placements, and activity logs.</p>
                             <button class="btn-primary" onclick="exportData()"><i class="fa-solid fa-download" aria-hidden="true"></i> Download Full Backup</button>
                         </div>
 
@@ -216,6 +216,8 @@
             </div>
         </main>
     </div>
+
+    <div id="custom-modal-overlay" class="modal-overlay hidden"></div>
 
     <div id="delete-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title" style="display:none;">
         <div class="glass-panel" style="padding: 30px; text-align: center; max-width: 400px;">
@@ -270,6 +272,43 @@
                     <button type="submit" class="btn-primary"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Entry</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="custom-modal hidden">
+        <div class="modal-header">
+            <h3 id="confirm-modal-title">Confirm Action</h3>
+        </div>
+        <div class="modal-body">
+            <p id="confirm-modal-message">Are you sure you want to proceed?</p>
+        </div>
+        <div class="modal-actions">
+            <button id="confirm-btn-cancel" class="btn btn-secondary">Cancel</button>
+            <button id="confirm-btn-danger" class="btn btn-danger">Yes, Revoke</button>
+        </div>
+    </div>
+
+    <div id="add-user-modal" class="custom-modal hidden">
+        <div class="modal-header">
+            <h3>Invite New User</h3>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="add-user-email">Google Workspace Email</label>
+                <input type="email" id="add-user-email" placeholder="name@company.com" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="add-user-role">Starting Role</label>
+                <select id="add-user-role">
+                    <option value="Employee">Employee</option>
+                    <option value="Manager">Manager</option>
+                    <option value="Admin">Admin</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-actions">
+            <button id="add-user-btn-cancel" class="btn btn-secondary">Cancel</button>
+            <button id="add-user-btn-submit" class="btn btn-primary">Send Invite</button>
         </div>
     </div>
 
