@@ -2754,9 +2754,11 @@ function initNetworkMonitor() {
 }
 
 /* ==========================================================================
-   22. ADMIN PANEL & USER MANAGEMENT
+   22. ADMIN PANEL & USER MANAGEMENT (Refactored)
    ========================================================================= */
+
 window.loadAdminUsers = () => {
+    // Note: This is UI-level protection. Ensure Firestore rules back this up!
     if (state.userRole !== 'Admin') return;
     
     onSnapshot(collection(db, 'users'), snap => {
@@ -2768,6 +2770,7 @@ window.loadAdminUsers = () => {
             const email = docSnap.id;
             const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Pending Registration';
             
+            // Prevents the active admin from locking themselves out
             const isMe = state.user && state.user.email.toLowerCase() === email.toLowerCase();
             const disabledAttr = isMe ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : '';
             
@@ -2794,8 +2797,9 @@ window.loadAdminUsers = () => {
 
 window.changeUserRole = async (email, newRole) => {
     try {
-        await updateDoc(doc(db, 'users', email), { role: newRole });
-        showToast(`Success: ${email} is now a ${newRole}`);
+        const safeEmail = email.toLowerCase();
+        await updateDoc(doc(db, 'users', safeEmail), { role: newRole });
+        showToast(`Success: ${safeEmail} is now a ${newRole}`);
     } catch(e) {
         window.systemLog('error', `Failed to change role for ${email}`, e);
         showToast("Error updating role. Check your permissions.");
@@ -2803,10 +2807,13 @@ window.changeUserRole = async (email, newRole) => {
 };
 
 window.removeSystemUser = async (email) => {
-    if(!confirm(`CRITICAL: Are you sure you want to permanently revoke CRM access for ${email}?`)) return;
+    const safeEmail = email.toLowerCase();
+    
+    if(!confirm(`CRITICAL: Are you sure you want to permanently revoke CRM access for ${safeEmail}?`)) return;
+    
     try {
-        await deleteDoc(doc(db, 'users', email));
-        showToast(`Access revoked for ${email}`);
+        await deleteDoc(doc(db, 'users', safeEmail));
+        showToast(`Access revoked for ${safeEmail}`);
     } catch(e) {
         window.systemLog('error', `Failed to remove user ${email}`, e);
         showToast("Error removing user. Check your permissions.");
@@ -2815,22 +2822,34 @@ window.removeSystemUser = async (email) => {
 
 window.quickAddUser = async () => {
     const email = prompt("Enter the new user's Google Workspace Email:");
-    if (!email || !email.includes('@')) return showToast("Valid email required.");
+    
+    // Robust email regex validation
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return showToast("Valid email required.");
+    }
     
     const role = prompt("Enter their starting role (Employee, Manager, Admin):", "Employee");
-    if (!['Employee', 'Manager', 'Admin'].includes(role)) return showToast("Invalid role entered.");
+    const validRoles = ['Employee', 'Manager', 'Admin'];
+    
+    // Capitalize first letter, lowercase the rest to ensure clean data
+    const normalizedRole = role ? role.charAt(0).toUpperCase() + role.slice(1).toLowerCase() : '';
+    
+    if (!validRoles.includes(normalizedRole)) {
+        return showToast("Invalid role entered. Must be Employee, Manager, or Admin.");
+    }
 
     try {
-        await setDoc(doc(db, 'users', email.toLowerCase()), {
-            email: email.toLowerCase(),
-            role: role,
-            createdAt: Date.now()
+        const safeEmail = email.toLowerCase();
+        await setDoc(doc(db, 'users', safeEmail), {
+            email: safeEmail,
+            role: normalizedRole,
+            createdAt: Date.now() // Consider serverTimestamp() from 'firebase/firestore' for production
         }, { merge: true });
         
-        showToast(`User ${email} invited as ${role}!`);
+        showToast(`User ${safeEmail} invited as ${normalizedRole}!`);
     } catch(e) {
-        window.systemLog('error', 'Failed to add new user', e);
-        showToast("Error adding user.");
+        window.systemLog('error', `Failed to add new user: ${email}`, e);
+        showToast("Error adding user. Check console for details.");
     }
 };
 
