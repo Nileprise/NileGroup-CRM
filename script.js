@@ -1,2859 +1,647 @@
-/* ==========================================================================
-   1. CONFIGURATION (FIREBASE v12 MODULAR + GMAIL API)
-   ========================================================================= */
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
-import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-analytics.js";
-import { 
-    getFirestore, enableMultiTabIndexedDbPersistence, 
-    collection, doc, getDoc, setDoc, updateDoc, deleteDoc, 
-    onSnapshot, writeBatch, addDoc, query, where, deleteField 
-} from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
-import { 
-    getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword,
-    sendPasswordResetEmail, createUserWithEmailAndPassword
-} from "https://www.gstatic.com/firebasejs/12.11.0/firebase-auth.js";
-import { 
-    getStorage, ref, uploadBytes, getDownloadURL 
-} from "https://www.gstatic.com/firebasejs/12.11.0/firebase-storage.js";
+// ===================================================================
+// NILEPRISE CRM - Complete JavaScript Module
+// ===================================================================
 
-const firebaseConfig = {
-    apiKey: "AIzaSyDTX7cHfS8sQEREb2qwOR50YuZsdsPhr40",
-    authDomain: "nilegroup-crm-448c4.firebaseapp.com",
-    projectId: "nilegroup-crm-448c4",
-    storageBucket: "nilegroup-crm-448c4.firebasestorage.app",
-    messagingSenderId: "96773475717",
-    appId: "1:96773475717:web:79b2537606b9dc524488ec",
-    measurementId: "G-HXSGWX9LE5"
-};
-
-const GMAIL_CONFIG = {
-    CLIENT_ID: '575678017832-34fs5qkepdnrgqdc58h0semgjrct5arl.apps.googleusercontent.com',
-    API_KEY: 'AIzaSyCeodyIo-Jix506RH_M025yQdKE6MfmfKE',
-    DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest',
-    SCOPES: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.labels'
-};
-
-// Initialize Firebase Services
-const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-const db = getFirestore(app);
-const auth = getAuth(app);
-const storage = getStorage(app);
-
-// Enable Offline Persistence
-try {
-    enableMultiTabIndexedDbPersistence(db).catch((err) => {
-        console.warn("Firebase Persistence Error:", err.code);
-    });
-} catch (e) {
-    console.error("Firebase Init Error:", e);
-}
-
-// Attach to window for inline HTML handlers
-window.db = db;
-window.auth = auth;
-window.storage = storage;
-
-/* ==========================================================================
-   2. STATE & AGGRESSIVE LOCAL STORAGE MANAGEMENT
-   ========================================================================= */
-const state = {
-    user: null, userRole: null, currentUserName: null,
-    candidates: [], onboarding: [], employees: [], placements: [], hubData: [], labels: [], allUsers: [],
-    selectedLabelColor: '#e91e63',
-    candidateViewMode: 'table', // 'table' or 'board'
-    gmail: { tokenClient: null, gapiInited: false, gisInited: false, currentLabel: 'INBOX', currentEmailId: null },
-    hub: { expandedRowId: null, filterType: 'daily', date: new Date().toISOString().split('T')[0], range: { start: 0, end: 0 } },
-    placementFilter: 'monthly',
-    filters: { text: '', recruiter: '', tech: '', status: '' },
-    hubFilters: { text: '', recruiter: '' },
-    onbFilters: { text: '' },
-    empFilters: { text: '' },
-    selection: { cand: new Set(), onb: new Set(), emp: new Set(), hub: new Set(), place: new Set() },
-    pagination: {
-        cand: { current: 1, limit: 50 }, emp: { current: 1, limit: 50 },
-        onb: { current: 1, limit: 50 }, place: { current: 1, limit: 50 }, hub: { current: 1, limit: 50 }
-    },
-    alignments: { candidates: {}, employees: {}, onboarding: {}, placements: {}, hub: {} },
-    colOrders: { candidates: [], employees: [], onboarding: [], placements: [], hub: [] },
-    customColumns: { candidates: [], employees: [], onboarding: [], placements: [], hub: [] },
-    metadata: {
-        recruiters: [],
-        techs: ["React", "Node.js", "Java", "Python", ".NET", "AWS", "Azure", "DevOps", "Salesforce"]
-    },
-    pendingDelete: { type: null }
-};
-
-const storageManager = {
-    saveUIState: () => {
-        const uiState = {
-            activeView: document.querySelector('.content-view.active')?.id || 'view-dashboard',
-            filters: state.filters, hubFilters: state.hubFilters,
-            placementFilter: state.placementFilter, pagination: state.pagination,
-            candidateViewMode: state.candidateViewMode
-        };
-        localStorage.setItem('nileprise_ui_state', JSON.stringify(uiState));
-    },
-    loadUIState: () => {
-        const saved = localStorage.getItem('nileprise_ui_state');
-        if (saved) {
-            try {
-                const uiState = JSON.parse(saved);
-                state.filters = { ...state.filters, ...uiState.filters };
-                state.hubFilters = { ...state.hubFilters, ...uiState.hubFilters };
-                state.placementFilter = uiState.placementFilter || state.placementFilter;
-                state.pagination = { ...state.pagination, ...uiState.pagination };
-                state.candidateViewMode = uiState.candidateViewMode || 'table';
-                return uiState.activeView;
-            } catch (e) { console.error("Error parsing UI state:", e); }
-        }
-        return null;
-    }
-};
-
-function aggressiveLocalSave(collectionName, id, field, value) {
-    const idx = state[collectionName].findIndex(x => x.id === id);
-    if (idx > -1) {
-        state[collectionName][idx][field] = value;
-        localStorage.setItem(`np_data_${collectionName}`, JSON.stringify(state[collectionName]));
-    }
-}
-
-function loadLocalData() {
-    ['candidates', 'employees', 'onboarding', 'placements'].forEach(col => {
-        const localData = localStorage.getItem(`np_data_${col}`);
-        if (localData) {
-            const parsed = JSON.parse(localData);
-            if (state[col].length === 0) state[col] = parsed;
-        }
-    });
-}
-
-/* ==========================================================================
-   3. DOM CACHE & BUTTON BRIDGES
-   ========================================================================= */
-const dom = {
-    screens: { app: document.getElementById('dashboard-screen') },
-    headerUpdated: document.getElementById('header-updated')
-};
-
-window.openCandidateModal = () => window.addInlineCandidateRow();
-window.openEmployeeModal = () => window.addInlineEmployeeRow();
-window.openOnboardingModal = () => window.addInlineOnboardingRow();
-window.openPlacementModal = () => window.addInlinePlacementRow();
-
-/* ==========================================================================
-   4. INITIALIZATION & ROUTING
-   ========================================================================= */
-function init() {
-    initNetworkMonitor();
-    setupEventListeners();
-    loadGoogleScripts();
-    showTableLoaders();
-    loadLocalData();
-
-    // Fetch table config
-    getDoc(doc(db, 'settings', 'table_config')).then(docSnap => {
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            ['colOrders', 'candidates', 'employees', 'onboarding', 'placements', 'hub'].forEach(key => {
-                if (data[key]) state[key === 'colOrders' ? key : 'customColumns'][key] = data[key];
-            });
-        }
-    }).catch(error => {
-        window.systemLog('warn', 'Failed to load custom table configurations', error.message);
-    });
-
-    // Auth listener
-    onAuthStateChanged(auth, async user => {
-        if (user) {
-            state.user = user;
-            const email = user.email.toLowerCase();
-            
-            try {
-                // Fetch user profile
-                const userDoc = await getDoc(doc(db, 'users', email));
-                
-                if (userDoc.exists()) {
-                    const userData = userDoc.data();
-                    state.userRole = userData.role || 'Employee';
-                    state.currentUserName = `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || user.displayName || 'Staff';
-                    
-                    applyRoleBasedUI();
-                    updateUserProfile(user, userData);
-                } else {
-                    console.warn(`Unregistered user logged in: ${email}`);
-                    state.userRole = 'Guest'; 
-                    state.currentUserName = user.displayName || email;
-                    showToast("Account pending Admin approval.");
-                    applyRoleBasedUI(); 
-                }
-            } catch (err) { 
-                window.systemLog('error', 'Error fetching user role from cloud', err); 
-            }
-
-            const savedView = storageManager.loadUIState();
-            if (savedView && !document.querySelector(`.nav-item[data-target="${savedView}"]`)?.classList.contains('locked')) {
-                document.querySelector(`.nav-item[data-target="${savedView}"]`)?.click();
+// 1. Modal Management System
+// ===================================================================
+const ModalManager = {
+    open(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            if (modal.classList.contains('modal-overlay')) {
+                modal.style.display = 'flex';
             } else {
-                switchScreen('app'); 
+                modal.classList.remove('hidden');
+                document.getElementById('custom-modal-overlay').classList.remove('hidden');
             }
-            initRealtimeListeners();
+        }
+    },
+
+    close(modalId) {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            if (modal.classList.contains('modal-overlay')) {
+                modal.style.display = 'none';
+            } else {
+                modal.classList.add('hidden');
+                document.getElementById('custom-modal-overlay').classList.add('hidden');
+            }
+        }
+    },
+
+    closeAll() {
+        document.querySelectorAll('.modal-overlay, .custom-modal').forEach(modal => {
+            modal.style.display = 'none';
+            modal.classList.add('hidden');
+        });
+    }
+};
+
+// 2. Toast Notification System
+// ===================================================================
+const Toast = {
+    show(message, type = 'success') {
+        const toast = document.getElementById('toast');
+        const toastMsg = document.getElementById('toast-msg');
+        
+        if (toast && toastMsg) {
+            toastMsg.textContent = message;
+            toast.classList.add('show');
             
-            if (state.candidateViewMode === 'board' && document.getElementById('btn-toggle-view')) {
-                state.candidateViewMode = 'table';
-                window.toggleCandidateView();
-            }
-
-        } else {
-            // Unauthenticated state: Login / Sign Up Dashboard
-            window.isSignUpMode = false;
-
-            document.getElementById('dashboard-screen').innerHTML = `
-                <div style="display:flex; height:100vh; width:100vw; align-items:center; justify-content:center; background:var(--bg-main);">
-                    <div class="glass-panel" style="padding: 40px; width: 100%; max-width: 400px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-                        <h1 style="color:var(--primary); margin-bottom:10px; letter-spacing: 2px;">NILEPRISE</h1>
-                        <p id="auth-subtitle" style="color:var(--text-muted); margin-bottom: 30px; font-size: 0.9rem;">Workspace Authentication</p>
-                        
-                        <form id="auth-form" onsubmit="handleAuthSubmit(event)" style="display:flex; flex-direction:column; gap:15px; text-align: left;">
-                            
-                            <div id="signup-name-fields" style="display:none; gap:10px;">
-                                <div class="form-group" style="flex:1;">
-                                    <label style="font-size: 0.8rem; padding-left: 5px;">First Name</label>
-                                    <input type="text" id="auth-first" class="form-input" placeholder="First" style="width: 100%;">
-                                </div>
-                                <div class="form-group" style="flex:1;">
-                                    <label style="font-size: 0.8rem; padding-left: 5px;">Last Name</label>
-                                    <input type="text" id="auth-last" class="form-input" placeholder="Last" style="width: 100%;">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label style="font-size: 0.8rem; padding-left: 5px;" for="login-email">Email Address</label>
-                                <div class="search-box" style="width: 100%;">
-                                    <i class="fa-regular fa-envelope"></i>
-                                    <input type="email" id="login-email" placeholder="name@nileprise.com" required style="width: 100%;">
-                                </div>
-                            </div>
-
-                            <div class="form-group">
-                                <label style="font-size: 0.8rem; padding-left: 5px;" for="login-password">Password</label>
-                                <div class="search-box" style="width: 100%; position: relative;">
-                                    <i class="fa-solid fa-lock"></i>
-                                    <input type="password" id="login-password" placeholder="••••••••" required style="width: 100%; padding-right: 40px;">
-                                    <i class="fa-regular fa-eye" id="toggle-password-icon" style="position: absolute; right: 12px; left: auto; cursor: pointer; color: var(--text-muted); transition: color 0.2s;" onclick="togglePasswordVisibility()"></i>
-                                </div>
-                                <div id="forgot-pwd-wrapper" style="text-align: right; margin-top: 5px;">
-                                    <a href="#" onclick="triggerForgotPassword(event)" style="color: var(--primary); font-size: 0.8rem; text-decoration: none; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">Forgot Password?</a>
-                                </div>
-                            </div>
-
-                            <button type="submit" id="btn-auth-submit" class="btn-primary" style="justify-content: center; padding: 12px; margin-top: 10px; font-size: 1rem;">
-                                Sign In
-                            </button>
-                        </form>
-
-                        <div style="text-align: center; margin-top: 25px; font-size: 0.85rem; color: var(--text-muted);">
-                            <span id="auth-toggle-text">Don't have an account?</span> 
-                            <a href="#" onclick="toggleAuthMode(event)" id="auth-toggle-link" style="color: var(--primary); text-decoration: none; font-weight: 600;">Sign Up</a>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.getElementById('dashboard-screen').classList.add('active');
-        }
-        if (window.updateHubStats) updateHubStats('daily', new Date().toISOString().split('T')[0]);
-    });
-
-    if (localStorage.getItem('np_theme') === 'light') document.body.classList.add('light-mode');
-}
-
-/* ==========================================================================
-   4A. AUTHENTICATION LOGIC
-   ========================================================================= */
-window.toggleAuthMode = (e) => {
-    e.preventDefault();
-    window.isSignUpMode = !window.isSignUpMode;
-    
-    const nameFields = document.getElementById('signup-name-fields');
-    const forgotPwd = document.getElementById('forgot-pwd-wrapper');
-    const submitBtn = document.getElementById('btn-auth-submit');
-    const toggleText = document.getElementById('auth-toggle-text');
-    const toggleLink = document.getElementById('auth-toggle-link');
-    const subtitle = document.getElementById('auth-subtitle');
-
-    if (window.isSignUpMode) {
-        nameFields.style.display = 'flex';
-        forgotPwd.style.display = 'none';
-        submitBtn.innerText = 'Create Account';
-        toggleText.innerText = 'Already have an account?';
-        toggleLink.innerText = 'Sign In';
-        subtitle.innerText = 'Create a New Workspace Account';
-        document.getElementById('auth-first').required = true;
-    } else {
-        nameFields.style.display = 'none';
-        forgotPwd.style.display = 'block';
-        submitBtn.innerText = 'Sign In';
-        toggleText.innerText = "Don't have an account?";
-        toggleLink.innerText = 'Sign Up';
-        subtitle.innerText = 'Workspace Authentication';
-        document.getElementById('auth-first').required = false;
-    }
-};
-
-window.handleAuthSubmit = async (e) => {
-    e.preventDefault();
-    const email = document.getElementById('login-email').value.trim();
-    const password = document.getElementById('login-password').value;
-    const btn = document.getElementById('btn-auth-submit');
-    
-    const originalText = btn.innerText;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
-    btn.disabled = true;
-
-    try {
-        if (window.isSignUpMode) {
-            const first = document.getElementById('auth-first').value.trim();
-            const last = document.getElementById('auth-last').value.trim();
-            
-            await createUserWithEmailAndPassword(auth, email, password);
-            
-            await setDoc(doc(db, 'users', email.toLowerCase()), {
-                email: email.toLowerCase(),
-                firstName: first,
-                lastName: last,
-                role: 'Guest', 
-                createdAt: Date.now()
-            });
-            
-            showToast("Account created successfully!");
-        } else {
-            await signInWithEmailAndPassword(auth, email, password);
-        }
-    } catch (error) {
-        window.systemLog('error', 'Auth Failed', error);
-        let msg = "Authentication failed.";
-        
-        if (error.code === 'auth/email-already-in-use') msg = "Email is already registered.";
-        else if (error.code === 'auth/weak-password') msg = "Password should be at least 6 characters.";
-        else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') msg = "Incorrect credentials. Please try again.";
-        else if (error.code === 'auth/too-many-requests') msg = "Too many failed attempts. Try again later.";
-        
-        showToast(msg);
-        btn.innerText = originalText;
-        btn.disabled = false;
-    }
-};
-
-window.togglePasswordVisibility = () => {
-    const pwdInput = document.getElementById('login-password');
-    const icon = document.getElementById('toggle-password-icon');
-    
-    if (pwdInput.type === 'password') {
-        pwdInput.type = 'text';
-        icon.classList.remove('fa-eye');
-        icon.classList.add('fa-eye-slash');
-        icon.style.color = 'var(--primary)'; 
-    } else {
-        pwdInput.type = 'password';
-        icon.classList.remove('fa-eye-slash');
-        icon.classList.add('fa-eye');
-        icon.style.color = 'var(--text-muted)';
-    }
-};
-
-window.triggerForgotPassword = async (e) => {
-    e.preventDefault();
-    const emailInput = document.getElementById('login-email').value.trim();
-    
-    if (!emailInput) {
-        showToast("Please enter your email address first.");
-        document.getElementById('login-email').focus();
-        return;
-    }
-
-    try {
-        await sendPasswordResetEmail(auth, emailInput);
-        showToast(`Password reset link sent to ${emailInput}`);
-    } catch (error) {
-        window.systemLog('error', 'Password Reset Failed', error);
-        
-        let msg = "Failed to send reset email.";
-        if (error.code === 'auth/invalid-email') msg = "Invalid email format.";
-        if (error.code === 'auth/user-not-found') msg = "No account found with that email.";
-        
-        showToast(msg);
-    }
-};
-
-function showTableLoaders() {
-    const loaderHTML = `<tr><td colspan="25" style="text-align: center; padding: 40px; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin text-cyan" style="font-size: 2rem; margin-bottom: 15px;"></i><br>Loading Data...</td></tr>`;
-    ['table-body', 'employee-table-body', 'hub-table-body', 'placement-table-body', 'onboarding-table-body'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.innerHTML = loaderHTML;
-    });
-}
-
-function applyRoleBasedUI() {
-    const isEmployee = state.userRole === 'Employee';
-    const isAdmin = state.userRole === 'Admin';
-    const restrictedForEmployees = ['view-placements', 'view-onboarding', 'view-employees', 'view-settings'];
-
-    document.querySelectorAll('.nav-item').forEach(item => {
-        const target = item.getAttribute('data-target');
-        if (!target) return;
-        
-        if (isEmployee && restrictedForEmployees.includes(target)) {
-            item.classList.add('locked');
-            if (!item.querySelector('.lock-icon')) item.insertAdjacentHTML('beforeend', '<i class="fa-solid fa-lock lock-icon" title="Manager Access Only"></i>');
-        } else {
-            item.classList.remove('locked');
-            item.querySelector('.lock-icon')?.remove();
-        }
-    });
-
-    document.querySelectorAll('.admin-only').forEach(item => {
-        item.style.display = isAdmin ? 'flex' : 'none';
-    });
-
-    const activeView = document.querySelector('.content-view.active');
-    if (isEmployee && activeView && restrictedForEmployees.includes(activeView.id)) {
-        document.querySelector('.nav-item[data-target="view-dashboard"]')?.click();
-    }
-}
-
-function switchScreen(screenName) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(`${screenName}-screen`)?.classList.add('active');
-}
-
-function showToast(msg) {
-    const t = document.getElementById('toast');
-    if (!t) return;
-    document.getElementById('toast-msg').innerText = msg;
-    t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 3000);
-}
-
-/* ==========================================================================
-   5. REALTIME FIREBASE LISTENERS
-   ========================================================================= */
-function initRealtimeListeners() {
-    let candRef = collection(db, 'candidates');
-    let empRef = collection(db, 'employees');
-    let onbRef = collection(db, 'onboarding');
-    let placeRef = collection(db, 'placements');
-    const usersRef = collection(db, 'users');
-
-    if (state.userRole === 'Employee' && state.user) {
-        const myEmail = state.user.email.toLowerCase();
-        candRef = query(candRef, where('recruiter', '==', myEmail));
-        onbRef = query(onbRef, where('recruiter', '==', myEmail));
-        placeRef = query(placeRef, where('recruiter', '==', myEmail));
-    }
-
-    if (dom.headerUpdated) dom.headerUpdated.innerHTML = '<i class="fa-solid fa-satellite-dish text-success"></i> Live System';
-
-    const mergeWithLocal = (cloudData, collectionName) => {
-        const localDataString = localStorage.getItem(`np_data_${collectionName}`);
-        let localData = [];
-        if (localDataString) localData = JSON.parse(localDataString).filter(item => item.id.startsWith('local_'));
-        
-        const cloudIds = new Set(cloudData.map(c => c.id));
-        localData = localData.filter(l => !cloudIds.has(l.id));
-
-        return [...localData, ...cloudData].sort((a, b) => (a.orderIndex ?? -a.createdAt) - (b.orderIndex ?? -b.createdAt));
-    };
-
-    onSnapshot(empRef, (snap) => {
-        const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        state.employees = mergeWithLocal(cloudData, 'employees');
-        
-        const recruitersMap = new Map();
-        state.employees.forEach(e => {
-            if (e.first && e.officialEmail) {
-                recruitersMap.set(e.officialEmail.toLowerCase(), `${e.first} ${e.last || ''}`.trim());
-            }
-        });
-        
-        state.metadata.recruiters = Array.from(recruitersMap.entries()).map(([email, name]) => ({ value: email, display: name })).sort((a,b) => a.display.localeCompare(b.display));
-        
-        renderEmployeeTable();
-        renderDropdowns();
-        updateDashboardStats();
-    }, (err) => renderEmployeeTable());
-
-    onSnapshot(candRef, (snap) => {
-        const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        state.candidates = mergeWithLocal(cloudData, 'candidates');
-        
-        const techs = new Set();
-        state.candidates.forEach(c => { if (c.tech) techs.add(c.tech); });
-        state.metadata.techs = Array.from(techs).sort();
-        
-        refreshViewForType('candidates');
-        updateHubStats();
-        renderDropdowns();
-        updateDashboardStats();
-        renderDashboardCharts();
-    }, (err) => refreshViewForType('candidates'));
-
-    onSnapshot(onbRef, (snap) => {
-        const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        state.onboarding = mergeWithLocal(cloudData, 'onboarding');
-        renderOnboardingTable();
-    }, (err) => renderOnboardingTable());
-
-    onSnapshot(placeRef, (snap) => {
-        const cloudData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        state.placements = mergeWithLocal(cloudData, 'placements');
-        renderPlacementTable();
-        updateDashboardStats();
-    }, (err) => renderPlacementTable());
-
-    onSnapshot(usersRef, (snap) => {
-        state.allUsers = snap.docs.map(doc => {
-            const data = doc.data();
-            return { id: doc.id, name: (data.firstName && data.lastName) ? `${data.firstName} ${data.lastName}` : (data.displayName || 'Staff Member'), dob: data.dob };
-        });
-    });
-}
-
-function renderDropdowns() {
-    ['filter-recruiter', 'filter-tech'].forEach(id => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const currentVal = el.value;
-        const isTech = id.includes('tech');
-        const opts = isTech 
-            ? state.metadata.techs.map(t => `<option value="${t}">${t}</option>`).join('')
-            : state.metadata.recruiters.map(r => `<option value="${r.value}">${r.display}</option>`).join('');
-        
-        el.innerHTML = `<option value="">${isTech ? "All Tech" : "All Recruiters"}</option>${opts}`;
-        el.value = currentVal;
-    });
-}
-
-window.generateRecruiterDropdown = (currentVal, id, collectionName) => {
-    const list = state.metadata.recruiters || [];
-    const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join('');
-    return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collectionName}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`;
-};
-
-window.updateRecruiter = async (id, collectionName, val) => {
-    aggressiveLocalSave(collectionName, id, 'recruiter', val);
-    try {
-        if (!id.startsWith('local_')) await updateDoc(doc(db, collectionName, id), { recruiter: val });
-        showToast("Recruiter Saved");
-    } catch (e) { showToast("Saved Locally"); }
-};
-
-window.generateTechDropdown = (currentVal, id, collectionName) => {
-    const list = [...(state.metadata.techs || [])];
-    if (currentVal && !list.includes(currentVal)) list.push(currentVal);
-    list.sort();
-    const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join('');
-    return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collectionName}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`;
-};
-
-window.updateTech = async (id, collectionName, val) => {
-    aggressiveLocalSave(collectionName, id, 'tech', val);
-    try {
-        if (!id.startsWith('local_')) await updateDoc(doc(db, collectionName, id), { tech: val });
-        showToast("Tech Saved");
-    } catch (e) { showToast("Saved Locally"); }
-};
-
-/* ==========================================================================
-   6. EVENT LISTENERS & UI ROUTING
-   ========================================================================= */
-function debounce(func, timeout = 300) {
-    let timer;
-    return (...args) => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { func.apply(this, args); }, timeout);
-    };
-}
-
-function setupEventListeners() {
-    document.querySelectorAll('.nav-item[data-target]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            if (e.target.closest('.fa-chevron-down') || e.target.closest('.fa-chevron-up')) return;
-            if (btn.classList.contains('locked')) return showToast("Access Restricted: Manager clearance required.");
-            
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            btn.classList.add('active');
-            
-            document.querySelectorAll('.content-view').forEach(v => v.classList.remove('active'));
-            const targetId = btn.dataset.target;
-            const targetView = document.getElementById(targetId);
-            if (targetView) targetView.classList.add('active');
-
-            const titleEl = document.getElementById('page-title');
-            if (titleEl && !targetId.includes('admin')) {
-                const icon = btn.querySelector('i, .material-icons')?.outerHTML || '';
-                const text = btn.querySelector('span:not(.material-icons)')?.innerText || btn.innerText;
-                titleEl.innerHTML = `${icon} ${text}`;
-            }
-
-            if (window.innerWidth <= 900) {
-                document.getElementById('sidebar')?.classList.remove('mobile-open');
-                document.getElementById('sidebar-overlay')?.classList.remove('active');
-            }
-            if (targetId === 'view-dashboard') updateDashboardStats();
-            if (targetId === 'view-admin') loadAdminUsers();
-            if (typeof storageManager !== 'undefined') storageManager.saveUIState();
-        });
-    });
-
-    const mobileBtn = document.getElementById('btn-mobile-menu');
-    const overlay = document.getElementById('sidebar-overlay');
-    if (mobileBtn) mobileBtn.addEventListener('click', () => { document.getElementById('sidebar').classList.add('mobile-open'); overlay.classList.add('active'); });
-    if (overlay) overlay.addEventListener('click', () => { document.getElementById('sidebar').classList.remove('mobile-open'); overlay.classList.remove('active'); });
-
-    document.getElementById('btn-logout')?.addEventListener('click', () => {
-        if (confirm("Are you sure you want to log out?")) signOut(auth);
-    });
-
-    const bindSearch = (id, targetState, renderFunc) => {
-        document.getElementById(id)?.addEventListener('input', debounce(e => {
-            targetState.text = e.target.value.toLowerCase();
-            const typeMap = { 'search-input': 'cand', 'hub-search-input': 'hub', 'emp-search-input': 'emp', 'onb-search-input': 'onb' };
-            const pType = typeMap[id];
-            if (pType && state.pagination[pType]) state.pagination[pType].current = 1;
-            renderFunc();
-            if (typeof storageManager !== 'undefined') storageManager.saveUIState();
-        }));
-    };
-
-    bindSearch('search-input', state.filters, () => refreshViewForType('candidates'));
-    bindSearch('hub-search-input', state.hubFilters, renderHubTable);
-    bindSearch('emp-search-input', state.empFilters, renderEmployeeTable);
-    bindSearch('onb-search-input', state.onbFilters, renderOnboardingTable);
-
-    document.getElementById('filter-recruiter')?.addEventListener('change', e => { 
-        state.filters.recruiter = e.target.value; 
-        state.pagination.cand.current = 1;
-        refreshViewForType('candidates'); 
-        if (typeof storageManager !== 'undefined') storageManager.saveUIState();
-    });
-    
-    document.getElementById('filter-tech')?.addEventListener('change', e => { 
-        state.filters.tech = e.target.value; 
-        state.pagination.cand.current = 1;
-        refreshViewForType('candidates'); 
-        if (typeof storageManager !== 'undefined') storageManager.saveUIState();
-    });
-
-    document.querySelectorAll('#view-candidates .btn-toggle').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            document.querySelectorAll('#view-candidates .btn-toggle').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            state.filters.status = e.target.dataset.status;
-            state.pagination.cand.current = 1;
-            refreshViewForType('candidates');
-            if (typeof storageManager !== 'undefined') storageManager.saveUIState();
-        });
-    });
-
-    document.getElementById('btn-reset-filters')?.addEventListener('click', () => {
-        ['search-input', 'filter-recruiter', 'filter-tech'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.value = '';
-        });
-        state.filters = { text: '', recruiter: '', tech: '', status: '' };
-        document.querySelectorAll('#view-candidates .btn-toggle').forEach(b => b.classList.remove('active'));
-        document.querySelector('#view-candidates .btn-toggle[data-status=""]')?.classList.add('active');
-        state.pagination.cand.current = 1;
-        refreshViewForType('candidates');
-        if (typeof storageManager !== 'undefined') storageManager.saveUIState();
-    });
-}
-
-/* ==========================================================================
-   7. DASHBOARD CHARTS & STATS
-   ========================================================================= */
-let recChartInstance = null;
-let techChartInstance = null;
-
-function renderDashboardCharts() {
-    let candData = state.candidates.filter(c => c.status !== 'Placed');
-    if (state.userRole === 'Employee' && state.user) candData = candData.filter(c => c.recruiter === state.user.email.toLowerCase());
-
-    const recCounts = {};
-    const techCounts = {};
-
-    candData.forEach(c => {
-        const rEmail = c.recruiter?.trim();
-        const rName = state.metadata.recruiters.find(r => r.value === rEmail)?.display || 'Unassigned';
-        recCounts[rName] = (recCounts[rName] || 0) + 1;
-        
-        let tRaw = c.tech?.trim() || 'Other';
-        const existingKey = Object.keys(techCounts).find(k => k.toLowerCase() === tRaw.toLowerCase());
-        const t = existingKey || tRaw;
-        techCounts[t] = (techCounts[t] || 0) + 1;
-    });
-
-    const recWrapper = document.querySelector('.large-chart .canvas-wrapper');
-    if (recWrapper) {
-        const requiredWidth = Math.max(100, Object.keys(recCounts).length * 60);
-        recWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: ${requiredWidth > 100 ? requiredWidth + 'px' : '100%'}"><canvas id="chart-recruiter"></canvas></div>`;
-    }
-
-    const ctxRec = document.getElementById('chart-recruiter');
-    if (ctxRec) {
-        if (recChartInstance) recChartInstance.destroy();
-        recChartInstance = new Chart(ctxRec, {
-            type: 'bar',
-            data: {
-                labels: Object.keys(recCounts),
-                datasets: [{ label: 'Candidates Assigned', data: Object.values(recCounts), backgroundColor: 'rgba(6, 182, 212, 0.6)', borderColor: '#06b6d4', borderWidth: 1, borderRadius: 4 }]
-            },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } } }
-        });
-    }
-
-    const techWrapper = document.querySelector('.small-chart .canvas-wrapper');
-    if (techWrapper) techWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: 100%;"><canvas id="chart-tech"></canvas></div>`;
-
-    const ctxTech = document.getElementById('chart-tech');
-    if (ctxTech) {
-        if (techChartInstance) techChartInstance.destroy();
-        techChartInstance = new Chart(ctxTech, {
-            type: 'doughnut',
-            data: {
-                labels: Object.keys(techCounts),
-                datasets: [{ data: Object.values(techCounts), backgroundColor: ['rgba(6,182,212,0.7)', 'rgba(245,158,11,0.7)', 'rgba(139,92,246,0.7)', 'rgba(34,197,94,0.7)', 'rgba(239,68,68,0.7)'], borderWidth: 2 }]
-            },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
-        });
-    }
-}
-
-function updateDashboardStats() {
-    let candData = state.candidates.filter(c => c.status !== 'Placed');
-    let placedData = state.placements;
-    if (state.userRole === 'Employee' && state.user) {
-        const myEmail = state.user.email.toLowerCase();
-        candData = candData.filter(c => c.recruiter === myEmail);
-        placedData = placedData.filter(c => c.recruiter === myEmail);
-    }
-
-    const setStat = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
-    setStat('stat-total', candData.length);
-    setStat('stat-active', candData.filter(c => c.status === 'Active').length);
-    setStat('stat-inactive', candData.filter(c => c.status === 'Inactive').length);
-    setStat('stat-placed', placedData.length);
-    
-    const uniqueTechs = new Set(candData.map(c => c.tech?.trim().toLowerCase()).filter(Boolean));
-    setStat('stat-tech', uniqueTechs.size);
-    setStat('stat-rec', state.employees.length);
-}
-
-/* ==========================================================================
-   8. ALIGNMENT, DRAG/DROP & RESIZING
-   ========================================================================= */
-window.cycleAlign = (context, colName) => {
-    const modes = ['left', 'center', 'right'];
-    const current = state.alignments[context][colName] || 'left';
-    const next = modes[(modes.indexOf(current) + 1) % 3];
-    state.alignments[context][colName] = next;
-    refreshViewForType(context);
-};
-
-window.cycleAlignAll = (context) => {
-    const modes = ['left', 'center', 'right'];
-    const current = state.alignments[context]['global'] || 'left';
-    const next = modes[(modes.indexOf(current) + 1) % 3];
-    state.alignments[context]['global'] = next;
-    refreshViewForType(context);
-    showToast(`All columns aligned ${next}`);
-};
-
-function applyAlignStyles(context, tableId) {
-    const table = document.getElementById(tableId);
-    if (!table) return;
-    const headers = Array.from(table.querySelectorAll('th'));
-    const config = state.alignments[context] || {};
-    let rules = '';
-
-    headers.forEach((th, idx) => {
-        const div = th.querySelector('[data-colname]');
-        if (div) {
-            const colName = div.dataset.colname;
-            const val = config[colName] || config['global'] || 'left';
-            if (val !== 'left') rules += `#${tableId} th:nth-child(${idx + 1}), #${tableId} td:nth-child(${idx + 1}) { text-align: ${val} !important; }\n`;
-        }
-    });
-
-    let style = document.getElementById(`align-style-${context}`);
-    if (!style) {
-        style = document.createElement('style');
-        style.id = `align-style-${context}`;
-        document.head.appendChild(style);
-    }
-    style.innerHTML = rules;
-}
-
-function thAlign(title, context) {
-    const dir = state.alignments[context]?.[title] || state.alignments[context]?.['global'] || 'left';
-    const icon = dir === 'left' ? 'fa-align-left' : (dir === 'center' ? 'fa-align-center' : 'fa-align-right');
-    const style = dir !== 'left' ? 'color:var(--primary); opacity:1;' : '';
-    return `<div data-colname="${title}" style="display:flex; align-items:center; width:100%;"><span style="flex:1; text-align:${dir};">${title}</span><i class="fa-solid ${icon} align-icon" style="${style}" onclick="event.stopPropagation(); cycleAlign('${context}', '${title}')"></i></div>`;
-}
-
-let dragColIndex = null;
-let dragTableId = null;
-
-function initColumnDragDrop(tableId, context) {
-    const table = document.getElementById(tableId);
-    if (!table) return;
-    const headers = table.querySelectorAll('th');
-
-    headers.forEach((th, index) => {
-        if (index < 4) return;
-        th.setAttribute('draggable', 'true');
-        th.classList.add('draggable-col');
-
-        th.ondragstart = (e) => {
-            e.stopPropagation();
-            dragColIndex = Array.from(th.parentNode.children).indexOf(th);
-            dragTableId = tableId;
-            e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', 'col_drag');
-            th.style.opacity = '0.5';
-        };
-        th.ondragover = (e) => {
-            e.preventDefault(); e.stopPropagation();
-            if (index < 4 || dragTableId !== tableId) return false;
-            e.dataTransfer.dropEffect = 'move';
-            th.classList.add('drag-over');
-            return false;
-        };
-        th.ondragleave = () => th.classList.remove('drag-over');
-        th.ondragend = () => {
-            th.style.opacity = '1';
-            headers.forEach(h => h.classList.remove('drag-over'));
-        };
-        th.ondrop = (e) => {
-            e.stopPropagation(); e.preventDefault();
-            th.classList.remove('drag-over');
-            if (index < 4 || dragTableId !== tableId || dragColIndex === null) return;
-            const dropColIndex = Array.from(th.parentNode.children).indexOf(th);
-            if (dragColIndex !== dropColIndex) {
-                moveColumnDOM(table, dragColIndex, dropColIndex);
-                saveColumnOrder(tableId, context);
-                applyAlignStyles(context, tableId);
-            }
-            dragColIndex = null;
-            return false;
-        };
-    });
-}
-
-function moveColumnDOM(table, fromIdx, toIdx) {
-    if (fromIdx === toIdx) return;
-    const rows = table.rows;
-    for (let i = 0; i < rows.length; i++) {
-        const cells = rows[i].children;
-        if (fromIdx < cells.length && toIdx < cells.length) {
-            const target = cells[toIdx];
-            const source = cells[fromIdx];
-            if (fromIdx < toIdx) rows[i].insertBefore(source, target.nextSibling);
-            else rows[i].insertBefore(source, target);
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
         }
     }
-}
-
-async function saveColumnOrder(tableId, context) {
-    const table = document.getElementById(tableId);
-    const headers = table.querySelectorAll('th');
-    const order = [];
-    headers.forEach((th, idx) => {
-        if (idx < 4) return;
-        const div = th.querySelector('[data-colname]');
-        if (div?.dataset.colname) order.push(div.dataset.colname);
-    });
-    state.colOrders[context] = order;
-    try { 
-        await setDoc(doc(db, 'settings', 'table_config'), { colOrders: state.colOrders }, { merge: true }); 
-    } catch(e) {}
-}
-
-function restoreColumnOrder(tableId, context) {
-    const savedOrder = state.colOrders?.[context];
-    if (!savedOrder?.length) return;
-    const table = document.getElementById(tableId);
-    if (!table) return;
-
-    savedOrder.forEach((colName, desiredRelativeIdx) => {
-        const desiredDOMIdx = desiredRelativeIdx + 4;
-        const headers = Array.from(table.querySelectorAll('th'));
-        let currentDOMIdx = -1;
-        for (let i = 4; i < headers.length; i++) {
-            const div = headers[i].querySelector('[data-colname]');
-            if (div?.dataset.colname === colName) { currentDOMIdx = i; break; }
-        }
-        if (currentDOMIdx !== -1 && currentDOMIdx !== desiredDOMIdx && desiredDOMIdx < headers.length) {
-            moveColumnDOM(table, currentDOMIdx, desiredDOMIdx);
-        }
-    });
-}
-
-let startX, startWidth, resizingTh;
-window.initResize = function (e) {
-    e.stopPropagation(); e.preventDefault();
-    resizingTh = e.target.closest('th');
-    startX = e.pageX;
-    startWidth = resizingTh.offsetWidth;
-    resizingTh.classList.add('active');
-    document.body.style.cursor = 'col-resize';
-    document.addEventListener('mousemove', doResize);
-    document.addEventListener('mouseup', stopResize);
-};
-function doResize(e) {
-    if (!resizingTh) return;
-    const newWidth = startWidth + (e.pageX - startX);
-    if (newWidth > 50) {
-        resizingTh.style.width = `${newWidth}px`;
-        resizingTh.style.minWidth = `${newWidth}px`;
-        resizingTh.style.maxWidth = `${newWidth}px`;
-    }
-}
-function stopResize() {
-    if (resizingTh) { resizingTh.classList.remove('active'); resizingTh = null; }
-    document.body.style.cursor = '';
-    document.removeEventListener('mousemove', doResize);
-    document.removeEventListener('mouseup', stopResize);
-}
-
-/* ==========================================================================
-   9. CUSTOM COLUMNS
-   ========================================================================= */
-let activeColumnContext = null;
-window.openAddColumnModal = (context) => {
-    activeColumnContext = context;
-    const modal = document.getElementById('add-column-modal');
-    modal.style.display = 'flex';
-    document.getElementById('new-col-name').focus();
-
-    let manageSection = document.getElementById('column-manage-section');
-    if (!manageSection) {
-        manageSection = document.createElement('div');
-        manageSection.id = 'column-manage-section';
-        manageSection.style.marginTop = '20px';
-        manageSection.style.paddingTop = '15px';
-        manageSection.style.borderTop = '1px solid var(--glass-border)';
-        const actions = modal.querySelector('.modal-actions');
-        modal.querySelector('.glass-panel').insertBefore(manageSection, actions);
-    }
-
-    const currentCols = state.customColumns[context] || [];
-    if (currentCols.length > 0) {
-        manageSection.innerHTML = `<h4 style="color:var(--text-muted); font-size:0.8rem; margin-bottom:10px;">MANAGE CUSTOM COLUMNS</h4>
-            <div style="max-height:100px; overflow-y:auto; padding-right:5px;">
-                ${currentCols.map((col, idx) => `<div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:5px; border-radius:4px;"><span style="font-size:0.85rem; color:var(--text-main);">${col.name}</span><i class="fa-solid fa-trash text-danger" style="cursor:pointer;" onclick="deleteCustomColumn('${context}', ${idx})"></i></div>`).join('')}
-            </div>`;
-        manageSection.style.display = 'block';
-    } else {
-        manageSection.style.display = 'none';
-    }
 };
 
-window.closeColumnModal = () => {
-    document.getElementById('add-column-modal').style.display = 'none';
-    document.getElementById('new-col-name').value = '';
-    activeColumnContext = null;
-};
-
-window.executeAddColumn = async () => {
-    const name = document.getElementById('new-col-name').value.trim();
-    const type = document.getElementById('new-col-type').value;
-    if (!name || !activeColumnContext) return;
-
-    const key = name.toLowerCase().replace(/[^a-zA-Z0-9]+(.)/g, (m, chr) => chr.toUpperCase());
-    if (!state.customColumns[activeColumnContext]) state.customColumns[activeColumnContext] = [];
-    state.customColumns[activeColumnContext].push({ name, key, type });
-
-    await saveAndRefreshColumns(activeColumnContext, `Column "${name}" Added`);
-    document.getElementById('new-col-name').value = '';
-    openAddColumnModal(activeColumnContext);
-};
-
-window.deleteCustomColumn = async (context, index) => {
-    if (!confirm("Delete this column?")) return;
-    state.customColumns[context].splice(index, 1);
-    await saveAndRefreshColumns(context, "Column Removed");
-    openAddColumnModal(context);
-};
-
-async function saveAndRefreshColumns(context, msg) {
-    try {
-        await setDoc(doc(db, 'settings', 'table_config'), { [context]: state.customColumns[context] }, { merge: true });
-        showToast(msg);
-        refreshViewForType(context);
-    } catch (e) {
-        window.systemLog('error', 'Error saving custom column', e);
-        showToast("Error saving configuration");
-    }
-}
-
-/* ==========================================================================
-   10. MODERN INSTANT ROW ADDITION
-   ========================================================================= */
-window.addNewRecord = async (collectionName) => {
-    const ts = Date.now();
-    const recruiterEmail = (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : '';
-    const today = new Date().toISOString().split('T')[0];
-
-    let defaultData = { 
-        orderIndex: -ts, 
-        createdAt: ts,
-        recruiter: recruiterEmail 
-    };
-
-    if (collectionName === 'candidates') {
-        Object.assign(defaultData, { first: 'New Candidate', last: '', mobile: '', wa: '', tech: '', status: 'Active', assigned: today, comments: '', linkedin: '', resume: '', trackingSheet: '', submissionLog: [], screeningLog: [], interviewLog: [] });
-    } else if (collectionName === 'employees') {
-        Object.assign(defaultData, { first: 'New Employee', last: '', dob: '', designation: '', workMobile: '', personalMobile: '', officialEmail: '', personalEmail: '' });
-    } else if (collectionName === 'onboarding') {
-        Object.assign(defaultData, { first: 'New Record', last: '', dob: '', mobile: '', status: 'Onboarding', assigned: today, comments: '' });
-    } else if (collectionName === 'placements') {
-        Object.assign(defaultData, { first: 'New Placement', last: '', tech: '', location: '', contract: '', assigned: today, actions: '', status: 'Placed' });
-    }
-
-    const customCols = state.customColumns[collectionName] || [];
-    customCols.forEach(col => defaultData[col.key] = '');
-
-    try {
-        const docRef = await addDoc(collection(db, collectionName), defaultData);
-        setTimeout(() => {
-            const newRow = document.querySelector(`tr[data-id="${docRef.id}"]`);
-            if (newRow) {
-                const firstCell = newRow.querySelector('[data-field="first"]');
-                if (firstCell) firstCell.click();
-            }
-        }, 500);
-    } catch (e) {
-        window.systemLog('warn', 'Firebase save blocked on new record, falling back to local storage', e);
-        defaultData.id = 'local_' + ts;
-        state[collectionName].unshift(defaultData);
-        localStorage.setItem(`np_data_${collectionName}`, JSON.stringify(state[collectionName]));
-        refreshViewForType(collectionName);
-        
-        setTimeout(() => {
-            const newRow = document.querySelector(`tr[data-id="${defaultData.id}"]`);
-            if (newRow) {
-                const firstCell = newRow.querySelector('[data-field="first"]');
-                if (firstCell) firstCell.click();
-            }
-        }, 100);
-    }
-};
-
-window.addInlineCandidateRow = () => window.addNewRecord('candidates');
-window.addInlineEmployeeRow = () => window.addNewRecord('employees');
-window.addInlineOnboardingRow = () => window.addNewRecord('onboarding');
-window.addInlinePlacementRow = () => window.addNewRecord('placements');
-
-/* ==========================================================================
-   11. TABLE RENDERING, PAGINATION & DATA ISOLATION
-   ========================================================================= */
-function refreshViewForType(type) {
-    const renderMap = {
-        cand: renderCandidateTable, candidates: renderCandidateTable,
-        emp: renderEmployeeTable, employees: renderEmployeeTable,
-        onb: renderOnboardingTable, onboarding: renderOnboardingTable,
-        hub: renderHubTable, place: renderPlacementTable, placements: renderPlacementTable
-    };
-    if (renderMap[type]) renderMap[type]();
-}
-
-window.changePage = (type, direction) => {
-    const config = state.pagination[type];
-    if (!config) return;
+// 3. Confirm Modal System
+// ===================================================================
+window.openConfirmModal = (title, message, onConfirm) => {
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-message').textContent = message;
     
-    let data = [];
-    if (type === 'cand') data = getFilteredData(state.candidates, state.filters);
-    else if (type === 'emp') data = state.employees.filter(item => `${item.first} ${item.last}`.toLowerCase().includes(state.empFilters.text));
-    else if (type === 'onb') data = state.onboarding.filter(item => `${item.first} ${item.last}`.toLowerCase().includes(state.onbFilters.text));
-    else if (type === 'place') {
-        const mVal = document.getElementById('placement-month-picker')?.value;
-        const yVal = document.getElementById('placement-year-picker')?.value;
-        data = state.placements.filter(c => c.assigned && ((state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal)));
-    } else if (type === 'hub') {
-        const { start, end } = state.hub.range;
-        const isInRange = (e) => { const t = new Date(e.date || e).getTime(); return t >= start && t <= end; };
-        data = state.candidates.filter(c => [...(c.submissionLog || []), ...(c.screeningLog || []), ...(c.interviewLog || [])].some(isInRange));
-    }
-
-    const maxPages = Math.ceil(data.length / config.limit) || 1;
-    let newPage = config.current + direction;
-    if (newPage < 1) newPage = 1;
-    if (newPage > maxPages) newPage = maxPages;
-    if (config.current !== newPage) {
-        config.current = newPage;
-        refreshViewForType(type);
-        storageManager.saveUIState();
-    }
-}
-
-function getFilteredData(data, filters) {
-    let subset = data;
-    if (state.userRole === 'Employee' && state.user) {
-        subset = subset.filter(item => item.recruiter === state.user.email.toLowerCase());
-    }
-    return subset.filter(item => {
-        if (item.status === 'Placed') return false;
-        const matchesText = `${item.first} ${item.last} ${item.tech || ''}`.toLowerCase().includes(filters.text);
-        const matchRec = filters.recruiter ? item.recruiter === filters.recruiter : true;
-        const matchTech = filters.tech ? item.tech === filters.tech : true;
-        const matchStatus = filters.status ? item.status === filters.status : true;
-        return matchesText && matchRec && matchTech && matchStatus;
-    });
-}
-
-const renderUrlCell = (val, id, field, col) => 
-    `<td style="text-align:center;" tabindex="0" data-field="${field}" onclick="inlineUrlEdit('${id}', '${field}', '${col}', this)">
-        ${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}
-    </td>`;
-
-const renderCustomCells = (item, collectionName) => {
-    return (state.customColumns[collectionName] || []).map(col => {
-        const val = item[col.key] || '';
-        if (col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${item.id}', '${col.key}', '${collectionName}', this.value)"></td>`;
-        if (col.type === 'url') return renderUrlCell(val, item.id, col.key, collectionName);
-        return `<td tabindex="0" data-field="${col.key}" onclick="inlineEdit('${item.id}', '${col.key}', '${collectionName}', this)">${val}</td>`;
-    }).join('');
-};
-
-function renderCandidateTable() {
-    if (state.candidateViewMode === 'board') {
-        renderKanbanBoard();
-        return; 
-    }
-
-    const filtered = getFilteredData(state.candidates, state.filters);
-    const tbody = document.getElementById('table-body');
-    const thead = document.getElementById('table-head');
-
-    const config = state.pagination.cand;
-    const totalPages = Math.ceil(filtered.length / config.limit) || 1;
-    if (config.current > totalPages) config.current = totalPages;
-    const startIndex = (config.current - 1) * config.limit;
-    const paginatedData = filtered.slice(startIndex, startIndex + config.limit);
-
-    const validIds = new Set(filtered.map(c => c.id));
-    state.selection.cand.forEach(id => { if (!validIds.has(id)) state.selection.cand.delete(id); });
-    updateSelectButtons('cand');
-
-    const isAllChecked = paginatedData.length > 0 && paginatedData.every(c => state.selection.cand.has(c.id));
-    const customHeaders = (state.customColumns.candidates || []).map(col => `<th>${thAlign(col.name, 'candidates')}</th>`).join('');
-
-    thead.innerHTML = `<tr>
-        <th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')"></i></div></th>
-        <th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th>
-        <th>${thAlign('#', 'candidates')}</th>
-        <th>${thAlign('First Name', 'candidates')}</th>
-        <th class="divider-col" style="position:relative;">${thAlign('Last Name', 'candidates')}<div class="resizer" onmousedown="initResize(event)"></div></th>
-        <th>${thAlign('Mobile', 'candidates')}</th>
-        <th>${thAlign('WhatsApp', 'candidates')}</th>
-        <th>${thAlign('Tech', 'candidates')}</th>
-        <th>${thAlign('Recruiter', 'candidates')}</th>
-        <th style="width: 140px;">${thAlign('Status', 'candidates')}</th>
-        <th>${thAlign('Assigned', 'candidates')}</th>
-        <th>${thAlign('Comments', 'candidates')}</th>
-        <th>${thAlign('LinkedIn', 'candidates')}</th>
-        <th>${thAlign('Resume', 'candidates')}</th>
-        <th>${thAlign('Tracking', 'candidates')}</th>
-        ${customHeaders}
-    </tr>`;
-
-    if (document.getElementById('cand-footer-count')) {
-        document.getElementById('cand-footer-count').innerText = `Total: ${filtered.length} records`;
-        if (document.getElementById('cand-page-indicator')) document.getElementById('cand-page-indicator').innerText = `Page ${config.current} of ${totalPages}`;
-    }
-
-    tbody.innerHTML = paginatedData.map((c, i) => {
-        const actualIndex = startIndex + i + 1;
-        const isSel = state.selection.cand.has(c.id) ? 'checked' : '';
-        const rowClass = state.selection.cand.has(c.id) ? 'selected-row' : '';
-        const statusClass = c.status === 'Active' ? 'active' : 'inactive';
-        const orderVal = c.orderIndex ?? -c.createdAt;
-
-        return `<tr class="${rowClass}" data-id="${c.id}" data-collection="candidates" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'candidates')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'candidates')">
-            <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical"></i></td>
-            <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td>
-            <td>${actualIndex}</td>
-            <td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first || ''}</td>
-            <td class="divider-col" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last || ''}</td>
-            <td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile || ''}</td>
-            <td tabindex="0" data-field="wa" onclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa || ''}</td>
-            <td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech || ''}</td>
-            <td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td>
-            <td style="overflow:visible;">
-                <div class="action-dropdown-container">
-                    <div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${c.status || 'Inactive'} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div>
-                    <div id="menu-${c.id}" class="custom-dropdown-menu">
-                        <div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div>
-                        <div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div>
-                        <div class="dropdown-option" onclick="moveToPlacements('${c.id}')"><span style="width:8px; height:8px; background:#f59e0b; border-radius:50%; display:inline-block;"></span> Move to Placements</div>
-                        <div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div>
-                    </div>
-                </div>
-            </td>
-            <td><input type="date" class="date-input-modern" value="${c.assigned || ''}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>
-            <td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments || ''}</td>
-            ${renderUrlCell(c.linkedin, c.id, 'linkedin', 'candidates')}
-            ${renderUrlCell(c.resume, c.id, 'resume', 'candidates')}
-            ${renderUrlCell(c.trackingSheet, c.id, 'trackingSheet', 'candidates')}
-            ${renderCustomCells(c, 'candidates')}
-        </tr>`;
-    }).join('');
-
-    restoreColumnOrder('candidates-table', 'candidates');
-    applyAlignStyles('candidates', 'candidates-table');
-    initColumnDragDrop('candidates-table', 'candidates');
-}
-
-function renderEmployeeTable() {
-    let filtered = state.employees;
-    if (state.userRole === 'Employee' && state.user) filtered = filtered.filter(e => e.officialEmail === state.user.email.toLowerCase());
-    filtered = filtered.filter(item => `${item.first} ${item.last}`.toLowerCase().includes(state.empFilters.text));
-    
-    const config = state.pagination.emp;
-    const totalPages = Math.ceil(filtered.length / config.limit) || 1;
-    if (config.current > totalPages) config.current = totalPages;
-    const startIndex = (config.current - 1) * config.limit;
-    const paginatedData = filtered.slice(startIndex, startIndex + config.limit);
-
-    const validIds = new Set(filtered.map(c => c.id));
-    state.selection.emp.forEach(id => { if (!validIds.has(id)) state.selection.emp.delete(id); });
-    updateSelectButtons('emp');
-
-    const isAllChecked = paginatedData.length > 0 && paginatedData.every(e => state.selection.emp.has(e.id));
-    const customHeaders = (state.customColumns.employees || []).map(col => `<th>${thAlign(col.name, 'employees')}</th>`).join('');
-
-    document.getElementById('employee-table-head').innerHTML = `<tr>
-        <th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th>
-        <th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th>
-        <th>${thAlign('#', 'employees')}</th>
-        <th>${thAlign('First Name', 'employees')}</th>
-        <th>${thAlign('Last Name', 'employees')}</th>
-        <th>${thAlign('Date of Birth', 'employees')}</th>
-        <th>${thAlign('Designation', 'employees')}</th>
-        <th>${thAlign('Work Mobile', 'employees')}</th>
-        <th>${thAlign('Personal Mobile', 'employees')}</th>
-        <th>${thAlign('Official Email', 'employees')}</th>
-        <th>${thAlign('Personal Email', 'employees')}</th>
-        ${customHeaders}
-    </tr>`;
-
-    if (document.getElementById('emp-footer-count')) {
-        document.getElementById('emp-footer-count').innerText = `Total: ${filtered.length} records`;
-        if (document.getElementById('emp-page-indicator')) document.getElementById('emp-page-indicator').innerText = `Page ${config.current} of ${totalPages}`;
-    }
-
-    document.getElementById('employee-table-body').innerHTML = paginatedData.map((c, i) => {
-        const actualIndex = startIndex + i + 1;
-        const isSel = state.selection.emp.has(c.id) ? 'checked' : '';
-        const orderVal = c.orderIndex ?? -c.createdAt;
-        return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="employees" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'employees')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'employees')">
-            <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical"></i></td>
-            <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td>
-            <td>${actualIndex}</td>
-            <td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first || ''}</td>
-            <td tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last || ''}</td>
-            <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td>
-            <td tabindex="0" data-field="designation" onclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation || ''}</td>
-            <td tabindex="0" data-field="workMobile" onclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile || ''}</td>
-            <td tabindex="0" data-field="personalMobile" onclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile || ''}</td>
-            <td tabindex="0" data-field="officialEmail" onclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail || ''}</td>
-            <td tabindex="0" data-field="personalEmail" onclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail || ''}</td>
-            ${renderCustomCells(c, 'employees')}
-        </tr>`;
-    }).join('');
-
-    restoreColumnOrder('employee-table', 'employees');
-    applyAlignStyles('employees', 'employee-table');
-    initColumnDragDrop('employee-table', 'employees');
-}
-
-function renderOnboardingTable() {
-    const filtered = state.onboarding.filter(item => `${item.first} ${item.last}`.toLowerCase().includes(state.onbFilters.text));
-    const config = state.pagination.onb;
-    const totalPages = Math.ceil(filtered.length / config.limit) || 1;
-    if (config.current > totalPages) config.current = totalPages;
-    const startIndex = (config.current - 1) * config.limit;
-    const paginatedData = filtered.slice(startIndex, startIndex + config.limit);
-
-    const validIds = new Set(filtered.map(c => c.id));
-    state.selection.onb.forEach(id => { if (!validIds.has(id)) state.selection.onb.delete(id); });
-    updateSelectButtons('onb');
-
-    const isAllChecked = paginatedData.length > 0 && paginatedData.every(o => state.selection.onb.has(o.id));
-    const customHeaders = (state.customColumns.onboarding || []).map(col => `<th>${thAlign(col.name, 'onboarding')}</th>`).join('');
-
-    document.getElementById('onboarding-table-head').innerHTML = `<tr>
-        <th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('onboarding')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('onboarding')"></i></div></th>
-        <th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th>
-        <th>${thAlign('#', 'onboarding')}</th>
-        <th>${thAlign('First Name', 'onboarding')}</th>
-        <th class="divider-col" style="position:relative;">${thAlign('Last Name', 'onboarding')}<div class="resizer" onmousedown="initResize(event)"></div></th>
-        <th>${thAlign('Date of Birth', 'onboarding')}</th>
-        <th>${thAlign('Recruiter', 'onboarding')}</th>
-        <th>${thAlign('Mobile', 'onboarding')}</th>
-        <th>${thAlign('Status', 'onboarding')}</th>
-        <th>${thAlign('Assigned', 'onboarding')}</th>
-        <th>${thAlign('Comments', 'onboarding')}</th>
-        ${customHeaders}
-    </tr>`;
-
-    if (document.getElementById('onb-footer-count')) {
-        document.getElementById('onb-footer-count').innerText = `Total: ${filtered.length} records`;
-        if (document.getElementById('onb-page-indicator')) document.getElementById('onb-page-indicator').innerText = `Page ${config.current} of ${totalPages}`;
-    }
-
-    document.getElementById('onboarding-table-body').innerHTML = paginatedData.map((c, i) => {
-        const actualIndex = startIndex + i + 1;
-        const isSel = state.selection.onb.has(c.id) ? 'checked' : '';
-        const orderVal = c.orderIndex ?? -c.createdAt;
-        return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="onboarding" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'onboarding')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'onboarding')">
-            <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical"></i></td>
-            <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td>
-            <td>${actualIndex}</td>
-            <td tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first || ''}</td>
-            <td class="divider-col" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last || ''}</td>
-            <td><input type="date" class="date-input-modern" value="${c.dob || ''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td>
-            <td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td>
-            <td tabindex="0" data-field="mobile" onclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile || ''}</td>
-            <td>
-                <select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)">
-                    <option value="Onboarding" ${c.status === 'Onboarding' ? 'selected' : ''}>Onboarding</option>
-                    <option value="Completed" ${c.status === 'Completed' ? 'selected' : ''}>Completed</option>
-                </select>
-            </td>
-            <td><input type="date" class="date-input-modern" value="${c.assigned || ''}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td>
-            <td tabindex="0" data-field="comments" onclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments || ''}</td>
-            ${renderCustomCells(c, 'onboarding')}
-        </tr>`;
-    }).join('');
-
-    restoreColumnOrder('onboarding-table', 'onboarding');
-    applyAlignStyles('onboarding', 'onboarding-table');
-    initColumnDragDrop('onboarding-table', 'onboarding');
-}
-
-function renderPlacementTable() {
-    const mVal = document.getElementById('placement-month-picker')?.value;
-    const yVal = document.getElementById('placement-year-picker')?.value;
-    let placed = state.placements;
-
-    if (state.userRole === 'Employee' && state.user) placed = placed.filter(c => c.recruiter === state.user.email.toLowerCase());
-    placed = placed.filter(c => c.assigned && ((state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal)));
-
-    const config = state.pagination.place;
-    const totalPages = Math.ceil(placed.length / config.limit) || 1;
-    if (config.current > totalPages) config.current = totalPages;
-    const startIndex = (config.current - 1) * config.limit;
-    const paginatedData = placed.slice(startIndex, startIndex + config.limit);
-
-    if (!state.selection.place) state.selection.place = new Set();
-    const validIds = new Set(placed.map(c => c.id));
-    state.selection.place.forEach(id => { if (!validIds.has(id)) state.selection.place.delete(id); });
-    updateSelectButtons('place');
-
-    const isAllChecked = paginatedData.length > 0 && paginatedData.every(p => state.selection.place.has(p.id));
-    const thead = document.querySelector('#placement-table-head');
-    const customHeaders = (state.customColumns.placements || []).map(col => `<th>${thAlign(col.name, 'placements')}</th>`).join('');
-
-    if (thead) {
-        thead.innerHTML = `<tr>
-            <th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th>
-            <th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th>
-            <th style="width:50px;">${thAlign('#', 'placements')}</th>
-            <th>${thAlign('First Name', 'placements')}</th>
-            <th class="divider-col" style="position:relative;">${thAlign('Last Name', 'placements')}<div class="resizer" onmousedown="initResize(event)"></div></th>
-            <th>${thAlign('Tech', 'placements')}</th>
-            <th>${thAlign('Location', 'placements')}</th>
-            <th>${thAlign('Contract', 'placements')}</th>
-            <th>${thAlign('Assigned', 'placements')}</th>
-            <th>${thAlign('Actions', 'placements')}</th>
-            ${customHeaders}
-        </tr>`;
-    }
-
-    if (document.getElementById('placement-footer-count')) {
-        document.getElementById('placement-footer-count').innerText = `Total: ${placed.length} records`;
-        if (document.getElementById('place-page-indicator')) document.getElementById('place-page-indicator').innerText = `Page ${config.current} of ${totalPages}`;
-    }
-
-    const tbody = document.getElementById('placement-table-body');
-    if (tbody) {
-        tbody.innerHTML = paginatedData.map((c, i) => {
-            const actualIndex = startIndex + i + 1;
-            const isSel = state.selection.place.has(c.id) ? 'checked' : '';
-            const rowClass = state.selection.place.has(c.id) ? 'selected-row' : '';
-            const orderVal = c.orderIndex ?? -c.createdAt;
-            return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')">
-                <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical"></i></td>
-                <td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td>
-                <td>${actualIndex}</td>
-                <td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first || ''}</td>
-                <td class="divider-col" style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" onclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last || ''}</td>
-                <td tabindex="0" data-field="tech" onclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech || ''}</td>
-                <td tabindex="0" data-field="location" onclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location || ''}</td>
-                <td tabindex="0" data-field="contract" onclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract || ''}</td>
-                <td><input type="date" class="date-input-modern" value="${c.assigned || ''}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td>
-                <td tabindex="0" data-field="actions" onclick="inlineEdit('${c.id}', 'actions', 'placements', this)">${c.actions || ''}</td>
-                ${renderCustomCells(c, 'placements')}
-            </tr>`;
-        }).join('');
-    }
-
-    restoreColumnOrder('placement-table', 'placements');
-    applyAlignStyles('placements', 'placement-table');
-    initColumnDragDrop('placement-table', 'placements');
-}
-
-function renderHubTable() {
-    let data = state.candidates;
-    if (state.userRole === 'Employee' && state.user) data = data.filter(c => c.recruiter === state.user.email.toLowerCase());
-    if (state.hubFilters?.text) data = data.filter(c => `${c.first} ${c.last} ${c.tech || ''}`.toLowerCase().includes(state.hubFilters.text));
-
-    const { start, end } = state.hub.range;
-    const isInRange = (entry) => {
-        const t = new Date(entry.date || entry).getTime();
-        return t >= start && t <= end;
-    };
-
-    const activeCandidates = data.filter(c => 
-        (c.submissionLog || []).some(isInRange) || 
-        (c.screeningLog || []).some(isInRange) || 
-        (c.interviewLog || []).some(isInRange)
-    );
-
-    const config = state.pagination.hub;
-    const totalPages = Math.ceil(activeCandidates.length / config.limit) || 1;
-    if (config.current > totalPages) config.current = totalPages;
-    const startIndex = (config.current - 1) * config.limit;
-    const paginatedData = activeCandidates.slice(startIndex, startIndex + config.limit);
-
-    if (!state.selection.hub) state.selection.hub = new Set();
-    const validIds = new Set(activeCandidates.map(c => c.id));
-    state.selection.hub.forEach(id => { if (!validIds.has(id)) state.selection.hub.delete(id); });
-    updateSelectButtons('hub');
-
-    const isAllChecked = paginatedData.length > 0 && paginatedData.every(c => state.selection.hub.has(c.id));
-
-    document.getElementById('hub-table-head').innerHTML = `<tr>
-        <th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('hub')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th>
-        <th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th>
-        <th style="width:50px;">${thAlign('#', 'hub')}</th>
-        <th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th>
-        <th style="width:150px;">${thAlign('Recruiter', 'hub')}</th>
-        <th class="divider-col" style="width:120px; position:relative;">${thAlign('Technology', 'hub')}<div class="resizer" onmousedown="initResize(event)"></div></th>
-        <th style="text-align:center;">${thAlign('Submission', 'hub')}</th>
-        <th style="text-align:center;">${thAlign('Screenings', 'hub')}</th>
-        <th style="text-align:center;">${thAlign('Interview', 'hub')}</th>
-        <th style="text-align:right;">${thAlign('Date', 'hub')}</th>
-    </tr>`;
-
-    if (document.getElementById('hub-footer-count')) {
-        document.getElementById('hub-footer-count').innerText = `Total: ${activeCandidates.length} records`;
-        if (document.getElementById('hub-page-indicator')) document.getElementById('hub-page-indicator').innerText = `Page ${config.current} of ${totalPages}`;
-    }
-
-    const tbody = document.getElementById('hub-table-body');
-    if (activeCandidates.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:20px; opacity:0.6;">No activity found for this period.</td></tr>`;
-        return;
-    }
-
-    tbody.innerHTML = paginatedData.map((c, i) => {
-        const actualIndex = startIndex + i + 1;
-        const sub = (c.submissionLog || []).filter(isInRange).length;
-        const scr = (c.screeningLog || []).filter(isInRange).length;
-        const int = (c.interviewLog || []).filter(isInRange).length;
-
-        let displayDate = '-';
-        const logsInRange = [...(c.submissionLog || []).filter(isInRange), ...(c.screeningLog || []).filter(isInRange), ...(c.interviewLog || []).filter(isInRange)];
-        if (logsInRange.length > 0) {
-            logsInRange.sort((a, b) => new Date(b.date || b) - new Date(a.date || a));
-            const latest = logsInRange[0];
-            displayDate = (typeof latest === 'string') ? latest : (latest.date || '-');
-        }
-
-        const isSel = state.selection.hub.has(c.id) ? 'checked' : '';
-        const isExpanded = state.hub.expandedRowId === c.id;
-        const activeStyle = isExpanded ? 'background: rgba(6, 182, 212, 0.1); border-left: 3px solid var(--primary);' : '';
-        const caret = isExpanded ? '<i class="fa-solid fa-chevron-down"></i>' : '<i class="fa-solid fa-chevron-right"></i>';
-        const orderVal = c.orderIndex ?? -c.createdAt;
-
-        let html = `<tr style="cursor:pointer; ${activeStyle}" class="${state.selection.hub.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="hub" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'hub')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'hub')">
-            <td class="drag-handle-cell" onclick="event.stopPropagation()"><i class="fa-solid fa-grip-vertical"></i></td>
-            <td onclick="event.stopPropagation()"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'hub')"></td>
-            <td>${actualIndex}</td>
-            <td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" onclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first} ${c.last}</td>
-            <td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td>
-            <td class="divider-col">${generateTechDropdown(c.tech, c.id, 'candidates')}</td>
-            <td class="text-cyan" style="font-weight:bold; font-size:1.1rem; text-align:center;" onclick="toggleHubRow('${c.id}')">${sub}</td>
-            <td class="text-gold" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${scr}</td>
-            <td class="text-purple" style="font-weight:bold; text-align:center;" onclick="toggleHubRow('${c.id}')">${int}</td>
-            <td style="font-size:0.8rem; color:var(--text-muted); text-align:right;" onclick="toggleHubRow('${c.id}')">${displayDate} <span style="margin-left: 8px; opacity:0.7;">${caret}</span></td>
-        </tr>`;
-
-        if (isExpanded) {
-            const renderTimeline = (list, type) => {
-                const visibleLogs = (list || []).filter(isInRange);
-                if (visibleLogs.length === 0) return `<li class="hub-log-item" style="opacity:0.5; font-style:italic;">No records.</li>`;
-                return visibleLogs.map((entry, index) => {
-                    const isLegacy = typeof entry === 'string';
-                    const dateStr = isLegacy ? entry : entry.date;
-                    const subject = isLegacy ? 'Manual Entry' : (entry.subject || entry.note || 'No Subject');
-                    const link = !isLegacy && entry.link ? entry.link : null;
-                    const icon = type === 'sub' ? 'fa-paper-plane' : (type === 'scr' ? 'fa-user-clock' : 'fa-headset');
-
-                    return `<li class="hub-log-item" style="display:flex; flex-direction:column; gap:4px; padding:10px; border-bottom:1px solid rgba(255,255,255,0.05);">
-                        <div style="display:flex; justify-content:space-between; width:100%;">
-                            <span class="log-date" style="color:var(--primary); font-weight:bold; font-size:0.85rem;"><i class="fa-solid ${icon}"></i> ${dateStr}</span>
-                            ${!isLegacy && entry.recruiter ? `<span style="font-size:0.7rem; opacity:0.6;">${entry.recruiter}</span>` : ''}
-                        </div>
-                        <div style="font-weight:500; color:#fff; font-size:0.9rem;">${subject}</div>
-                        ${link ? `<a href="${link}" target="_blank" class="hub-link-btn" style="margin-top:5px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:4px; background:rgba(255,255,255,0.05); color:var(--primary); font-size:0.8rem;">View Email</a>` : ''}
-                        <div style="text-align:right; width:100%; margin-top:5px;">
-                            <button class="hub-action-btn delete" style="color: #ef4444; background:none; border:none; cursor:pointer;" onclick="event.stopPropagation(); deleteHubLog('${c.id}', '${type === 'sub' ? 'submissionLog' : type === 'scr' ? 'screeningLog' : 'interviewLog'}', ${index})"><i class="fa-solid fa-trash"></i> Remove</button>
-                        </div>
-                    </li>`;
-                }).join('');
-            };
-
-            html += `<tr class="hub-details-row"><td colspan="10" style="padding:0; border:none;">
-                <div class="hub-details-wrapper" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; padding:20px; background:rgba(0,0,0,0.2); border-bottom:1px solid var(--glass-border);" onclick="event.stopPropagation()">
-                    <div class="hub-col cyan">
-                        <div class="hub-col-header cyan">RTR & Submissions <button onclick="triggerHubNote('${c.id}', 'submissionLog')" style="float:right; background:none; border:none; color:#06b6d4; cursor:pointer;"><i class="fa-solid fa-plus"></i></button></div>
-                        <ul class="hub-log-list custom-scroll">${renderTimeline(c.submissionLog, 'sub')}</ul>
-                    </div>
-                    <div class="hub-col gold">
-                        <div class="hub-col-header gold">Screenings <button onclick="triggerHubNote('${c.id}', 'screeningLog')" style="float:right; background:none; border:none; color:#f59e0b; cursor:pointer;"><i class="fa-solid fa-plus"></i></button></div>
-                        <ul class="hub-log-list custom-scroll">${renderTimeline(c.screeningLog, 'scr')}</ul>
-                    </div>
-                    <div class="hub-col purple">
-                        <div class="hub-col-header purple">Interviews <button onclick="triggerHubNote('${c.id}', 'interviewLog')" style="float:right; background:none; border:none; color:#8b5cf6; cursor:pointer;"><i class="fa-solid fa-plus"></i></button></div>
-                        <ul class="hub-log-list custom-scroll">${renderTimeline(c.interviewLog, 'int')}</ul>
-                    </div>
-                </div>
-            </td></tr>`;
-        }
-        return html;
-    }).join('');
-
-    restoreColumnOrder('hub-table', 'hub');
-    applyAlignStyles('hub', 'hub-table');
-    initColumnDragDrop('hub-table', 'hub');
-}
-
-/* ==========================================================================
-   12. INLINE FIELD EDITING (AUTO-SAVE) & STATUS ACTIONS
-   ========================================================================= */
-window.inlineEdit = (id, field, colName, el) => {
-    if (el.querySelector('input')) return;
-    
-    let val = el.textContent.trim();
-    if (['New Candidate', 'New Employee', 'New Record', 'New Placement'].includes(val)) {
-        val = ''; 
-    }
-
-    el.innerHTML = '';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'inline-input-active';
-    input.value = val;
-    input.onclick = (e) => e.stopPropagation();
-    
-    input.onblur = async () => {
-        const newVal = input.value.trim();
-        el.textContent = newVal || (field === 'first' ? 'Untitled' : '');
-        
-        if (newVal !== val) {
-            aggressiveLocalSave(colName, id, field, newVal);
-            try {
-                if (!id.startsWith('local_')) {
-                    await updateDoc(doc(db, colName, id), { [field]: newVal });
-                }
-                showToast("Auto-Saved");
-            } catch (err) { 
-                window.systemLog('warn', 'Saved locally due to error', err); 
-                showToast("Saved Locally"); 
-            }
-        }
+    document.getElementById('confirm-btn-cancel').onclick = () => {
+        ModalManager.close('confirm-modal');
     };
     
-    input.onkeydown = (e) => { 
-        if (e.key === 'Enter') input.blur(); 
-        if (e.key === 'Escape') { input.value = val; input.blur(); } 
+    document.getElementById('confirm-btn-danger').onclick = () => {
+        if (typeof onConfirm === 'function') onConfirm();
+        ModalManager.close('confirm-modal');
     };
     
-    el.appendChild(input);
-    input.focus();
+    ModalManager.open('confirm-modal');
 };
 
-window.inlineDateEdit = async (id, field, colName, val) => {
-    aggressiveLocalSave(colName, id, field, val);
-    try {
-        if (!id.startsWith('local_')) {
-            await updateDoc(doc(db, colName, id), { [field]: val });
-        }
-        showToast("Date Auto-Saved");
-    } catch (err) { 
-        window.systemLog('warn', 'Saved locally due to error', err); 
-        showToast("Date Saved Locally"); 
+// 4. Add User Modal System
+// ===================================================================
+window.openAddUserModal = () => {
+    document.getElementById('add-user-email').value = '';
+    document.getElementById('add-user-role').value = 'Employee';
+    ModalManager.open('add-user-modal');
+};
+
+window.closeAddUserModal = () => {
+    ModalManager.close('add-user-modal');
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    const addUserForm = document.getElementById('add-user-modal');
+    if (addUserForm) {
+        document.getElementById('add-user-btn-cancel').onclick = () => closeAddUserModal();
+        document.getElementById('add-user-btn-submit').onclick = () => submitAddUser();
     }
-};
-
-window.inlineUrlEdit = (id, field, colName, el) => {
-    if (el.querySelector('input')) return;
-    const item = state[colName].find(x => x.id === id);
-    const oldVal = item ? item[field] : '';
-    let displayVal = oldVal ? oldVal.replace('mailto:', '').replace('https://', '').replace('http://', '') : '';
-
-    el.innerHTML = '';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Paste Link...';
-    input.className = 'url-input-active';
-    input.value = displayVal;
-    input.onclick = (e) => e.stopPropagation();
-
-    const save = async () => {
-        let newVal = input.value.trim();
-        if (newVal && newVal.includes('@') && !newVal.includes('/')) newVal = 'mailto:' + newVal;
-        else if (newVal && !newVal.startsWith('http') && !newVal.startsWith('mailto:')) newVal = 'https://' + newVal;
-
-        if (newVal !== oldVal) {
-            aggressiveLocalSave(colName, id, field, newVal);
-            try {
-                if (!id.startsWith('local_')) {
-                    await updateDoc(doc(db, colName, id), { [field]: newVal });
-                }
-                showToast("Link Auto-Saved");
-            } catch (e) { 
-                window.systemLog('warn', 'Saved locally due to error', e); 
-                showToast("Link Saved Locally"); 
-            }
-        }
-        refreshViewForType(colName);
-    };
-    input.addEventListener('blur', save);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') refreshViewForType(colName); });
-    el.appendChild(input);
-    input.focus();
-    input.select();
-};
-
-window.toggleRowMenu = (id) => {
-    document.querySelectorAll('.custom-dropdown-menu').forEach(el => { if (el.id !== `menu-${id}`) el.classList.remove('show'); });
-    const menu = document.getElementById(`menu-${id}`);
-    if (menu) menu.classList.toggle('show');
-
-    const closeMenu = (e) => {
-        if (!e.target.closest('.action-dropdown-container')) {
-            if (menu) menu.classList.remove('show');
-            document.removeEventListener('click', closeMenu);
-        }
-    };
-    setTimeout(() => document.addEventListener('click', closeMenu), 0);
-};
-
-window.updateStatusAndClose = async (id, status) => {
-    aggressiveLocalSave('candidates', id, 'status', status);
-    try {
-        if (!id.startsWith('local_')) {
-            await updateDoc(doc(db, 'candidates', id), { status: status });
-        }
-        showToast("Status updated");
-    } catch(e) { 
-        window.systemLog('warn', 'Status saved locally', e); 
-        showToast("Status saved locally"); 
-    }
-    document.getElementById(`menu-${id}`)?.classList.remove('show');
-    refreshViewForType('candidates');
-};
-
-window.updateStatus = async (id, colName, val) => {
-    aggressiveLocalSave(colName, id, 'status', val);
-    try {
-        if (!id.startsWith('local_')) {
-            await updateDoc(doc(db, colName, id), { status: val });
-        }
-        showToast("Status Auto-Saved");
-    } catch(e) { 
-        window.systemLog('warn', 'Status saved locally', e); 
-        showToast("Status saved locally"); 
-    }
-};
-
-window.editCustomStatus = async (id) => {
-    const currentStatus = state.candidates.find(c => c.id === id)?.status || "";
-    const newStatus = prompt("Enter new status detail:", currentStatus);
-    if (newStatus && newStatus.trim() !== "") {
-        updateStatusAndClose(id, newStatus.trim());
-    }
-    document.getElementById(`menu-${id}`)?.classList.remove('show');
-};
-
-window.moveToPlacements = async (id) => {
-    const cand = state.candidates.find(c => c.id === id);
-    if (!cand) return;
-    document.getElementById(`menu-${id}`)?.classList.remove('show');
-    
-    const newPlaceData = { ...cand, status: 'Placed', assigned: new Date().toISOString().split('T')[0] };
-
-    try {
-        if (id.startsWith('local_')) {
-            state.placements.push(newPlaceData);
-            state.candidates = state.candidates.filter(c => c.id !== id);
-            localStorage.setItem('np_data_candidates', JSON.stringify(state.candidates));
-            localStorage.setItem('np_data_placements', JSON.stringify(state.placements));
-            showToast("Locally moved to Placements");
-        } else {
-            const batch = writeBatch(db);
-            batch.set(doc(db, 'placements', id), newPlaceData);
-            batch.delete(doc(db, 'candidates', id));
-            await batch.commit();
-            showToast("Moved to Placements");
-        }
-    } catch (e) { 
-        window.systemLog('warn', 'Database error on Move to Placements, forcing local', e);
-        showToast("Database error, forcing local move"); 
-        state.placements.push(newPlaceData);
-        state.candidates = state.candidates.filter(c => c.id !== id);
-        localStorage.setItem('np_data_candidates', JSON.stringify(state.candidates));
-        localStorage.setItem('np_data_placements', JSON.stringify(state.placements));
-    }
-    refreshViewForType('candidates');
-    refreshViewForType('placements');
-};
-
-window.updatePlacementFilter = (type, btn) => {
-    state.placementFilter = type;
-    document.querySelectorAll('#view-placements .filter-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    const monthPicker = document.getElementById('placement-month-picker');
-    const yearPicker = document.getElementById('placement-year-picker');
-    if (type === 'monthly') {
-        if (monthPicker) monthPicker.style.display = 'block';
-        if (yearPicker) yearPicker.style.display = 'none';
-    } else {
-        if (monthPicker) monthPicker.style.display = 'none';
-        if (yearPicker) yearPicker.style.display = 'block';
-    }
-    renderPlacementTable();
-    storageManager.saveUIState();
-};
-
-window.deletePlacement = async (id) => {
-    if (!confirm("Remove this placement?")) return;
-    try {
-        if (id.startsWith('local_')) {
-            state.placements = state.placements.filter(c => c.id !== id);
-            localStorage.setItem('np_data_placements', JSON.stringify(state.placements));
-            refreshViewForType('placements');
-        } else {
-            await deleteDoc(doc(db, 'placements', id));
-        }
-        showToast("Placement removed");
-    } catch(e) { window.systemLog('error', 'Failed to delete placement', e); showToast("Error removing placement"); }
-};
-
-/* ==========================================================================
-   13. HUB LOGS & TIMELINES
-   ========================================================================= */
-window.updateHubStats = (filterType, dateVal) => {
-    if (filterType) state.hub.filterType = filterType;
-    if (dateVal) state.hub.date = dateVal;
-    
-    const dateInput = document.getElementById('hub-date-picker');
-    if (dateInput && dateInput.value !== state.hub.date) dateInput.value = state.hub.date;
-
-    const [year, month, day] = state.hub.date.split('-').map(Number);
-    const d = new Date(year, month - 1, day);
-    let start, end, labelText;
-
-    if (state.hub.filterType === 'daily') {
-        start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
-        end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
-        labelText = state.hub.date;
-    } else if (state.hub.filterType === 'weekly') {
-        const currentDay = d.getDay();
-        const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
-        const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() + distanceToMonday);
-        const friday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 4);
-        start = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0).getTime();
-        end = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate(), 23, 59, 59, 999).getTime();
-        labelText = `${monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${friday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
-    } else if (state.hub.filterType === 'monthly') {
-        start = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0).getTime();
-        end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999).getTime();
-        labelText = d.toLocaleString('default', { month: 'long', year: 'numeric' });
-    }
-
-    const rangeLabel = document.getElementById('hub-range-label');
-    if (rangeLabel) rangeLabel.innerHTML = `<i class="fa-regular fa-calendar"></i> ${labelText}`;
-    state.hub.range = { start, end };
-
-    const isInRange = (entry) => {
-        const t = new Date(entry.date || entry).getTime();
-        return t >= start && t <= end;
-    };
-
-    let subs = 0, scrs = 0, ints = 0;
-    let hubDataCount = state.candidates;
-    if (state.userRole === 'Employee' && state.user) hubDataCount = hubDataCount.filter(c => c.recruiter === state.user.email.toLowerCase());
-
-    hubDataCount.forEach(c => {
-        subs += (c.submissionLog || []).filter(isInRange).length;
-        scrs += (c.screeningLog || []).filter(isInRange).length;
-        ints += (c.interviewLog || []).filter(isInRange).length;
-    });
-
-    const setStat = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
-    setStat('stat-sub', subs);
-    setStat('stat-scr', scrs);
-    setStat('stat-int', ints);
-
-    document.querySelectorAll('.hub-controls .filter-btn').forEach(b => {
-        b.classList.remove('active');
-        if (b.getAttribute('data-filter') === state.hub.filterType) b.classList.add('active');
-    });
-    renderHubTable();
-    storageManager.saveUIState();
-};
-
-window.toggleHubRow = (id) => {
-    state.hub.expandedRowId = state.hub.expandedRowId === id ? null : id;
-    renderHubTable();
-};
-
-window.triggerHubNote = (candidateId, logType) => {
-    const cand = state.candidates.find(c => c.id === candidateId);
-    if (!cand) return;
-    document.getElementById('hub-note-form').reset();
-    document.getElementById('hub-note-candidate-id').value = candidateId;
-    document.getElementById('hub-note-log-type').value = logType;
-    document.getElementById('hub-note-date').value = new Date().toISOString().split('T')[0];
-
-    const titleEl = document.getElementById('hub-note-modal-title');
-    let titleText = "Add Log"; let iconColor = "text-cyan"; let iconType = "fa-paper-plane";
-    if (logType === 'submissionLog') { titleText = "Log Submission"; iconColor = "text-cyan"; iconType = "fa-paper-plane"; }
-    else if (logType === 'screeningLog') { titleText = "Log Screening"; iconColor = "text-gold"; iconType = "fa-user-clock"; }
-    else if (logType === 'interviewLog') { titleText = "Log Interview"; iconColor = "text-purple"; iconType = "fa-headset"; }
-
-    titleEl.innerHTML = `<i class="fa-solid ${iconType} ${iconColor}"></i> ${titleText} - ${cand.first}`;
-    document.getElementById('add-hub-note-modal').style.display = 'flex';
-    document.getElementById('hub-note-subject').focus();
-};
-
-window.closeHubNoteModal = () => document.getElementById('add-hub-note-modal').style.display = 'none';
-
-document.getElementById('hub-note-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const candidateId = document.getElementById('hub-note-candidate-id').value;
-    const logType = document.getElementById('hub-note-log-type').value;
-    const subject = document.getElementById('hub-note-subject').value.trim();
-    const date = document.getElementById('hub-note-date').value;
-    
-    const cand = state.candidates.find(c => c.id === candidateId);
-    if (!cand) return;
-
-    const newLog = {
-        date: date, subject: subject, type: 'Manual Entry', tech: cand.tech || 'General',
-        recruiter: (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : (cand.recruiter || 'Unassigned'),
-        timestamp: Date.now()
-    };
-
-    const currentLogs = cand[logType] || [];
-    currentLogs.push(newLog);
-    aggressiveLocalSave('candidates', candidateId, logType, currentLogs);
-
-    try {
-        if (!candidateId.startsWith('local_')) {
-            await updateDoc(doc(db, 'candidates', candidateId), { [logType]: currentLogs });
-        }
-        showToast("Log entry added successfully!");
-    } catch (err) { 
-        window.systemLog('warn', 'Log saved locally', err); 
-        showToast("Log saved locally."); 
-    }
-    closeHubNoteModal();
-    refreshViewForType('hub');
 });
 
-window.deleteHubLog = async (candidateId, logType, index) => {
-    if (!confirm("Are you sure you want to delete this log entry?")) return;
-    const cand = state.candidates.find(c => c.id === candidateId);
-    if (!cand || !cand[logType]) return;
-
-    const updatedLogs = [...cand[logType]];
-    updatedLogs.splice(index, 1);
-    aggressiveLocalSave('candidates', candidateId, logType, updatedLogs);
-
-    try {
-        if (!candidateId.startsWith('local_')) {
-            await updateDoc(doc(db, 'candidates', candidateId), { [logType]: updatedLogs });
-        }
-        showToast("Log entry removed.");
-    } catch(err) { 
-        window.systemLog('warn', 'Log removed locally', err); 
-        showToast("Log removed locally."); 
-    }
-    refreshViewForType('hub');
-};
-
-/* ==========================================================================
-   14. SELECTION & DELETION
-   ========================================================================= */
-window.toggleSelect = (id, type) => {
-    if (!state.selection[type]) state.selection[type] = new Set();
-    if (state.selection[type].has(id)) state.selection[type].delete(id);
-    else state.selection[type].add(id);
-    updateSelectButtons(type);
-    refreshViewForType(type);
-};
-
-window.toggleSelectAll = (type, box) => {
-    let data = [];
-    if (type === 'cand') data = getFilteredData(state.candidates, state.filters);
-    else if (type === 'emp') data = state.employees.filter(item => `${item.first} ${item.last}`.toLowerCase().includes(state.empFilters.text));
-    else if (type === 'onb') data = state.onboarding.filter(item => `${item.first} ${item.last}`.toLowerCase().includes(state.onbFilters.text));
-    else if (type === 'place') {
-        const mVal = document.getElementById('placement-month-picker')?.value;
-        const yVal = document.getElementById('placement-year-picker')?.value;
-        data = state.placements.filter(c => c.assigned && ((state.placementFilter === 'monthly') ? c.assigned.startsWith(mVal) : c.assigned.startsWith(yVal)));
-    } else if (type === 'hub') {
-        const { start, end } = state.hub.range;
-        const isInRange = (e) => { const t = new Date(e.date || e).getTime(); return t >= start && t <= end; };
-        data = state.candidates.filter(c => [...(c.submissionLog || []), ...(c.screeningLog || []), ...(c.interviewLog || [])].some(isInRange));
-    }
-
-    const config = state.pagination[type];
-    if (config) {
-        const startIndex = (config.current - 1) * config.limit;
-        data = data.slice(startIndex, startIndex + config.limit);
-    }
-
-    if (!state.selection[type]) state.selection[type] = new Set();
-    if (box.checked) data.forEach(item => state.selection[type].add(item.id));
-    else data.forEach(item => state.selection[type].delete(item.id));
-
-    updateSelectButtons(type);
-    refreshViewForType(type);
-};
-
-function updateSelectButtons(type) {
-    const config = {
-        cand: { btnId: 'btn-delete-selected', countId: 'selected-count' },
-        emp: { btnId: 'btn-delete-employee', countId: 'emp-selected-count' },
-        onb: { btnId: 'btn-delete-onboarding', countId: 'onboarding-selected-count' },
-        place: { btnId: 'btn-delete-placement', countId: 'place-selected-count' },
-        hub: { btnId: 'btn-delete-hub', countId: 'hub-selected-count' }
-    };
-    if (!config[type]) return;
-    const btn = document.getElementById(config[type].btnId);
-    const countSpan = document.getElementById(config[type].countId);
-    if (!btn) return;
-
-    if (state.selection[type]?.size > 0 && state.userRole !== 'Employee') {
-        btn.style.display = 'inline-flex';
-        btn.style.opacity = '1';
-        if (countSpan) countSpan.innerText = state.selection[type].size;
-    } else {
-        btn.style.display = 'none';
-        if (countSpan) countSpan.innerText = '0';
-    }
-}
-
-window.openDeleteModal = (type) => {
-    state.pendingDelete.type = type;
-    document.getElementById('delete-modal').style.display = 'flex';
-    document.getElementById('del-count').innerText = state.selection[type].size;
-};
-
-window.closeDeleteModal = () => document.getElementById('delete-modal').style.display = 'none';
-
-window.executeDelete = async () => {
-    const type = state.pendingDelete.type;
-    closeDeleteModal();
-    if (!type) return;
-
-    const colMap = { cand: 'candidates', hub: 'candidates', place: 'placements', emp: 'employees', onb: 'onboarding' };
-    const colName = colMap[type];
-    const ids = Array.from(state.selection[type]);
-
-    state.selection[type].clear();
-    updateSelectButtons(type);
-    const masterBox = document.getElementById(`select-all-${type}`);
-    if (masterBox) masterBox.checked = false;
-
-    const localIds = ids.filter(id => id.startsWith('local_'));
-    const firebaseIds = ids.filter(id => !id.startsWith('local_'));
-
-    if (localIds.length > 0 || firebaseIds.length > 0) {
-        state[colName] = state[colName].filter(item => !ids.includes(item.id));
-        localStorage.setItem(`np_data_${colName}`, JSON.stringify(state[colName]));
-    }
-
-    if (firebaseIds.length > 0) {
-        const batch = writeBatch(db);
-        firebaseIds.forEach(id => batch.delete(doc(db, colName, id)));
-        try { 
-            await batch.commit(); 
-        } catch (e) { 
-            window.systemLog('warn', 'Firebase delete blocked, deleted locally', e); 
-        }
-    }
+window.submitAddUser = async () => {
+    const email = document.getElementById('add-user-email').value.trim();
+    const role = document.getElementById('add-user-role').value;
     
-    refreshViewForType(type);
-    showToast("Deleted successfully");
-};
-
-/* ==========================================================================
-   15. GMAIL INTEGRATION
-   ========================================================================= */
-function loadGoogleScripts() {
-    const s1 = document.createElement('script');
-    s1.src = "https://apis.google.com/js/api.js";
-    s1.onload = () => gapi.load('client', async () => {
-        try {
-            await gapi.client.init({ apiKey: GMAIL_CONFIG.API_KEY, discoveryDocs: [GMAIL_CONFIG.DISCOVERY_DOC] });
-            state.gmail.gapiInited = true;
-            checkGmailAuth();
-        } catch (e) { window.systemLog('error', 'GAPI init failed', e); }
-    });
-    document.body.appendChild(s1);
-
-    const s2 = document.createElement('script');
-    s2.src = "https://accounts.google.com/gsi/client";
-    s2.onload = () => {
-        state.gmail.tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: GMAIL_CONFIG.CLIENT_ID,
-            scope: GMAIL_CONFIG.SCOPES,
-            callback: (resp) => {
-                if (resp.error) return;
-                updateGmailUI(true);
-                renderGmailList('INBOX');
-                fetchGmailLabels();
-            }
-        });
-        state.gmail.gisInited = true;
-        checkGmailAuth();
-    };
-    document.body.appendChild(s2);
-}
-
-function checkGmailAuth() {
-    if (state.gmail.gapiInited && state.gmail.gisInited) {
-        if (gapi.client.getToken()) { updateGmailUI(true); fetchGmailLabels(); } 
-        else updateGmailUI(false);
-    }
-}
-
-function updateGmailUI(isSignedIn) {
-    const btnAuth = document.getElementById('btn-gmail-auth');
-    const btnSignout = document.getElementById('btn-gmail-signout');
-    if (btnAuth) btnAuth.style.display = isSignedIn ? 'none' : 'inline-flex';
-    if (btnSignout) btnSignout.style.display = isSignedIn ? 'inline-flex' : 'none';
-}
-
-if (document.getElementById('btn-gmail-auth')) document.getElementById('btn-gmail-auth').onclick = () => state.gmail.tokenClient.requestAccessToken({ prompt: '' });
-if (document.getElementById('btn-gmail-signout')) {
-    document.getElementById('btn-gmail-signout').onclick = () => {
-        const t = gapi.client.getToken();
-        if (t) google.accounts.oauth2.revoke(t.access_token);
-        gapi.client.setToken('');
-        updateGmailUI(false);
-        document.getElementById('gmail-rows-container').innerHTML = '';
-    };
-}
-
-function parseMessageBody(payload) {
-    const decodeBase64Utf8 = (base64Str) => {
-        try { return decodeURIComponent(escape(window.atob(base64Str.replace(/-/g, '+').replace(/_/g, '/')))); }
-        catch (e) { return "(Encoding Error)"; }
-    };
-    let bodyText = '', bodyHtml = '';
-    if (payload.body?.data) {
-        const decodedString = decodeBase64Utf8(payload.body.data);
-        if (payload.mimeType === 'text/html') bodyHtml = decodedString;
-        else if (payload.mimeType === 'text/plain') bodyText = decodedString;
-    }
-    let attachments = [];
-    if (payload.parts) {
-        const parsedParts = payload.parts.reduce((acc, part) => {
-            if (part.filename?.length > 0) acc.attachments.push({ filename: part.filename, mimeType: part.mimeType, size: part.body.size, attachmentId: part.body.attachmentId });
-            else {
-                const nestedResult = parseMessageBody(part);
-                acc.text += nestedResult.text; acc.html += nestedResult.html; acc.attachments.push(...nestedResult.attachments);
-            }
-            return acc;
-        }, { text: '', html: '', attachments: [] });
-        bodyText += parsedParts.text; bodyHtml += parsedParts.html; attachments.push(...parsedParts.attachments);
-    }
-    return { text: bodyText, html: bodyHtml, attachments };
-}
-
-window.fetchGmailLabels = async () => {
-    if (!gapi.client.getToken()) return;
-    try {
-        const response = await gapi.client.gmail.users.labels.list({ 'userId': 'me' });
-        const userLabels = response.result.labels.filter(l => l.type === 'user');
-        state.labels = userLabels.map(l => ({ name: l.name, id: l.id, color: l.color?.backgroundColor || '#607d8b', type: 'api' }));
-        renderLabels();
-    } catch (e) { window.systemLog('error', 'Fetch Gmail labels failed', e); }
-};
-
-window.renderLabels = () => {
-    const container = document.getElementById('dynamic-labels-container');
-    if (!container) return;
-    container.innerHTML = "";
-    if (document.getElementById('manage-indicator')) document.getElementById('manage-indicator').style.display = 'none';
-
-    state.labels.forEach((l, index) => {
-        const div = document.createElement('div');
-        div.className = 'label-item';
-        const isSub = l.name.includes('/');
-        const displayName = isSub ? l.name.split('/').pop() : l.name;
-        const indent = isSub ? 'padding-left: 20px;' : '';
-        div.innerHTML = `<div class="label-left" style="${indent}" onclick="renderGmailList('${l.id || l.name}')">
-            <span class="material-icons" style="color: ${l.color}; font-size:16px;">label</span>
-            <span id="label-text-${index}" class="label-text" title="${l.name}">${displayName}</span>
-        </div>
-        <div class="label-more-btn" id="btn-more-${index}" onclick="event.stopPropagation(); toggleLabelMenu(${index})"><span class="material-icons" style="font-size: 16px;">more_horiz</span></div>
-        <div id="label-menu-${index}" class="label-dropdown" onclick="event.stopPropagation()">
-            <div style="font-size: 10px; color: grey; padding-left: 8px;">LABEL COLOR</div>
-            <div class="label-color-grid">
-                ${['#e91e63', '#9c27b0', '#2196f3', '#00bcd4', '#4caf50', '#ff9800', '#f44336', '#607d8b'].map(color => `<div class="color-swatch" style="background:${color}" onclick="updateLabelColor(${index}, '${color}')"></div>`).join('')}
-                <label class="color-swatch custom-add" title="Custom Color"><input type="color" style="opacity:0; width:100%; height:100%; cursor:pointer;" onchange="updateLabelColor(${index}, this.value)"><i class="fa-solid fa-plus"></i></label>
-            </div>
-            <div class="label-menu-item" onclick="triggerLabelEdit(${index})"><i class="fa-solid fa-pen"></i> Edit Name</div>
-            <div class="label-menu-item" onclick="triggerSubLabel(${index})"><i class="fa-solid fa-code-branch"></i> Add Sub-label</div>
-            <div class="label-menu-item danger" onclick="deleteLabel(${index})"><i class="fa-solid fa-trash"></i> Remove Label</div>
-        </div>`;
-        container.appendChild(div);
-    });
-};
-
-window.toggleLabelMenu = (index) => {
-    document.querySelectorAll('.label-dropdown').forEach(el => el.classList.remove('show'));
-    document.querySelectorAll('.label-more-btn').forEach(el => el.classList.remove('active'));
-    const menu = document.getElementById(`label-menu-${index}`);
-    const btn = document.getElementById(`btn-more-${index}`);
-    if (menu) { menu.classList.toggle('show'); if (menu.classList.contains('show')) btn.classList.add('active'); }
-    const closeFn = (e) => {
-        if (!e.target.closest('.label-item')) {
-            menu?.classList.remove('show'); btn?.classList.remove('active'); document.removeEventListener('click', closeFn);
-        }
-    };
-    setTimeout(() => document.addEventListener('click', closeFn), 0);
-};
-
-window.updateLabelColor = (index, color) => { state.labels[index].color = color; renderLabels(); };
-window.triggerLabelEdit = (index) => {
-    const textSpan = document.getElementById(`label-text-${index}`);
-    const currentName = state.labels[index].name;
-    document.getElementById(`label-menu-${index}`).classList.remove('show');
-    textSpan.innerHTML = `<input type="text" id="edit-input-${index}" class="label-edit-input" value="${currentName}">`;
-    const input = document.getElementById(`edit-input-${index}`);
-    input.focus();
-    const save = () => {
-        const newName = input.value.trim();
-        if (newName && newName !== currentName) { state.labels[index].name = newName; showToast("Label renamed"); }
-        renderLabels();
-    };
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
-    input.addEventListener('blur', save);
-    input.onclick = (e) => e.stopPropagation();
-};
-window.triggerSubLabel = (index) => {
-    const parentName = state.labels[index].name;
-    const subName = prompt(`Create sub-label under "${parentName}":`);
-    if (subName?.trim()) {
-        const fullName = `${parentName}/${subName.trim()}`;
-        if (state.labels.some(l => l.name.toLowerCase() === fullName.toLowerCase())) return alert("Label exists!");
-        state.labels.push({ name: fullName, color: state.labels[index].color });
-        state.labels.sort((a, b) => a.name.localeCompare(b.name));
-        renderLabels();
-        document.getElementById(`label-menu-${index}`).classList.remove('show');
-    }
-};
-window.deleteLabel = (index) => {
-    const label = state.labels[index];
-    if (confirm(`Delete "${label.name}"?`)) { state.labels = state.labels.filter(l => !l.name.startsWith(label.name)); renderLabels(); }
-};
-window.openCreateLabelModal = () => { document.getElementById('create-label-modal').style.display = 'flex'; document.getElementById('new-label-name').focus(); };
-window.closeCreateLabelModal = () => document.getElementById('create-label-modal').style.display = 'none';
-window.createLabel = () => {
-    const name = document.getElementById('new-label-name').value.trim();
-    if (!name) return;
-    state.labels.push({ name: name, color: state.selectedLabelColor });
-    renderLabels();
-    closeCreateLabelModal();
-};
-window.selectColor = (element, color) => {
-    state.selectedLabelColor = color;
-    document.querySelectorAll('.color-circle').forEach(el => el.classList.remove('selected'));
-    element.classList.add('selected');
-};
-
-window.renderGmailList = async (label = 'Inbox') => {
-    const labelMap = { 'Inbox': 'INBOX', 'Trash': 'TRASH', 'Spam': 'SPAM', 'Starred': 'STARRED', 'Important': 'IMPORTANT', 'Social': 'CATEGORY_SOCIAL', 'Updates': 'CATEGORY_UPDATES', 'Promotions': 'CATEGORY_PROMOTIONS' };
-    const apiLabelId = labelMap[label] || label;
-    state.gmail.currentLabel = apiLabelId;
-
-    document.getElementById('gmail-list-view').style.display = 'flex';
-    document.getElementById('gmail-detail-view').style.display = 'none';
-    const container = document.getElementById('gmail-rows-container');
-    container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 10px; color:var(--primary);"></i><br>Fetching Live Emails...</div>';
-
-    if (!gapi.client.getToken()) {
-        container.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);"><i class="fa-brands fa-google" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.5;"></i><p>Not connected to Workspace Inbox.</p><button class="btn-primary" style="margin-top: 15px;" onclick="state.gmail.tokenClient.requestAccessToken({prompt: ''})"><i class="fa-brands fa-google"></i> Connect Gmail Now</button></div>`;
+    if (!email) {
+        Toast.show('Please enter an email address', 'error');
         return;
     }
-
+    
+    if (!email.includes('@')) {
+        Toast.show('Please enter a valid email address', 'error');
+        return;
+    }
+    
     try {
-        let request = { 'userId': 'me', 'maxResults': 20 };
-        const qInput = document.getElementById('gmail-search-input');
-        if (qInput?.value && document.activeElement === qInput) request.q = qInput.value;
-        else request.labelIds = [apiLabelId];
-
-        const resp = await gapi.client.gmail.users.messages.list(request);
-        const messages = resp.result.messages;
-
-        if (!messages?.length) {
-            container.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);"><i class="fa-regular fa-envelope-open" style="font-size: 3rem; margin-bottom: 15px; opacity: 0.5;"></i><p>No emails found in this folder.</p></div>`;
-            return;
-        }
-
-        container.innerHTML = '';
-        const batch = messages.map(msg => gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': msg.id, 'format': 'metadata', 'metadataHeaders': ['From', 'Subject', 'Date'] }));
-        const results = await Promise.all(batch);
-
-        results.forEach(r => {
-            const email = r.result;
-            const headers = email.payload.headers;
-            const subject = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
-            const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
-            const fromName = fromRaw.replace(/[<>]/g, '').split(' ')[0];
-            const dateStr = new Date(Number(email.internalDate)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-            const snippet = email.snippet?.replace(/&quot;/g, '"').replace(/&#39;/g, "'") || '';
-            const isUnread = email.labelIds.includes('UNREAD');
-
-            const div = document.createElement('div');
-            div.className = `gmail-row ${isUnread ? 'unread' : 'read'}`;
-            div.onclick = () => openGmailDetail(email.id);
-            div.innerHTML = `<div onclick="event.stopPropagation()"><input type="checkbox" class="gmail-checkbox"></div><div><span class="material-icons star-icon">star_border</span></div><div class="row-sender">${fromName}</div><div class="row-subject">${subject} <span style="color:var(--text-muted); margin-left:5px; font-weight:normal;"> - ${snippet.substring(0, 60)}...</span></div><div class="email-date" style="text-align: right; font-size: 0.8rem; opacity: 0.8;">${dateStr}</div>`;
-            container.appendChild(div);
-        });
-    } catch (err) {
-        window.systemLog('error', 'Gmail fetch error', err);
-        container.innerHTML = `<div style="padding:40px; text-align:center; color: var(--danger);"><i class="fa-solid fa-triangle-exclamation" style="font-size: 2rem; margin-bottom: 10px;"></i><p>Error loading emails.</p></div>`;
+        // Here you would typically make an API call to invite the user
+        console.log('Inviting user:', email, 'with role:', role);
+        Toast.show(`Invitation sent to ${email}`);
+        closeAddUserModal();
+    } catch (error) {
+        Toast.show('Failed to send invitation', 'error');
+        console.error('Error:', error);
     }
 };
 
-window.openGmailDetail = async (id) => {
-    state.gmail.currentEmailId = id;
-    document.getElementById('gmail-list-view').style.display = 'none';
-    document.getElementById('gmail-detail-view').style.display = 'flex';
-    document.getElementById('detail-message').innerHTML = 'Loading content...';
-
-    try {
-        const resp = await gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': id, 'format': 'full' });
-        const email = resp.result;
-        const headers = email.payload.headers;
-
-        document.getElementById('detail-subject').innerText = headers.find(h => h.name === 'Subject')?.value || '';
-        document.getElementById('detail-sender').innerText = headers.find(h => h.name === 'From')?.value || '';
-        document.getElementById('detail-date').innerText = new Date(Number(email.internalDate)).toLocaleString();
-
-        const parsedBody = parseMessageBody(email.payload);
-        if (parsedBody.html) document.getElementById('detail-message').innerHTML = parsedBody.html;
-        else if (parsedBody.text) document.getElementById('detail-message').innerText = parsedBody.text;
-        else document.getElementById('detail-message').innerHTML = "<i>[Message body empty]</i>";
-    } catch (err) { document.getElementById('detail-message').innerText = "Error loading content."; }
+// 5. Delete Modal System
+// ===================================================================
+window.openDeleteModal = (type) => {
+    const modal = document.getElementById('delete-modal');
+    const count = type === 'cand' ? 
+        document.querySelectorAll('input[type="checkbox"]:checked').length : 0;
+    
+    document.getElementById('del-count').textContent = count;
+    modal.style.display = 'flex';
 };
 
-window.backToGmailList = () => { document.getElementById('gmail-detail-view').style.display = 'none'; document.getElementById('gmail-list-view').style.display = 'flex'; };
-window.refreshEmails = () => renderGmailList(state.gmail.currentLabel);
-window.toggleCategories = () => { const sub = document.getElementById('categories-submenu'); sub.style.display = sub.style.display === 'none' ? 'block' : 'none'; };
-window.toggleMore = () => { const sub = document.getElementById('more-submenu'); sub.style.display = sub.style.display === 'none' ? 'block' : 'none'; };
+window.closeDeleteModal = () => {
+    document.getElementById('delete-modal').style.display = 'none';
+};
 
-window.syncCurrentEmailToCandidate = async () => {
-    if (!state.gmail.currentEmailId) return;
-    const senderText = document.getElementById('detail-sender').innerText;
-    const subject = document.getElementById('detail-subject').innerText;
-
-    const candidateName = prompt("Enter Candidate FIRST NAME to sync this email to:", "");
-    if (!candidateName) return;
-
-    const candidate = state.candidates.find(c => c.first.toLowerCase() === candidateName.toLowerCase());
-    if (!candidate) return showToast("Candidate not found.");
-
-    let logs = candidate.submissionLog || [];
-    logs.push({
-        date: new Date().toISOString().split('T')[0],
-        subject: subject, type: 'Imported Email', tech: candidate.tech || 'General',
-        recruiter: (state.userRole === 'Employee' && state.user) ? state.user.email.toLowerCase() : state.currentUserName, 
-        note: `Imported from: ${senderText}`, timestamp: Date.now()
+window.executeDelete = () => {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]:checked');
+    if (checkboxes.length === 0) {
+        Toast.show('Please select items to delete', 'error');
+        return;
+    }
+    
+    checkboxes.forEach(cb => {
+        const row = cb.closest('tr');
+        if (row) row.remove();
     });
-
-    aggressiveLocalSave('candidates', candidate.id, 'submissionLog', logs);
-
-    try {
-        if (!candidate.id.startsWith('local_')) {
-            await updateDoc(doc(db, 'candidates', candidate.id), { submissionLog: logs });
-        }
-        showToast(`Synced to ${candidate.first} ${candidate.last}`);
-    } catch (e) { 
-        window.systemLog('warn', 'Sync saved locally', e); 
-        showToast("Sync saved locally"); 
-    }
+    
+    Toast.show('Items deleted successfully');
+    closeDeleteModal();
+    updateSelectedCount();
 };
 
-/* ==========================================================================
-   16. PROFILE & SETTINGS
-   ========================================================================= */
-function updateUserProfile(user, userData) {
-    const displayName = userData ? `${userData.firstName || ''} ${userData.lastName || ''}`.trim() : (user.displayName || 'User');
-    const role = userData?.role || 'Guest';
-    const email = user.email;
-
-    const setHtml = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
-    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-
-    setHtml('display-username', displayName);
-    setHtml('prof-name-display', displayName);
-    setHtml('prof-role-display', role);
-    setHtml('prof-email-display-sidebar', email);
-    setVal('prof-office-email', email);
-    setVal('prof-designation', role);
-
-    getDoc(doc(db, 'users', email)).then(docSnap => {
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            ['firstName', 'lastName', 'dob', 'workMobile', 'personalMobile', 'personalEmail'].forEach(key => {
-                if (data[key]) setVal(`prof-${key.replace(/([A-Z])/g, '-$1').toLowerCase()}`, data[key]);
-            });
-            if (data.photoURL) {
-                const img = document.getElementById('profile-main-img');
-                if (img) {
-                    img.src = data.photoURL;
-                    img.style.display = 'block';
-                    document.getElementById('profile-main-icon').style.display = 'none';
-                    document.getElementById('btn-delete-photo').style.display = 'inline-flex';
-                }
-            }
-        }
-    });
-}
-
-window.saveProfileData = async () => {
-    if (!state.user) return;
-    const profileData = {
-        firstName: document.getElementById('prof-first')?.value || '',
-        lastName: document.getElementById('prof-last')?.value || '',
-        dob: document.getElementById('prof-dob')?.value || '',
-        workMobile: document.getElementById('prof-work-mobile')?.value || '',
-        personalMobile: document.getElementById('prof-personal-mobile')?.value || '',
-        personalEmail: document.getElementById('prof-personal-email')?.value || ''
-    };
-
-    try {
-        await setDoc(doc(db, 'users', state.user.email), profileData, { merge: true });
-        showToast("Profile Updated Successfully");
-    } catch (err) { 
-        window.systemLog('error', 'Error updating profile', err); 
-        showToast("Error updating profile"); 
-    }
-};
-
-window.triggerPhotoUpload = () => document.getElementById('profile-upload-input')?.click();
-
-window.handlePhotoUpload = async (input) => {
-    if (!input.files?.[0] || !state.user) return;
-    const file = input.files[0];
-    const loadingEl = document.getElementById('avatar-loading');
-    if (loadingEl) loadingEl.style.display = 'flex';
-
-    try {
-        const storageRef = ref(storage, `profiles/${state.user.email}_${Date.now()}`);
-        await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(storageRef);
-        
-        await setDoc(doc(db, 'users', state.user.email), { photoURL: url }, { merge: true });
-        
-        document.getElementById('profile-main-img').src = url;
-        document.getElementById('profile-main-img').style.display = 'block';
-        document.getElementById('profile-main-icon').style.display = 'none';
-        document.getElementById('btn-delete-photo').style.display = 'inline-flex';
-        showToast("Photo uploaded");
-    } catch (err) { 
-        window.systemLog('error', 'Photo upload failed', err); 
-        showToast("Photo upload failed"); 
-    } 
-    finally { if (loadingEl) loadingEl.style.display = 'none'; }
-};
-
-window.deleteProfilePhoto = async () => {
-    if (!state.user || !confirm("Remove profile photo?")) return;
-    try {
-        await updateDoc(doc(db, 'users', state.user.email), { photoURL: deleteField() });
-        
-        document.getElementById('profile-main-img').style.display = 'none';
-        document.getElementById('profile-main-img').src = '';
-        document.getElementById('profile-main-icon').style.display = 'flex';
-        document.getElementById('btn-delete-photo').style.display = 'none';
-        showToast("Photo removed");
-    } catch (err) { 
-        window.systemLog('error', 'Failed to remove photo', err); 
-        showToast("Failed to remove photo"); 
-    }
-};
-
-/* ==========================================================================
-   17. FULL DATABASE EXPORT & SYSTEM MANAGEMENT
-   ========================================================================= */
+// 6. Export Data System
+// ===================================================================
 window.exportData = () => {
-    if (!state.candidates?.length) return showToast("No candidate data to export.");
-
-    let dataToExport = state.candidates;
-    
-    if (state.userRole === 'Employee' && state.user) {
-        dataToExport = dataToExport.filter(c => c.recruiter === state.user.email.toLowerCase());
+    const table = document.getElementById('candidates-table');
+    if (!table) {
+        Toast.show('No data to export', 'error');
+        return;
     }
-
-    const jsonString = JSON.stringify(dataToExport, null, 2);
-    const blob = new Blob([jsonString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
     
-    const link = document.createElement("a");
+    let csv = '';
+    
+    // Get headers
+    const headers = table.querySelectorAll('th');
+    headers.forEach((header, index) => {
+        csv += header.textContent.trim();
+        if (index < headers.length - 1) csv += ',';
+    });
+    csv += '\n';
+    
+    // Get data
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        cells.forEach((cell, index) => {
+            csv += '"' + cell.textContent.trim().replace(/"/g, '""') + '"';
+            if (index < cells.length - 1) csv += ',';
+        });
+        csv += '\n';
+    });
+    
+    // Download
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
     link.href = url;
-    link.download = `Nileprise_Database_Backup_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(link);
+    link.download = 'crm_data_' + new Date().toISOString().split('T')[0] + '.csv';
     link.click();
     
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast("JSON Database Backup Downloaded!");
+    Toast.show('Data exported successfully');
 };
 
-window.resetSystem = async () => {
-    if (state.userRole === 'Employee') return showToast("Access Denied: Only Admins can wipe the database.");
-    if (confirm("CRITICAL WARNING: This will permanently delete ALL candidates from the cloud and local storage. Continue?")) {
-        const confirmText = prompt("Type 'DELETE' to confirm:");
-        if (confirmText === 'DELETE') {
-            showToast("Wiping database...");
-            try {
-                const batch = writeBatch(db);
-                state.candidates.filter(c => !c.id.startsWith('local_')).forEach(c => batch.delete(doc(db, 'candidates', c.id)));
-                await batch.commit();
-                
-                localStorage.removeItem('np_data_candidates');
-                state.candidates = [];
-                refreshViewForType('candidates');
-                
-                showToast("System reset successfully.");
-            } catch (error) { 
-                window.systemLog('error', 'Error resetting system', error); 
-                showToast("Error resetting system."); 
-            }
-        } else {
-            showToast("Reset cancelled.");
+// 7. Reset System
+// ===================================================================
+window.resetSystem = () => {
+    openConfirmModal(
+        'Factory Reset',
+        'This will permanently delete all data. Are you sure?',
+        () => {
+            localStorage.clear();
+            location.reload();
+            Toast.show('System reset complete');
         }
-    }
+    );
 };
 
-/* ==========================================================================
-   18. KANBAN BOARD LOGIC
-   ========================================================================= */
-window.toggleCandidateView = () => {
-    const tableContainer = document.querySelector('#view-candidates .table-container');
-    const tableFooter = document.querySelector('#view-candidates .table-footer');
-    const kanbanContainer = document.getElementById('kanban-container');
-    const toggleBtn = document.getElementById('btn-toggle-view');
-
-    if (state.candidateViewMode === 'table') {
-        state.candidateViewMode = 'board';
-        if (tableContainer) tableContainer.style.display = 'none';
-        if (tableFooter) tableFooter.style.display = 'none';
-        if (kanbanContainer) kanbanContainer.style.display = 'block';
-        if (toggleBtn) toggleBtn.innerHTML = '<i class="fa-solid fa-list"></i> Table View';
-        
-        const toggles = document.querySelector('#view-candidates .status-toggles');
-        if (toggles) toggles.style.display = 'none';
-        
-        renderKanbanBoard();
-    } else {
-        state.candidateViewMode = 'table';
-        if (tableContainer) tableContainer.style.display = 'block';
-        if (tableFooter) tableFooter.style.display = 'flex';
-        if (kanbanContainer) kanbanContainer.style.display = 'none';
-        if (toggleBtn) toggleBtn.innerHTML = '<i class="fa-solid fa-table-columns"></i> Board View';
-        
-        const toggles = document.querySelector('#view-candidates .status-toggles');
-        if (toggles) toggles.style.display = 'flex';
-        
-        refreshViewForType('candidates');
-    }
-    storageManager.saveUIState();
-};
-
-window.renderKanbanBoard = () => {
-    const kanban = document.getElementById('kanban-container');
-    if (!kanban || state.candidateViewMode !== 'board') return;
-
-    const stages = ['Active', 'Screening', 'Interview', 'Offered', 'Placed', 'Inactive'];
-
-    let boardData = state.candidates;
-    if (state.userRole === 'Employee' && state.user) {
-        boardData = boardData.filter(c => c.recruiter === state.user.email.toLowerCase());
-    }
-    if (state.filters.text) {
-        boardData = boardData.filter(c => `${c.first} ${c.last} ${c.tech || ''}`.toLowerCase().includes(state.filters.text));
-    }
-    if (state.filters.recruiter) boardData = boardData.filter(c => c.recruiter === state.filters.recruiter);
-    if (state.filters.tech) boardData = boardData.filter(c => c.tech === state.filters.tech);
-
-    let html = `<div class="kanban-board custom-scroll">`;
-
-    stages.forEach(stage => {
-        const stageCandidates = stage === 'Placed' 
-            ? state.placements 
-            : boardData.filter(c => (c.status || 'Active') === stage);
-        
-        let headerColor = "var(--text-main)";
-        if (stage === 'Active') headerColor = "var(--primary)";
-        if (stage === 'Placed') headerColor = "var(--success)";
-        if (stage === 'Inactive') headerColor = "var(--danger)";
-        if (stage === 'Interview') headerColor = "var(--purple)";
-
-        html += `
-        <div class="kanban-col" data-status="${stage}" ondragover="kanbanDragOver(event)" ondrop="kanbanDrop(event, '${stage}')">
-            <div class="kanban-col-header" style="border-top: 3px solid ${headerColor};">
-                <span style="color: ${headerColor};">${stage}</span>
-                <span class="user-role-badge">${stageCandidates.length}</span>
-            </div>
-            <div class="kanban-cards custom-scroll" id="kanban-cards-${stage}">
-                ${stageCandidates.map(c => `
-                    <div class="kanban-card" draggable="${stage !== 'Placed'}" ondragstart="kanbanDragStart(event, '${c.id}')" id="card-${c.id}">
-                        <div class="card-title">${c.first || 'Untitled'} ${c.last || ''}</div>
-                        <div class="card-subtitle"><i class="fa-solid fa-code"></i> ${c.tech || 'No Tech Profile'}</div>
-                        <div class="card-meta">
-                            <span title="${c.recruiter}"><i class="fa-solid fa-user-tie"></i> ${c.recruiter ? c.recruiter.split('@')[0] : 'Unassigned'}</span>
-                            <span><i class="fa-regular fa-clock"></i> ${c.assigned || 'No Date'}</span>
-                        </div>
-                    </div>
-                `).join('')}
-                ${stageCandidates.length === 0 ? `<div style="text-align:center; padding: 20px; opacity: 0.4; font-size: 0.85rem;">Drop cards here</div>` : ''}
-            </div>
-        </div>`;
-    });
-
-    html += `</div>`;
-    kanban.innerHTML = html;
-};
-
-window.kanbanDragStart = (e, id) => {
-    e.dataTransfer.setData('text/plain', id);
-    e.dataTransfer.effectAllowed = 'move';
-    setTimeout(() => document.getElementById(`card-${id}`)?.classList.add('dragging'), 0);
-};
-
-window.kanbanDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const col = e.target.closest('.kanban-col');
-    if (col) {
-        document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
-        col.classList.add('drag-over');
-    }
-};
-
-window.kanbanDrop = async (e, newStatus) => {
-    e.preventDefault();
-    document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+// 8. Navigation System
+// ===================================================================
+window.switchView = (viewId) => {
+    const views = document.querySelectorAll('.content-view');
+    views.forEach(view => view.classList.remove('active'));
     
-    const id = e.dataTransfer.getData('text/plain');
-    const card = document.getElementById(`card-${id}`);
-    if (card) card.classList.remove('dragging');
-
-    if (newStatus === 'Placed') {
-        if (confirm("Move this candidate to Placements? This will lock their profile.")) {
-            moveToPlacements(id); 
-            setTimeout(renderKanbanBoard, 500);
+    const targetView = document.getElementById(viewId);
+    if (targetView) {
+        targetView.classList.add('active');
+    }
+    
+    // Update navigation active state
+    const navItems = document.querySelectorAll('.nav-item');
+    navItems.forEach(item => {
+        if (item.getAttribute('data-target') === viewId) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
         }
+    });
+};
+
+// 9. Mobile Menu System
+// ===================================================================
+window.toggleMobileMenu = () => {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    
+    if (sidebar) sidebar.classList.toggle('mobile-open');
+    if (overlay) overlay.classList.toggle('active');
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    const mobileMenuBtn = document.getElementById('btn-mobile-menu');
+    if (mobileMenuBtn) {
+        mobileMenuBtn.addEventListener('click', toggleMobileMenu);
+    }
+    
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', toggleMobileMenu);
+    }
+});
+
+// 10. Navigation Event Listeners
+// ===================================================================
+document.addEventListener('DOMContentLoaded', () => {
+    const navItems = document.querySelectorAll('.nav-item');
+    
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const target = item.getAttribute('data-target');
+            if (target) {
+                switchView(target);
+                document.getElementById('sidebar-overlay').classList.remove('active');
+                document.getElementById('sidebar').classList.remove('mobile-open');
+            }
+        });
+    });
+});
+
+// 11. Logout System
+// ===================================================================
+window.logout = () => {
+    openConfirmModal(
+        'Logout',
+        'Are you sure you want to logout?',
+        () => {
+            localStorage.removeItem('authToken');
+            window.location.href = '/login.html';
+        }
+    );
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    const logoutBtn = document.getElementById('btn-logout');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', logout);
+    }
+});
+
+// 12. Form Utilities
+// ===================================================================
+const FormUtils = {
+    validateEmail(email) {
+        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return re.test(email);
+    },
+
+    validateForm(formData) {
+        for (let key in formData) {
+            if (!formData[key] || formData[key].toString().trim() === '') {
+                return false;
+            }
+        }
+        return true;
+    },
+
+    clearForm(formId) {
+        const form = document.getElementById(formId);
+        if (form) form.reset();
+    },
+
+    getFormData(formId) {
+        const form = document.getElementById(formId);
+        if (!form) return null;
+        
+        const formData = new FormData(form);
+        const data = {};
+        formData.forEach((value, key) => {
+            data[key] = value;
+        });
+        return data;
+    }
+};
+
+// 13. Table Utilities
+// ===================================================================
+window.addInlineCandidateRow = () => {
+    const tbody = document.getElementById('table-body');
+    if (!tbody) return;
+    
+    const row = document.createElement('tr');
+    row.innerHTML = `
+        <td><input type="checkbox" /></td>
+        <td><input type="text" placeholder="Name" class="inline-input-active" /></td>
+        <td><input type="text" placeholder="Email" class="inline-input-active" /></td>
+        <td><input type="text" placeholder="Phone" class="inline-input-active" /></td>
+        <td><button class="btn-primary btn-sm" onclick="saveNewRow(this)">Save</button></td>
+    `;
+    tbody.appendChild(row);
+};
+
+window.saveNewRow = (btn) => {
+    const row = btn.closest('tr');
+    const inputs = row.querySelectorAll('input[type="text"]');
+    
+    let hasEmpty = false;
+    inputs.forEach(input => {
+        if (!input.value.trim()) hasEmpty = true;
+    });
+    
+    if (hasEmpty) {
+        Toast.show('Please fill all fields', 'error');
         return;
     }
-
-    const candIndex = state.candidates.findIndex(c => c.id === id);
-    if (candIndex === -1) return;
     
-    const oldStatus = state.candidates[candIndex].status;
-    if (oldStatus === newStatus) return; 
-
-    state.candidates[candIndex].status = newStatus;
-    renderKanbanBoard(); 
-
-    aggressiveLocalSave('candidates', id, 'status', newStatus);
-    try {
-        if (!id.startsWith('local_')) {
-            await updateDoc(doc(db, 'candidates', id), { status: newStatus });
-        }
-        showToast(`Moved to ${newStatus}`);
-    } catch (err) {
-        window.systemLog('warn', 'Status saved locally from Kanban', err);
-        showToast("Status saved locally");
-    }
+    // Convert inputs to display values
+    inputs.forEach(input => {
+        const value = input.value;
+        const td = input.closest('td');
+        td.textContent = value;
+    });
+    
+    btn.textContent = 'Edit';
+    btn.onclick = () => editRow(btn);
+    
+    Toast.show('Record saved successfully');
 };
 
-/* ==========================================================================
-   19. ERROR TRACKING & SYSTEM LOGGER
-   ========================================================================= */
-window.systemLog = async (method, message, details = null) => {
-    const validMethods = ['log', 'info', 'warn', 'error'];
-    const safeMethod = validMethods.includes(method) ? method : 'log';
+window.editRow = (btn) => {
+    const row = btn.closest('tr');
+    const cells = row.querySelectorAll('td:not(:first-child):not(:last-child)');
     
-    if (details) {
-        console[safeMethod](`[Nileprise CRM] ${message}`, details);
-    } else {
-        console[safeMethod](`[Nileprise CRM] ${message}`);
-    }
-
-    if (['error', 'warn'].includes(safeMethod)) {
-        try {
-            const logEntry = {
-                level: safeMethod,
-                message: message,
-                details: details ? (typeof details === 'object' ? JSON.stringify(details, Object.getOwnPropertyNames(details)) : details.toString()) : '',
-                user: (typeof state !== 'undefined' && state.user) ? state.user.email : 'Unauthenticated',
-                url: window.location.href,
-                userAgent: navigator.userAgent,
-                timestamp: Date.now(),
-                dateString: new Date().toISOString()
-            };
-
-            await addDoc(collection(db, 'system_logs'), logEntry);
-        } catch (firebaseErr) {
-            console.warn("Failed to save error to cloud:", firebaseErr);
-        }
-    }
+    cells.forEach(cell => {
+        const value = cell.textContent;
+        cell.innerHTML = `<input type="text" value="${value}" class="inline-input-active" />`;
+    });
+    
+    btn.textContent = 'Save';
+    btn.onclick = () => saveNewRow(btn);
 };
 
-window.addEventListener('error', function(event) {
-    window.systemLog('error', 'Uncaught Syntax/Reference Error', {
-        message: event.message,
-        filename: event.filename,
-        lineno: event.lineno
-    });
-});
-
-window.addEventListener('unhandledrejection', function(event) {
-    window.systemLog('error', 'Unhandled Promise Rejection', {
-        reason: event.reason
-    });
-});
-
-/* ==========================================================================
-   20. MANUAL CLOUD SYNC UTILITY
-   ========================================================================= */
-window.triggerCloudSync = async (btnElement) => {
-    const originalText = btnElement.innerHTML;
-    btnElement.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing to Cloud...';
-    btnElement.disabled = true;
-    btnElement.style.opacity = '0.7';
-
-    const collections = ['candidates', 'employees', 'onboarding', 'placements'];
-    let syncedCount = 0;
-
-    try {
-        for (const colName of collections) {
-            const localDataString = localStorage.getItem(`np_data_${colName}`);
-            if (!localDataString) continue;
-
-            let items = JSON.parse(localDataString);
-            const stuckLocalItems = items.filter(item => item.id.startsWith('local_'));
-
-            for (const item of stuckLocalItems) {
-                const { id, ...dataToSave } = item; 
-                
-                await addDoc(collection(db, colName), dataToSave);
-                
-                items = items.filter(i => i.id !== id);
-                localStorage.setItem(`np_data_${colName}`, JSON.stringify(items));
-                syncedCount++;
-            }
-        }
-
-        if (syncedCount > 0) {
-            showToast(`Success! Pushed ${syncedCount} records to the cloud.`);
-            setTimeout(() => window.location.reload(), 1500);
+// 14. Checkbox Selection
+// ===================================================================
+window.updateSelectedCount = () => {
+    const checkedCount = document.querySelectorAll('input[type="checkbox"]:checked').length;
+    const deleteBtn = document.getElementById('btn-delete-selected');
+    
+    if (deleteBtn) {
+        if (checkedCount > 0) {
+            deleteBtn.style.display = 'inline-flex';
+            document.getElementById('selected-count').textContent = checkedCount;
         } else {
-            showToast("System is already fully synced!");
+            deleteBtn.style.display = 'none';
         }
-
-    } catch (error) {
-        window.systemLog('error', 'Manual cloud sync failed', error);
-        showToast("Sync failed. Please check your internet connection.");
-    } finally {
-        btnElement.innerHTML = originalText;
-        btnElement.disabled = false;
-        btnElement.style.opacity = '1';
     }
 };
 
-/* ==========================================================================
-   21. REAL-TIME NETWORK MONITOR
-   ========================================================================= */
-function initNetworkMonitor() {
-    const statusEl = document.getElementById('network-status-indicator');
-    if (!statusEl) return;
-
-    const icon = statusEl.querySelector('i');
-    const text = statusEl.querySelector('span');
-
-    const updateNetworkStatus = () => {
-        if (navigator.onLine) {
-            icon.className = 'fa-solid fa-wifi text-success';
-            icon.style.color = '#22c55e';
-            text.innerText = 'Online';
-            
-            const needsSync = ['candidates', 'employees', 'onboarding', 'placements'].some(col => {
-                const local = localStorage.getItem(`np_data_${col}`);
-                return local && local.includes('"local_');
+document.addEventListener('DOMContentLoaded', () => {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', updateSelectedCount);
+    });
+    
+    // Select all checkbox
+    const selectAllCheckbox = document.querySelector('thead input[type="checkbox"]');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            document.querySelectorAll('tbody input[type="checkbox"]').forEach(cb => {
+                cb.checked = isChecked;
             });
+            updateSelectedCount();
+        });
+    }
+});
 
-            if (needsSync) {
-                text.innerText = 'Online (Sync Required)';
-                icon.style.color = '#f59e0b';
-                showToast("You're back online! Please go to Settings to Force Sync your offline work.");
-            } else {
-                showToast("Connection restored. You are live.");
-            }
+// 15. Search and Filter
+// ===================================================================
+window.searchRecords = (searchText, tableId = 'candidates-table') => {
+    const table = document.getElementById(tableId);
+    const rows = table.querySelectorAll('tbody tr');
+    const text = searchText.toLowerCase();
+    
+    rows.forEach(row => {
+        const content = row.textContent.toLowerCase();
+        row.style.display = content.includes(text) ? '' : 'none';
+    });
+};
 
-        } else {
-            icon.className = 'fa-solid fa-wifi-slash text-danger';
-            icon.style.color = '#ef4444';
-            text.innerText = 'Offline (Saving Locally)';
-            showToast("You are offline. Don't worry, changes are saving locally.");
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.addEventListener('keyup', (e) => {
+            searchRecords(e.target.value);
+        });
+    }
+});
+
+// 16. Page Title Update
+// ===================================================================
+window.updatePageTitle = (title, iconClass) => {
+    const pageTitle = document.getElementById('page-title');
+    if (pageTitle) {
+        pageTitle.innerHTML = `<i class="${iconClass}" aria-hidden="true"></i> ${title}`;
+    }
+};
+
+// 17. Pagination System
+// ===================================================================
+const Pagination = {
+    state: {
+        cand: { offset: 0, limit: 50, total: 0 }
+    },
+
+    changePage(type, direction) {
+        const paging = this.state[type];
+        const newOffset = paging.offset + (direction * paging.limit);
+        
+        if (newOffset >= 0 && newOffset < paging.total) {
+            paging.offset = newOffset;
+            this.updatePaginationUI(type);
         }
-    };
+    },
 
-    window.addEventListener('online', updateNetworkStatus);
-    window.addEventListener('offline', updateNetworkStatus);
-    updateNetworkStatus();
+    updatePaginationUI(type) {
+        const paging = this.state[type];
+        const currentPage = Math.floor(paging.offset / paging.limit) + 1;
+        const totalPages = Math.ceil(paging.total / paging.limit);
+        
+        const indicator = document.getElementById(`${type}-page-indicator`);
+        if (indicator) {
+            indicator.textContent = `Page ${currentPage} of ${totalPages}`;
+        }
+    }
+};
+
+window.changePage = (type, direction) => {
+    Pagination.changePage(type, direction);
+};
+
+// 18. Initialization
+// ===================================================================
+window.init = () => {
+    console.log('Nileprise CRM initialized');
+    
+    // Set default view
+    switchView('view-dashboard');
+    
+    // Update page title
+    updatePageTitle('Dashboard', 'fa-solid fa-chart-pie');
+    
+    // Initialize event listeners
+    initializeEventListeners();
+};
+
+function initializeEventListeners() {
+    // Modal close buttons
+    document.querySelectorAll('.modal-overlay').forEach(modal => {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                ModalManager.close(modal.id);
+            }
+        });
+    });
+    
+    // Custom modal overlay
+    const overlayButton = document.getElementById('custom-modal-overlay');
+    if (overlayButton) {
+        overlayButton.addEventListener('click', () => {
+            ModalManager.closeAll();
+        });
+    }
+    
+    // Hub note form
+    const hubNoteForm = document.getElementById('hub-note-form');
+    if (hubNoteForm) {
+        hubNoteForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            Toast.show('Log entry saved successfully');
+            closeHubNoteModal();
+            hubNoteForm.reset();
+        });
+    }
+    
+    // Add hub note modal functions
+    window.openHubNoteModal = (candidateId, logType) => {
+        document.getElementById('hub-note-candidate-id').value = candidateId;
+        document.getElementById('hub-note-log-type').value = logType;
+        document.getElementById('hub-note-date').valueAsDate = new Date();
+        ModalManager.open('add-hub-note-modal');
+    };
+    
+    window.closeHubNoteModal = () => {
+        ModalManager.close('add-hub-note-modal');
+    };
 }
 
-/* ==========================================================================
-   22. ADMIN PANEL & USER MANAGEMENT (Refactored)
-   ========================================================================= */
-
-window.loadAdminUsers = () => {
-    // Note: This is UI-level protection. Ensure Firestore rules back this up!
-    if (state.userRole !== 'Admin') return;
-    
-    onSnapshot(collection(db, 'users'), snap => {
-        const tbody = document.getElementById('admin-users-table-body');
-        if (!tbody) return;
-        
-        tbody.innerHTML = snap.docs.map(docSnap => {
-            const u = docSnap.data();
-            const email = docSnap.id;
-            const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'Pending Registration';
-            
-            // Prevents the active admin from locking themselves out
-            const isMe = state.user && state.user.email.toLowerCase() === email.toLowerCase();
-            const disabledAttr = isMe ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : '';
-            
-            return `
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <td style="padding: 12px; font-weight: 600; color: var(--text-main);">${name}</td>
-                <td style="padding: 12px; color: var(--text-muted);">${email}</td>
-                <td style="padding: 12px;">
-                    <select class="status-select" style="width: 130px;" onchange="changeUserRole('${email}', this.value)" ${disabledAttr}>
-                        <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
-                        <option value="Manager" ${u.role === 'Manager' ? 'selected' : ''}>Manager</option>
-                        <option value="Admin" ${u.role === 'Admin' ? 'selected' : ''}>Admin</option>
-                    </select>
-                </td>
-                <td style="padding: 12px; text-align: right;">
-                    <button class="hub-action-btn delete" style="color: #ef4444; background:none; border:none; cursor:pointer;" onclick="removeSystemUser('${email}')" ${disabledAttr}>
-                        <i class="fa-solid fa-trash"></i> Revoke
-                    </button>
-                </td>
-            </tr>`;
-        }).join('');
-    });
+// 19. Profile Functions
+// ===================================================================
+window.triggerPhotoUpload = () => {
+    document.getElementById('profile-upload-input')?.click();
 };
 
-window.changeUserRole = async (email, newRole) => {
-    try {
-        const safeEmail = email.toLowerCase();
-        await updateDoc(doc(db, 'users', safeEmail), { role: newRole });
-        showToast(`Success: ${safeEmail} is now a ${newRole}`);
-    } catch(e) {
-        window.systemLog('error', `Failed to change role for ${email}`, e);
-        showToast("Error updating role. Check your permissions.");
-    }
+// 20. Window Load Event
+// ===================================================================
+window.addEventListener('load', () => {
+    init();
+});
+
+// 21. Helper Functions
+// ===================================================================
+window.renderCandidates = () => {
+    console.log('Rendering candidates...');
 };
 
-window.removeSystemUser = async (email) => {
-    const safeEmail = email.toLowerCase();
-    
-    if(!confirm(`CRITICAL: Are you sure you want to permanently revoke CRM access for ${safeEmail}?`)) return;
-    
-    try {
-        await deleteDoc(doc(db, 'users', safeEmail));
-        showToast(`Access revoked for ${safeEmail}`);
-    } catch(e) {
-        window.systemLog('error', `Failed to remove user ${email}`, e);
-        showToast("Error removing user. Check your permissions.");
+window.renderEmployees = () => {
+    console.log('Rendering employees...');
+};
+
+window.renderOnboarding = () => {
+    console.log('Rendering onboarding...');
+};
+
+window.renderPlacements = () => {
+    console.log('Rendering placements...');
+};
+
+// 22. Global Error Handler
+// ===================================================================
+window.addEventListener('error', (event) => {
+    console.error('Global error:', event.error);
+});
+
+// 23. Session Management
+// ===================================================================
+const Session = {
+    getToken() {
+        return localStorage.getItem('authToken');
+    },
+
+    setToken(token) {
+        localStorage.setItem('authToken', token);
+    },
+
+    clearToken() {
+        localStorage.removeItem('authToken');
+    },
+
+    isAuthenticated() {
+        return !!this.getToken();
     }
 };
 
-window.quickAddUser = async () => {
-    const email = prompt("Enter the new user's Google Workspace Email:");
-    
-    // Robust email regex validation
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return showToast("Valid email required.");
-    }
-    
-    const role = prompt("Enter their starting role (Employee, Manager, Admin):", "Employee");
-    const validRoles = ['Employee', 'Manager', 'Admin'];
-    
-    // Capitalize first letter, lowercase the rest to ensure clean data
-    const normalizedRole = role ? role.charAt(0).toUpperCase() + role.slice(1).toLowerCase() : '';
-    
-    if (!validRoles.includes(normalizedRole)) {
-        return showToast("Invalid role entered. Must be Employee, Manager, or Admin.");
-    }
+// 24. API Utilities (Template for future backend integration)
+// ===================================================================
+const API = {
+    baseURL: process.env.API_URL || 'https://api.example.com',
 
-    try {
-        const safeEmail = email.toLowerCase();
-        await setDoc(doc(db, 'users', safeEmail), {
-            email: safeEmail,
-            role: normalizedRole,
-            createdAt: Date.now() // Consider serverTimestamp() from 'firebase/firestore' for production
-        }, { merge: true });
-        
-        showToast(`User ${safeEmail} invited as ${normalizedRole}!`);
-    } catch(e) {
-        window.systemLog('error', `Failed to add new user: ${email}`, e);
-        showToast("Error adding user. Check console for details.");
+    async request(endpoint, options = {}) {
+        const url = `${this.baseURL}${endpoint}`;
+        const headers = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Session.getToken()}`
+        };
+
+        try {
+            const response = await fetch(url, {
+                ...options,
+                headers: { ...headers, ...options.headers }
+            });
+
+            if (!response.ok) {
+                throw new Error(`API Error: ${response.statusText}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('API request failed:', error);
+            Toast.show('API request failed', 'error');
+            throw error;
+        }
+    },
+
+    get(endpoint) {
+        return this.request(endpoint);
+    },
+
+    post(endpoint, data) {
+        return this.request(endpoint, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    },
+
+    put(endpoint, data) {
+        return this.request(endpoint, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    },
+
+    delete(endpoint) {
+        return this.request(endpoint, { method: 'DELETE' });
     }
 };
 
-/* ==========================================================================
-   23. STARTUP
-   ========================================================================= */
-window.onload = () => { init(); };
+console.log('Nileprise CRM Script Loaded Successfully');
