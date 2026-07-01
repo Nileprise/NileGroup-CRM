@@ -2438,3 +2438,1214 @@ window.inlineUrlEdit = inlineUrlEdit;
 window.inlineSelectEdit = inlineSelectEdit;
 window.canInlineEdit = canInlineEdit;
 window.state = state;
+
+/* ===== Candidate Manager — Excel Inline Edit with Login + RBAC ===== */
+/* No demo data. All data persists via localStorage. */
+
+/* ---------- Users & approved emails (start empty) ---------- */
+
+const USERS = []; // Populated via sign-up
+const APPROVED_RECRUITER_EMAILS = []; // Admin pre-approves emails here
+
+const STORAGE_KEY = 'candidateManager_v3';
+const SESSION_KEY = 'candidateManager_session';
+const ADMIN_EMAIL = 'an@nileprise.com'; // The only email that gets admin role
+
+/* ---------- localStorage persistence ---------- */
+
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+function saveData() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      DATA, NEXT_ID, customOptions, colWidths, colAligns, colVAligns, USERS, APPROVED_RECRUITER_EMAILS,
+    }));
+  } catch {}
+}
+
+function loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+function saveSession(user) {
+  try {
+    if (user) sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+    else sessionStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
+
+let saved = loadData();
+
+const DATA = saved?.DATA || {
+  candidates: [], placements: [], onboarding: [], staffDirectory: [],
+  workspace: [], inbox: [], activityHub: [],
+};
+
+const NEXT_ID = saved?.NEXT_ID || {
+  candidates: 1, placements: 1, onboarding: 1, staffDirectory: 1,
+  workspace: 1, inbox: 1, activityHub: 1,
+};
+
+// Merge saved users and approved emails
+if (saved?.USERS) {
+  saved.USERS.forEach(u => {
+    if (!USERS.find(eu => eu.email === u.email)) USERS.push(u);
+  });
+}
+if (saved?.APPROVED_RECRUITER_EMAILS) {
+  saved.APPROVED_RECRUITER_EMAILS.forEach(e => {
+    if (!APPROVED_RECRUITER_EMAILS.includes(e)) APPROVED_RECRUITER_EMAILS.push(e);
+  });
+}
+
+/* ---------- Session state ---------- */
+
+let currentUser = loadSession(); // { email, role, name }
+let activeTab = 'dashboard';
+let selectedRowIdx = null;
+let colWidths = saved?.colWidths || {};
+let customOptions = saved?.customOptions || {};
+let colAligns = saved?.colAligns || {};
+let colVAligns = saved?.colVAligns || {};
+
+/* ---------- Permission Matrix ---------- */
+
+const PERMISSIONS = {
+  admin: {
+    dashboard:       { access: true, scope: 'all', readonly: false },
+    workspace:       { access: true, scope: 'all', readonly: false },
+    inbox:           { access: true, scope: 'all', readonly: false },
+    activityHub:     { access: true, scope: 'all', readonly: false },
+    candidates:      { access: true, scope: 'all', readonly: false },
+    placements:      { access: true, scope: 'all', readonly: false },
+    onboarding:      { access: true, scope: 'all', readonly: false },
+    staffDirectory:  { access: true, scope: 'all', readonly: false },
+    reports:         { access: true, scope: 'all', readonly: false },
+    settings:        { access: true, scope: 'all', readonly: false },
+  },
+  recruiter: {
+    dashboard:       { access: true, scope: 'company', readonly: true },
+    workspace:       { access: true, scope: 'own', readonly: false },
+    inbox:           { access: true, scope: 'own', readonly: false },
+    activityHub:     { access: true, scope: 'own', readonly: false },
+    candidates:      { access: true, scope: 'own', readonly: false },
+    placements:      { access: true, scope: 'own', readonly: false },
+    onboarding:      { access: true, scope: 'own', readonly: false },
+    staffDirectory:  { access: true, scope: 'all', readonly: true },
+    reports:         { access: false },
+    settings:        { access: false },
+  },
+};
+
+const MODULE_LABELS = {
+  dashboard: 'Dashboard', workspace: 'Workspace', inbox: 'Inbox',
+  activityHub: 'Activity Hub', candidates: 'Candidates', placements: 'Placements',
+  onboarding: 'Onboarding', staffDirectory: 'Staff Directory',
+  reports: 'Reports', settings: 'Settings',
+};
+
+const MODULE_ORDER = ['dashboard','workspace','inbox','activityHub','candidates','placements','onboarding','staffDirectory','reports','settings'];
+
+/* ---------- Column definitions ---------- */
+
+const TAB_COLUMNS = {
+  candidates: [
+    { key: 'firstName',   label: 'First Name',  required: true,  type: 'text',   width: 130 },
+    { key: 'lastName',    label: 'Last Name',   required: false, type: 'text',   width: 130 },
+    { key: 'mobile',      label: 'Mobile',      required: false, type: 'tel',    width: 120 },
+    { key: 'whatsapp',    label: 'WhatsApp',    required: false, type: 'tel',    width: 120, dividerAfter: true },
+    { key: 'email',       label: 'Email',       required: false, type: 'url',    width: 90,  icon: 'mail' },
+    { key: 'experience',  label: 'Experience',  required: false, type: 'text',   width: 90 },
+    { key: 'visa',        label: 'Visa',        required: false, type: 'text',   width: 90 },
+    { key: 'technology',  label: 'Technology',  required: false, type: 'text',   width: 130 },
+    { key: 'resume',      label: 'Resume',      required: false, type: 'url',    width: 80,  icon: 'file' },
+    { key: 'linkedin',    label: 'LinkedIn',    required: false, type: 'url',    width: 80,  icon: 'linkedin' },
+    { key: 'trackingSheet',      label: 'Tracking Sheet',  required: false, type: 'url',    width: 90,  icon: 'sheet' },
+    { key: 'trackingStatus',    label: 'Tracking Status', required: false, type: 'select', width: 160,
+      options: ['Not Filling','New','Filling - Properly','Filling - Improperly','Preparing for Interview','Preparing for Screening','Interruption','Leave'] },
+    { key: 'status',      label: 'Status',      required: false, type: 'select', width: 120,
+      options: ['Active','Inactive','On Hold','Shortlisted','Rejected','Hired'] },
+    { key: 'comments',    label: 'Comments / Notes', required: false, type: 'text', width: 200 },
+  ],
+  placements: [
+    { key: 'firstName',   label: 'First Name',  required: true,  type: 'text',   width: 130 },
+    { key: 'lastName',    label: 'Last Name',   required: false, type: 'text',   width: 130, dividerAfter: true },
+    { key: 'company',     label: 'Company',     required: false, type: 'text',   width: 140 },
+    { key: 'role',        label: 'Role',        required: false, type: 'text',   width: 140 },
+    { key: 'startDate',   label: 'Start Date',  required: false, type: 'text',   width: 110 },
+    { key: 'endDate',     label: 'End Date',    required: false, type: 'text',   width: 110 },
+    { key: 'rate',        label: 'Rate',        required: false, type: 'text',   width: 100 },
+    { key: 'status',      label: 'Status',      required: false, type: 'select', width: 120,
+      options: ['Active','Completed','Terminated','On Hold'] },
+    { key: 'comments',    label: 'Comments',    required: false, type: 'text',   width: 200 },
+  ],
+  onboarding: [
+    { key: 'firstName',   label: 'First Name',  required: true,  type: 'text',   width: 130 },
+    { key: 'lastName',    label: 'Last Name',   required: false, type: 'text',   width: 130 },
+    { key: 'company',     label: 'Company',     required: false, type: 'text',   width: 140 },
+    { key: 'step',        label: 'Onboarding Step', required: false, type: 'text', width: 160 },
+    { key: 'progress',    label: 'Progress',    required: false, type: 'text',   width: 100 },
+    { key: 'status',      label: 'Status',      required: false, type: 'select', width: 120,
+      options: ['Pending','In Progress','Completed','Blocked'] },
+    { key: 'comments',    label: 'Comments',    required: false, type: 'text',   width: 200 },
+  ],
+  staffDirectory: [
+    { key: 'firstName',   label: 'First Name',  required: true,  type: 'text',   width: 130 },
+    { key: 'lastName',    label: 'Last Name',   required: false, type: 'text',   width: 130 },
+    { key: 'role',        label: 'Role',        required: false, type: 'text',   width: 140 },
+    { key: 'email',       label: 'Email',       required: false, type: 'url',    width: 90,  icon: 'mail' },
+    { key: 'mobile',      label: 'Mobile',      required: false, type: 'tel',    width: 120 },
+    { key: 'department',  label: 'Department',  required: false, type: 'text',   width: 130 },
+    { key: 'status',      label: 'Status',      required: false, type: 'select', width: 120,
+      options: ['Active','Inactive','On Leave'] },
+    { key: 'comments',    label: 'Comments',    required: false, type: 'text',   width: 200 },
+  ],
+};
+
+/* ---------- Icons ---------- */
+
+const ICONS = {
+  mail: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>',
+  file: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>',
+  linkedin: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>',
+  sheet: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></svg>',
+  drag: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>',
+  sun: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
+  moon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>',
+  lock: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  check: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  empty: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>',
+  logout: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
+};
+
+const ALIGN_ICONS = {
+  left: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>',
+  center: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="5" y1="18" x2="19" y2="18"/></svg>',
+  right: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg>',
+};
+
+const VALIGN_ICONS = {
+  top: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><polyline points="6 9 12 3 18 9"/></svg>',
+  middle: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><polyline points="6 9 12 3 18 9"/><polyline points="6 15 12 21 18 15"/></svg>',
+  bottom: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><polyline points="6 15 12 21 18 15"/></svg>',
+};
+
+/* ---------- Current role derived from logged-in user ---------- */
+
+function currentRole() { return currentUser ? currentUser.role : null; }
+function currentUserName() { return currentUser ? currentUser.name : ''; }
+function currentUserEmail() { return currentUser ? currentUser.email : ''; }
+
+/* ---------- Permission helpers ---------- */
+
+function canAccess(m) {
+  const r = currentRole();
+  if (!r) return false;
+  const p = PERMISSIONS[r][m];
+  return p && p.access;
+}
+function isReadOnly(m) {
+  const r = currentRole();
+  if (!r) return false;
+  const p = PERMISSIONS[r][m];
+  return p && p.readonly;
+}
+function getScope(m) {
+  const r = currentRole();
+  if (!r) return 'none';
+  const p = PERMISSIONS[r][m];
+  return p ? p.scope : 'none';
+}
+function canEditRow(m, row) {
+  if (isReadOnly(m)) return false;
+  const s = getScope(m);
+  if (s === 'all') return true;
+  if (s === 'own') return row.owner === currentUserEmail();
+  return false;
+}
+function getVisibleRows(m) {
+  const rows = DATA[m] || [];
+  const s = getScope(m);
+  if (s === 'own') return rows.filter(r => r.owner === currentUserEmail());
+  return rows;
+}
+
+/* ---------- General helpers ---------- */
+
+function getColumns() { return TAB_COLUMNS[activeTab] || []; }
+function getRows() { return DATA[activeTab] || []; }
+
+function getColWidths() {
+  if (!colWidths[activeTab]) {
+    colWidths[activeTab] = {};
+    getColumns().forEach(c => colWidths[activeTab][c.key] = c.width);
+  }
+  return colWidths[activeTab];
+}
+
+function getColAligns() {
+  if (!colAligns[activeTab]) {
+    colAligns[activeTab] = {};
+    getColumns().forEach(c => { colAligns[activeTab][c.key] = (c.type === 'select' || c.type === 'url') ? 'center' : 'left'; });
+  }
+  return colAligns[activeTab];
+}
+
+function getColVAligns() {
+  if (!colVAligns[activeTab]) {
+    colVAligns[activeTab] = {};
+    getColumns().forEach(c => { colVAligns[activeTab][c.key] = 'middle'; });
+  }
+  return colVAligns[activeTab];
+}
+
+function getAlign(k) { return getColAligns()[k] || 'left'; }
+function setAlign(k, v) { getColAligns()[k] = v; saveData(); }
+function setAllAlign(v) { getColumns().forEach(c => getColAligns()[c.key] = v); saveData(); }
+function getVAlign(k) { return getColVAligns()[k] || 'middle'; }
+function setVAlign(k, v) { getColVAligns()[k] = v; saveData(); }
+function setAllVAlign(v) { getColumns().forEach(c => getColVAligns()[c.key] = v); saveData(); }
+
+function getSelectOptions(col) { return [...(col.options || []), ...(customOptions[col.key] || [])]; }
+
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function getFaviconUrl(url) { try { const u = new URL(url); return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=32`; } catch { return null; } }
+
+/* ---------- Theme ---------- */
+function toggleTheme() { const d = document.documentElement.classList.toggle('dark'); showToast(d ? 'Dark mode' : 'Light mode', 'blue'); }
+
+/* ---------- Auto-fit ---------- */
+function autoFitColumn(colKey) {
+  const colDef = getColumns().find(c => c.key === colKey);
+  if (!colDef) return;
+  const m = document.createElement('span');
+  m.style.visibility = 'hidden'; m.style.position = 'absolute'; m.style.whiteSpace = 'nowrap';
+  m.style.fontSize = '14px'; m.style.fontFamily = 'inherit';
+  document.body.appendChild(m);
+  m.textContent = colDef.label + (colDef.required ? ' *' : '');
+  let maxW = m.offsetWidth + 28;
+  getRows().forEach(r => {
+    let v = r[colKey] || '';
+    if (colDef.type === 'url' && v) v = v.replace(/^https?:\/\//, '').split('/')[0];
+    m.textContent = v;
+    const w = m.offsetWidth + 28;
+    if (w > maxW) maxW = w;
+  });
+  document.body.removeChild(m);
+  maxW = Math.max(60, Math.min(maxW, 400));
+  getColWidths()[colKey] = maxW; saveData();
+  document.querySelectorAll(`th[data-col="${colKey}"]`).forEach(el => { el.style.width = maxW+'px'; el.style.minWidth = maxW+'px'; });
+  document.querySelectorAll(`td .excel-cell[data-col="${colKey}"]`).forEach(el => { const td = el.parentElement; td.style.width = maxW+'px'; td.style.minWidth = maxW+'px'; });
+  showToast(`Auto-fit: ${colDef.label} → ${maxW}px`, 'blue');
+}
+
+/* ---------- Login ---------- */
+
+function renderLogin() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="login-container">
+      <div class="login-card">
+        <div class="flex items-center justify-center gap-2 mb-4">
+          <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+        </div>
+        <h1 class="login-title text-gray-900 dark:text-gray-100">Candidate Manager</h1>
+        <p class="login-subtitle">Sign in to access your dashboard</p>
+        <div id="loginError" class="login-error"></div>
+        <form id="loginForm">
+          <div class="mb-3">
+            <label class="login-label">Email</label>
+            <input type="email" id="loginEmail" class="login-input" placeholder="you@nileprise.com" required autofocus />
+          </div>
+          <div class="mb-3">
+            <label class="login-label">Password</label>
+            <input type="password" id="loginPassword" class="login-input" placeholder="••••••••" required />
+          </div>
+          <button type="submit" class="login-btn">Sign In</button>
+        </form>
+        <div class="login-hint">
+          New user? <a href="#" id="signupLink" style="color:#2563eb;font-weight:600;text-decoration:underline;">Sign up here</a><br/>
+          Admin: use <code>an@nileprise.com</code> · Recruiters: must be pre-approved by admin
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('loginForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+    const password = document.getElementById('loginPassword').value;
+    const user = USERS.find(u => u.email.toLowerCase() === email && u.password === password);
+    if (user) {
+      currentUser = { email: user.email, role: user.role, name: user.name };
+      saveSession(currentUser);
+      activeTab = 'dashboard';
+      render();
+      showToast(`Welcome, ${user.name}!`, 'green');
+    } else {
+      const err = document.getElementById('loginError');
+      err.textContent = 'Invalid email or password. If you don\'t have an account, please sign up.';
+      err.classList.add('show');
+    }
+  });
+
+  document.getElementById('signupLink').addEventListener('click', (e) => { e.preventDefault(); renderSignup(); });
+}
+
+function renderSignup() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="login-container">
+      <div class="login-card">
+        <div class="flex items-center justify-center gap-2 mb-4">
+          <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+        </div>
+        <h1 class="login-title text-gray-900 dark:text-gray-100">Sign Up</h1>
+        <p class="login-subtitle">Create your account — role assigned automatically</p>
+        <div id="signupError" class="login-error"></div>
+        <form id="signupForm">
+          <div class="mb-3">
+            <label class="login-label">Full Name</label>
+            <input type="text" id="signupName" class="login-input" placeholder="John Doe" required autofocus />
+          </div>
+          <div class="mb-3">
+            <label class="login-label">Official Email</label>
+            <input type="email" id="signupEmail" class="login-input" placeholder="you@nileprise.com" required />
+          </div>
+          <div class="mb-3">
+            <label class="login-label">Password</label>
+            <input type="password" id="signupPassword" class="login-input" placeholder="••••••••" required minlength="4" />
+          </div>
+          <button type="submit" class="login-btn">Create Account & Sign In</button>
+        </form>
+        <div class="login-hint">
+          <strong>Admin:</strong> use <code>an@nileprise.com</code> → auto-assigned Admin role<br/>
+          <strong>Recruiters:</strong> your email must be pre-approved by the Admin<br/>
+          Personal/unauthorized emails will be rejected
+        </div>
+        <button id="backToLoginBtn" class="login-btn" style="background:transparent;color:#6b7280;border:1px solid #d1d5db;margin-top:0.5rem;">← Back to Login</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('signupForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = document.getElementById('signupName').value.trim();
+    const email = document.getElementById('signupEmail').value.trim().toLowerCase();
+    const password = document.getElementById('signupPassword').value;
+    const err = document.getElementById('signupError');
+
+    // Check if already registered
+    if (USERS.find(u => u.email.toLowerCase() === email)) {
+      err.textContent = 'This email is already registered. Please log in instead.';
+      err.classList.add('show');
+      return;
+    }
+
+    // Determine role based on email
+    let role = null;
+    if (email === ADMIN_EMAIL) {
+      role = 'admin';
+    } else if (APPROVED_RECRUITER_EMAILS.includes(email)) {
+      role = 'recruiter';
+    }
+
+    if (!role) {
+      err.textContent = 'This email is not authorized. Please contact your admin to get approved before signing up.';
+      err.classList.add('show');
+      return;
+    }
+
+    const newUser = { email, password, role, name };
+    USERS.push(newUser);
+    saveData();
+    currentUser = { email, role, name };
+    saveSession(currentUser);
+    activeTab = 'dashboard';
+    render();
+    showToast(`Welcome, ${name}! You are signed in as ${role}.`, 'green');
+  });
+
+  document.getElementById('backToLoginBtn').addEventListener('click', renderLogin);
+}
+
+function logout() {
+  currentUser = null;
+  saveSession(null);
+  selectedRowIdx = null;
+  render();
+  showToast('Logged out successfully', 'blue');
+}
+
+/* ---------- Render ---------- */
+
+function render() {
+  const app = document.getElementById('app');
+  if (!currentUser) { renderLogin(); return; }
+  if (!canAccess(activeTab)) activeTab = 'dashboard';
+  const isTable = ['candidates','placements','onboarding','staffDirectory'].includes(activeTab);
+  app.innerHTML = `
+    <div class="max-w-[1600px] mx-auto p-3 sm:p-4">
+      ${renderHeader()}
+      ${renderTabs()}
+      ${isTable ? renderTableModule() : renderSpecialModule()}
+    </div>
+    <div id="toast" class="fixed bottom-4 right-4 z-50 hidden">
+      <div class="toast px-4 py-3 rounded-lg shadow-lg text-sm font-medium" id="toastInner"></div>
+    </div>
+  `;
+  attachListeners();
+}
+
+function renderHeader() {
+  const isTable = ['candidates','placements','onboarding','staffDirectory'].includes(activeTab);
+  const canAdd = isTable && !isReadOnly(activeTab);
+  const singular = MODULE_LABELS[activeTab].replace(/s$/, '');
+  const initials = currentUserName().split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+  const role = currentRole();
+  return `
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-gray-900 dark:text-gray-100">Candidate Manager</h1>
+          <p class="text-xs text-gray-500 dark:text-gray-400">${isTable ? 'Click any cell to edit · Tab = next · Enter = below · Shift+Delete = clear' : MODULE_LABELS[activeTab]}</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        ${canAdd ? `<button id="addRowBtn" class="btn-primary"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add New ${singular}</button>` : ''}
+        ${isTable ? `<button id="exportBtn" class="btn-secondary"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export CSV</button>` : ''}
+        <!-- User badge -->
+        <div class="user-badge" title="${escapeHtml(currentUserEmail())}">
+          <div class="user-avatar">${initials}</div>
+          <span>${escapeHtml(currentUserName())}</span>
+          <span class="user-role-tag ${role}">${role}</span>
+        </div>
+        <!-- Theme toggle -->
+        <button id="themeToggle" class="theme-toggle" title="Toggle light / dark mode">
+          <span class="moon-icon">${ICONS.moon}</span><span class="sun-icon">${ICONS.sun}</span>
+        </button>
+        <!-- Logout -->
+        <button id="logoutBtn" class="logout-btn" title="Logout">${ICONS.logout}</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderTabs() {
+  return `
+    <div class="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 mb-3 overflow-x-auto">
+      ${MODULE_ORDER.map(mod => {
+        if (!canAccess(mod)) return '';
+        const p = PERMISSIONS[currentRole()][mod];
+        const hint = p.scope === 'own' ? ' (Own)' : p.scope === 'company' ? ' (Company)' : '';
+        return `<button class="tab-btn ${mod===activeTab?'active':''}" data-tab="${mod}">${MODULE_LABELS[mod]}${hint}</button>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+/* ---------- Table module ---------- */
+
+function renderTableModule() {
+  const cols = getColumns();
+  const allRows = getRows();
+  const visRows = getVisibleRows(activeTab);
+  const cw = getColWidths();
+  const ro = isReadOnly(activeTab);
+
+  return `
+    <div class="flex gap-2 mb-3 flex-wrap text-xs">
+      <span class="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-medium">Total: ${visRows.length}</span>
+      ${ro ? '<span class="px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 font-medium">👁️ Read-Only</span>' : ''}
+      ${getScope(activeTab)==='own' ? `<span class="px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 font-medium">Your records: ${visRows.length}/${allRows.length}</span>` : ''}
+      ${renderTabStats(visRows, cols)}
+    </div>
+    <div class="table-scroll overflow-auto border border-gray-300 dark:border-gray-700 rounded-lg" style="max-height:62vh">
+      <table class="border-collapse w-full" id="dataTable">
+        <thead class="sticky-header">
+          <tr class="bg-gray-100 dark:bg-gray-800 border-b-2 border-gray-300 dark:border-gray-600">
+            ${!ro ? `<th class="px-1 py-2 text-center text-xs font-bold text-gray-500 dark:text-gray-400 w-10 select-none" style="min-width:40px" title="Drag to reorder">↕</th>` : ''}
+            <th class="px-2 py-2 text-center text-xs font-bold text-gray-500 dark:text-gray-400 w-10 select-none" style="min-width:40px">#</th>
+            ${cols.map(col => {
+              const a = getAlign(col.key);
+              return `
+              <th class="px-3 py-2 text-left text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide select-none relative col-header"
+                  style="width:${cw[col.key]}px;min-width:${cw[col.key]}px" data-col="${col.key}" data-autofit="${col.key}">
+                ${col.label}${col.required?'<span class="req-asterisk">*</span>':''}<span class="autofit-hint">⇆ dbl-click</span>
+                <span class="align-controls">
+                  <button class="align-btn ${a==='left'?'active':''}" data-align="${col.key}" data-align-val="left" title="Align left">${ALIGN_ICONS.left}</button>
+                  <button class="align-btn ${a==='center'?'active':''}" data-align="${col.key}" data-align-val="center" title="Align center">${ALIGN_ICONS.center}</button>
+                  <button class="align-btn ${a==='right'?'active':''}" data-align="${col.key}" data-align-val="right" title="Align right">${ALIGN_ICONS.right}</button>
+                </span>
+                <div class="col-resize-handle" data-resize="${col.key}"></div>
+              </th>`;
+            }).join('')}
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          ${visRows.length > 0 ? visRows.map((r, idx) => renderRow(r, idx, allRows.indexOf(r), cols, cw)).join('') : renderEmptyRow(cols, cw, ro)}
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-2 text-xs text-gray-400 dark:text-gray-500 flex items-center gap-4 flex-wrap">
+      <span>💡 Click any cell to edit inline</span>
+      <span>⌨️ Tab = next · Enter = below · Shift+Delete = clear</span>
+      <span>⇆ Double-click header to auto-fit</span>
+      <span> textAlign: hover header → click ⬘⬔⫶</span>
+      <span> Right-click header → align all / valign</span>
+      ${!ro ? '<span>↕ Drag row to reorder</span>' : ''}
+    </div>
+  `;
+}
+
+function renderEmptyRow(cols, cw, ro) {
+  return `<tr><td colspan="${cols.length + (ro ? 1 : 2)}" class="empty-state">
+    ${ICONS.empty}
+    <div class="text-sm font-medium">No records yet</div>
+    <div class="text-xs mt-1">${ro ? 'No data available to view.' : 'Click "Add New" to create your first record.'}</div>
+  </td></tr>`;
+}
+
+function renderTabStats(rows, cols) {
+  const sc = cols.find(c => c.key === 'status');
+  if (!sc) return '';
+  const colors = {
+    'Active':'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
+    'Inactive':'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+    'On Hold':'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
+    'Shortlisted':'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+    'Rejected':'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+    'Hired':'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
+    'Completed':'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
+    'Terminated':'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+    'Pending':'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
+    'In Progress':'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+    'Blocked':'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+    'On Leave':'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
+  };
+  return getSelectOptions(sc).map(opt => {
+    const c = rows.filter(r => r.status === opt).length;
+    if (!c) return '';
+    return `<span class="px-2.5 py-1 rounded-full font-medium ${colors[opt]||'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}">${opt}: ${c}</span>`;
+  }).join('');
+}
+
+function renderRow(r, idx, origIdx, cols, cw) {
+  const sel = selectedRowIdx === idx;
+  const canEdit = canEditRow(activeTab, r);
+  const ro = isReadOnly(activeTab) || !canEdit;
+  return `
+    <tr class="border-b border-gray-200 dark:border-gray-800 ${sel?'row-selected':''} ${r._isNew?'row-new':''}" data-row="${idx}" data-orig-idx="${origIdx}" ${!ro?'draggable="true"':''}>
+      ${!isReadOnly(activeTab) ? `<td class="px-1 py-0 text-center select-none" style="min-width:40px"><div class="row-drag-handle ${!canEdit?'disabled':''}" data-drag-handle="${idx}">${ICONS.drag}</div></td>` : ''}
+      <td class="px-2 py-0 text-center text-xs text-gray-400 dark:text-gray-500 select-none">${!canEdit && !isReadOnly(activeTab) ? `<span class="lock-icon" title="Owned by ${escapeHtml(r.owner)}">${ICONS.lock}</span>` : (idx+1)}</td>
+      ${cols.map(col => renderCell(r, col, idx, cw, ro)).join('')}
+    </tr>
+  `;
+}
+
+function renderCell(r, col, idx, cw, ro) {
+  const val = r[col.key] || '';
+  const invalid = col.required && !val.trim() && !ro ? 'cell-invalid' : '';
+  const w = cw[col.key];
+  const div = col.dividerAfter ? 'col-divider' : '';
+  const roCls = ro ? 'cell-readonly' : '';
+  const aCls = `align-${getAlign(col.key)}`;
+  const vCls = `valign-${getVAlign(col.key)}`;
+
+  if (col.type === 'select') {
+    const opts = getSelectOptions(col);
+    if (ro) return `<td class="border-r border-gray-200 dark:border-gray-800 p-0 ${div}" style="width:${w}px;min-width:${w}px"><div class="excel-cell ${roCls} ${aCls} ${vCls}" data-row="${idx}" data-col="${col.key}">${escapeHtml(val)}</div></td>`;
+    return `<td class="border-r border-gray-200 dark:border-gray-800 p-0 ${div}" style="width:${w}px;min-width:${w}px"><div class="excel-cell ${invalid} ${aCls} ${vCls}" data-row="${idx}" data-col="${col.key}" tabindex="0"><select class="excel-select" data-row="${idx}" data-col="${col.key}">${opts.map(o=>`<option value="${escapeHtml(o)}" ${val===o?'selected':''}>${escapeHtml(o)}</option>`).join('')}<option value="__add_new__" class="add-new-opt">+ Add new…</option></select></div></td>`;
+  }
+
+  if (col.type === 'url') {
+    if (val.trim()) {
+      const fav = getFaviconUrl(val);
+      return `<td class="border-r border-gray-200 dark:border-gray-800 p-0 ${div}" style="width:${w}px;min-width:${w}px"><div class="excel-cell url-cell ${roCls} ${aCls} ${vCls}" data-row="${idx}" data-col="${col.key}" tabindex="0"><a href="${escapeHtml(val)}" target="_blank" class="url-icon-link" title="${escapeHtml(val)}" onclick="event.stopPropagation()">${fav?`<img src="${fav}" alt="" onerror="this.style.display='none';this.parentElement.innerHTML=ICONS['${col.icon}']">`:ICONS[col.icon||'file']}</a><span class="ml-1 text-xs text-gray-400 truncate" style="max-width:60px">${escapeHtml(val.replace(/^https?:\/\//,'').split('/')[0])}</span></div></td>`;
+    }
+    if (ro) return `<td class="border-r border-gray-200 dark:border-gray-800 p-0 ${div}" style="width:${w}px;min-width:${w}px"><div class="excel-cell ${roCls} ${aCls} ${vCls}" data-row="${idx}" data-col="${col.key}">${escapeHtml(val)}</div></td>`;
+    return `<td class="border-r border-gray-200 dark:border-gray-800 p-0 ${div}" style="width:${w}px;min-width:${w}px"><div class="excel-cell url-cell ${invalid} ${aCls} ${vCls}" contenteditable="true" data-row="${idx}" data-col="${col.key}" data-type="url" spellcheck="false">${escapeHtml(val)}</div></td>`;
+  }
+
+  if (ro) return `<td class="border-r border-gray-200 dark:border-gray-800 p-0 ${div}" style="width:${w}px;min-width:${w}px"><div class="excel-cell ${roCls} ${aCls} ${vCls}" data-row="${idx}" data-col="${col.key}">${escapeHtml(val)}</div></td>`;
+  return `<td class="border-r border-gray-200 dark:border-gray-800 p-0 ${div}" style="width:${w}px;min-width:${w}px"><div class="excel-cell ${invalid} ${aCls} ${vCls}" contenteditable="true" data-row="${idx}" data-col="${col.key}" data-type="${col.type}" spellcheck="false">${escapeHtml(val)}</div></td>`;
+}
+
+/* ---------- Special modules ---------- */
+
+function renderSpecialModule() {
+  switch (activeTab) {
+    case 'dashboard':   return renderDashboard();
+    case 'workspace':   return renderWorkspace();
+    case 'inbox':       return renderInbox();
+    case 'activityHub': return renderActivityHub();
+    case 'reports':     return renderReports();
+    case 'settings':    return renderSettings();
+    default: return '<p class="text-gray-500 p-4">Module not found.</p>';
+  }
+}
+
+function renderDashboard() {
+  const c = DATA.candidates, p = DATA.placements, o = DATA.onboarding, s = DATA.staffDirectory;
+  if (currentRole() !== 'admin') {
+    const cc = new Set(p.filter(x=>x.company).map(x=>x.company)).size;
+    const ap = p.filter(x=>x.status==='Active').length;
+    const oi = o.filter(x=>x.status==='In Progress').length;
+    return `
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div class="kpi-card"><div class="kpi-label">Companies</div><div class="kpi-value text-blue-600 dark:text-blue-400">${cc}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Active Placements</div><div class="kpi-value text-green-600 dark:text-green-400">${ap}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Onboarding</div><div class="kpi-value text-purple-600 dark:text-purple-400">${oi}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Staff</div><div class="kpi-value text-teal-600 dark:text-teal-400">${s.filter(x=>x.status==='Active').length}</div></div>
+      </div>
+      <div class="module-card"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Company Overview (Read-Only)</h3>
+        ${renderBarChart([{label:'Active Placements',count:ap,color:'bg-green-500'},{label:'Onboarding',count:oi,color:'bg-purple-500'},{label:'Companies',count:cc,color:'bg-blue-500'}])}
+      </div>`;
+  }
+  const ac = c.filter(x=>x.status==='Active').length, hi = c.filter(x=>x.status==='Hired').length;
+  const sh = c.filter(x=>x.status==='Shortlisted').length, ap = p.filter(x=>x.status==='Active').length;
+  const oi = o.filter(x=>x.status==='In Progress').length, ts = s.filter(x=>x.status==='Active').length;
+  const ui = DATA.inbox.filter(x=>x.unread).length;
+  return `
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+      <div class="kpi-card"><div class="kpi-label">Candidates</div><div class="kpi-value text-blue-600 dark:text-blue-400">${c.length}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Active</div><div class="kpi-value text-green-600 dark:text-green-400">${ac}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Shortlisted</div><div class="kpi-value text-purple-600 dark:text-purple-400">${sh}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Hired</div><div class="kpi-value text-teal-600 dark:text-teal-400">${hi}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Placements</div><div class="kpi-value text-indigo-600 dark:text-indigo-400">${ap}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Onboarding</div><div class="kpi-value text-orange-600 dark:text-orange-400">${oi}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Staff</div><div class="kpi-value text-pink-600 dark:text-pink-400">${ts}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Unread</div><div class="kpi-value text-red-600 dark:text-red-400">${ui}</div></div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="module-card"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Candidate Status</h3>
+        ${renderBarChart([{label:'Active',count:ac,color:'bg-green-500'},{label:'Shortlisted',count:sh,color:'bg-purple-500'},{label:'On Hold',count:c.filter(x=>x.status==='On Hold').length,color:'bg-yellow-500'},{label:'Hired',count:hi,color:'bg-teal-500'},{label:'Rejected',count:c.filter(x=>x.status==='Rejected').length,color:'bg-red-500'}])}
+      </div>
+      <div class="module-card"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Module Summary</h3>
+        ${renderBarChart([{label:'Candidates',count:c.length,color:'bg-blue-500'},{label:'Placements',count:p.length,color:'bg-indigo-500'},{label:'Onboarding',count:o.length,color:'bg-orange-500'},{label:'Staff',count:s.length,color:'bg-pink-500'},{label:'Inbox',count:DATA.inbox.length,color:'bg-red-500'},{label:'Workspace',count:DATA.workspace.length,color:'bg-gray-500'}])}
+      </div>
+    </div>`;
+}
+
+function renderBarChart(items) {
+  const max = Math.max(...items.map(i=>i.count), 1);
+  return items.map(i => `<div class="bar-row"><span class="bar-label">${i.label}</span><div class="bar-track"><div class="bar-fill ${i.color}" style="width:${(i.count/max)*100}%"></div></div><span class="bar-value">${i.count}</span></div>`).join('');
+}
+
+function renderWorkspace() {
+  const items = getVisibleRows('workspace');
+  const ro = isReadOnly('workspace');
+  return `
+    <div class="flex gap-2 mb-3 flex-wrap text-xs">
+      <span class="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-medium">Total: ${items.length}</span>
+      <span class="px-2.5 py-1 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 font-medium">Done: ${items.filter(i=>i.done).length}</span>
+      <span class="px-2.5 py-1 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 font-medium">Pending: ${items.filter(i=>!i.done).length}</span>
+    </div>
+    <div class="module-card">
+      ${items.length > 0 ? items.map(i => `
+        <div class="ws-item">
+          <div class="ws-checkbox ${i.done?'checked':''}" data-ws-toggle="${i.id}">${ICONS.check}</div>
+          <div class="flex-1 min-w-0"><div class="font-medium text-gray-900 dark:text-gray-100 ${i.done?'line-through opacity-50':''}">${escapeHtml(i.title)||'<span class="text-gray-400">Untitled</span>'}</div>
+          ${i.notes?`<div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${escapeHtml(i.notes)}</div>`:''}</div>
+          <span class="priority-badge priority-${i.priority}">${i.priority}</span>
+        </div>`).join('') : '<div class="empty-state">No tasks yet</div>'}
+      ${!ro ? `<button id="addWsBtn" class="btn-primary mt-3">+ Add Task</button>` : ''}
+    </div>`;
+}
+
+function renderInbox() {
+  const items = getVisibleRows('inbox');
+  return `
+    <div class="flex gap-2 mb-3 flex-wrap text-xs">
+      <span class="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-medium">Total: ${items.length}</span>
+      <span class="px-2.5 py-1 rounded-full bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 font-medium">Unread: ${items.filter(i=>i.unread).length}</span>
+    </div>
+    <div class="module-card p-0 overflow-hidden">
+      ${items.length > 0 ? items.map(i => `
+        <div class="inbox-item ${i.unread?'unread':''}" data-inbox-id="${i.id}">
+          ${i.unread?'<div class="unread-dot"></div>':'<div style="width:8px;flex-shrink:0"></div>'}
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2"><span class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">${escapeHtml(i.from)}</span><span class="text-xs text-gray-400 flex-shrink:0">${escapeHtml(i.date)}</span></div>
+            <div class="text-sm text-gray-700 dark:text-gray-300 truncate">${escapeHtml(i.subject)}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">${escapeHtml(i.preview)}</div>
+          </div>
+        </div>`).join('') : '<div class="empty-state">No messages</div>'}
+    </div>`;
+}
+
+function renderActivityHub() {
+  const items = getVisibleRows('activityHub');
+  const cm = {blue:'#3b82f6',green:'#22c55e',yellow:'#eab308',purple:'#a855f7',red:'#ef4444'};
+  return `
+    <div class="flex gap-2 mb-3 flex-wrap text-xs"><span class="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-medium">Activities: ${items.length}</span></div>
+    <div class="module-card">
+      ${items.length > 0 ? items.map(i => `
+        <div class="activity-item"><div class="activity-dot" style="background:${cm[i.color]||'#888'}"></div>
+          <div class="flex-1 min-w-0"><div class="text-sm text-gray-900 dark:text-gray-100">${escapeHtml(i.text)}</div><div class="text-xs text-gray-400 mt-0.5">${escapeHtml(i.time)} · by ${escapeHtml(i.owner)}</div></div>
+        </div>`).join('') : '<div class="empty-state">No activity yet</div>'}
+    </div>`;
+}
+
+function renderReports() {
+  const c = DATA.candidates, p = DATA.placements;
+  return `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="module-card"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Hiring Funnel</h3>
+        ${renderBarChart([{label:'Total',count:c.length,color:'bg-blue-500'},{label:'Active',count:c.filter(x=>x.status==='Active').length,color:'bg-green-500'},{label:'Shortlisted',count:c.filter(x=>x.status==='Shortlisted').length,color:'bg-purple-500'},{label:'Hired',count:c.filter(x=>x.status==='Hired').length,color:'bg-teal-500'}])}
+      </div>
+      <div class="module-card"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Placement Status</h3>
+        ${renderBarChart([{label:'Active',count:p.filter(x=>x.status==='Active').length,color:'bg-green-500'},{label:'Completed',count:p.filter(x=>x.status==='Completed').length,color:'bg-teal-500'},{label:'Terminated',count:p.filter(x=>x.status==='Terminated').length,color:'bg-red-500'},{label:'On Hold',count:p.filter(x=>x.status==='On Hold').length,color:'bg-yellow-500'}])}
+      </div>
+      <div class="module-card md:col-span-2"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Export Reports</h3>
+        <div class="flex gap-2 flex-wrap">
+          <button class="btn-secondary" onclick="activeTab='candidates';render();setTimeout(exportCSV,50);">Export Candidates</button>
+          <button class="btn-secondary" onclick="activeTab='placements';render();setTimeout(exportCSV,50);">Export Placements</button>
+          <button class="btn-secondary" onclick="activeTab='onboarding';render();setTimeout(exportCSV,50);">Export Onboarding</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderSettings() {
+  const isAdmin = currentRole() === 'admin';
+  return `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="module-card"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">General Settings</h3>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between"><span class="text-sm text-gray-700 dark:text-gray-300">Company Name</span><input class="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-transparent text-sm" value="Nileprise" /></div>
+          <div class="flex items-center justify-between"><span class="text-sm text-gray-700 dark:text-gray-300">Default Currency</span><select class="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-transparent text-sm"><option>USD ($)</option><option>INR (₹)</option><option>EUR (€)</option></select></div>
+          <div class="flex items-center justify-between"><span class="text-sm text-gray-700 dark:text-gray-300">Date Format</span><select class="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-transparent text-sm"><option>YYYY-MM-DD</option><option>DD/MM/YYYY</option><option>MM/DD/YYYY</option></select></div>
+        </div>
+      </div>
+      <div class="module-card"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Role Permissions</h3>
+        <table class="w-full text-xs"><thead><tr class="border-b border-gray-200 dark:border-gray-700"><th class="text-left py-2 font-bold text-gray-600 dark:text-gray-400">Module</th><th class="text-center py-2 font-bold text-gray-600 dark:text-gray-400">Admin</th><th class="text-center py-2 font-bold text-gray-600 dark:text-gray-400">Recruiter</th></tr></thead>
+        <tbody>${MODULE_ORDER.map(m => `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 text-gray-700 dark:text-gray-300">${MODULE_LABELS[m]}</td><td class="text-center py-1.5">${PERMISSIONS.admin[m]?.access?'✅':'❌'}</td><td class="text-center py-1.5">${PERMISSIONS.recruiter[m]?.access?(PERMISSIONS.recruiter[m].readonly?'👁️':'✅'):'❌'}</td></tr>`).join('')}</tbody></table>
+      </div>
+      ${isAdmin ? `
+      <div class="module-card md:col-span-2"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Approved Recruiter Emails</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">Pre-approve official company emails. Only approved recruiters can sign up.</p>
+        <div class="flex gap-2 mb-3">
+          <input type="email" id="approveEmailInput" class="login-input" placeholder="recruiter@nileprise.com" style="flex:1" />
+          <button id="approveEmailBtn" class="btn-primary" style="padding:0.5rem 1rem;">Approve</button>
+        </div>
+        <div id="approvedList" class="space-y-1">
+          ${APPROVED_RECRUITER_EMAILS.length > 0 ? APPROVED_RECRUITER_EMAILS.map(e => `
+            <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800">
+              <span class="text-sm text-gray-700 dark:text-gray-300">${escapeHtml(e)}</span>
+              <button class="text-xs text-red-500 font-semibold hover:text-red-700" data-remove-approved="${escapeHtml(e)}">Remove</button>
+            </div>
+          `).join('') : '<p class="text-xs text-gray-400 italic">No emails approved yet. Add recruiter emails above.</p>'}
+        </div>
+      </div>
+      <div class="module-card md:col-span-2"><h3 class="font-bold text-gray-900 dark:text-gray-100 mb-3">Registered Users</h3>
+        <table class="w-full text-xs"><thead><tr class="border-b border-gray-200 dark:border-gray-700"><th class="text-left py-2 font-bold text-gray-600 dark:text-gray-400">Name</th><th class="text-left py-2 font-bold text-gray-600 dark:text-gray-400">Email</th><th class="text-center py-2 font-bold text-gray-600 dark:text-gray-400">Role</th></tr></thead>
+        <tbody>${USERS.length > 0 ? USERS.map(u => `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 text-gray-700 dark:text-gray-300">${escapeHtml(u.name)}</td><td class="py-1.5 text-gray-500 dark:text-gray-400">${escapeHtml(u.email)}</td><td class="text-center py-1.5"><span class="user-role-tag ${u.role}">${u.role}</span></td></tr>`).join('') : '<tr><td colspan="3" class="py-4 text-center text-gray-400 italic">No users registered yet.</td></tr>'}</tbody></table>
+      </div>` : ''}
+    </div>`;
+}
+
+/* ---------- Event handling ---------- */
+
+function attachListeners() {
+  document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
+  document.getElementById('logoutBtn')?.addEventListener('click', logout);
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => { activeTab = btn.dataset.tab; selectedRowIdx = null; render(); });
+  });
+
+  document.getElementById('addRowBtn')?.addEventListener('click', addRow);
+  document.getElementById('exportBtn')?.addEventListener('click', exportCSV);
+
+  document.querySelectorAll('[data-ws-toggle]').forEach(el => {
+    el.addEventListener('click', () => { const id = parseInt(el.dataset.wsToggle); const it = DATA.workspace.find(w=>w.id===id); if(it){it.done=!it.done;saveData();render();} });
+  });
+
+  document.getElementById('addWsBtn')?.addEventListener('click', () => {
+    DATA.workspace.push({id:NEXT_ID.workspace++,owner:currentUserEmail(),title:'New task',priority:'medium',done:false,notes:''});
+    saveData(); render();
+  });
+
+  document.querySelectorAll('[data-inbox-id]').forEach(el => {
+    el.addEventListener('click', () => { const id = parseInt(el.dataset.inboxId); const it = DATA.inbox.find(i=>i.id===id); if(it){it.unread=false;saveData();render();showToast(`Opened: ${it.subject}`,'blue');} });
+  });
+
+  // Approve recruiter email (admin)
+  const approveBtn = document.getElementById('approveEmailBtn');
+  if (approveBtn) {
+    approveBtn.addEventListener('click', () => {
+      const input = document.getElementById('approveEmailInput');
+      const email = input.value.trim().toLowerCase();
+      if (!email) return;
+      if (!email.includes('@')) { showToast('Please enter a valid email', 'red'); return; }
+      if (APPROVED_RECRUITER_EMAILS.includes(email)) { showToast('Email already approved', 'blue'); return; }
+      if (email === ADMIN_EMAIL) { showToast('Admin email does not need approval', 'red'); return; }
+      APPROVED_RECRUITER_EMAILS.push(email);
+      saveData();
+      showToast(`Approved: ${email}`, 'green');
+      render();
+    });
+  }
+
+  // Remove approved email (admin)
+  document.querySelectorAll('[data-remove-approved]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const email = btn.dataset.removeApproved;
+      const idx = APPROVED_RECRUITER_EMAILS.indexOf(email);
+      if (idx >= 0) { APPROVED_RECRUITER_EMAILS.splice(idx, 1); saveData(); showToast(`Removed: ${email}`, 'red'); render(); }
+    });
+  });
+
+  document.querySelectorAll('.excel-cell[contenteditable]').forEach(cell => {
+    cell.addEventListener('focus', onCellFocus);
+    cell.addEventListener('blur', onCellBlur);
+    cell.addEventListener('keydown', onCellKeydown);
+  });
+
+  document.querySelectorAll('.url-cell').forEach(cell => {
+    if (!cell.hasAttribute('contenteditable') && !cell.classList.contains('cell-readonly')) {
+      cell.addEventListener('dblclick', () => makeUrlCellEditable(cell));
+    }
+  });
+
+  document.querySelectorAll('.excel-select').forEach(sel => {
+    sel.addEventListener('focus', () => selectRow(parseInt(sel.dataset.row)));
+    sel.addEventListener('change', onSelectChange);
+  });
+
+  document.querySelectorAll('.col-resize-handle').forEach(h => h.addEventListener('mousedown', startColResize));
+
+  document.querySelectorAll('th[data-autofit]').forEach(th => {
+    th.addEventListener('dblclick', (e) => {
+      if (e.target.classList.contains('col-resize-handle')) return;
+      if (e.target.closest('.align-controls')) return;
+      autoFitColumn(th.dataset.autofit);
+    });
+  });
+
+  document.querySelectorAll('.align-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setAlign(btn.dataset.align, btn.dataset.alignVal);
+      render();
+      showToast(`Aligned ${getColumns().find(c=>c.key===btn.dataset.align)?.label} → ${btn.dataset.alignVal}`, 'blue');
+    });
+  });
+
+  document.querySelectorAll('th.col-header').forEach(th => {
+    th.addEventListener('contextmenu', (e) => { e.preventDefault(); showColumnContextMenu(e.clientX, e.clientY, th.dataset.col); });
+  });
+
+  document.querySelectorAll('tbody tr').forEach(tr => {
+    tr.addEventListener('click', () => selectRow(parseInt(tr.dataset.row)));
+  });
+
+  attachRowDragAndDrop();
+}
+
+/* ---------- Column context menu ---------- */
+
+function showColumnContextMenu(x, y, colKey) {
+  document.getElementById('ctxMenu')?.remove();
+  const colDef = getColumns().find(c => c.key === colKey);
+  const menu = document.createElement('div');
+  menu.id = 'ctxMenu'; menu.className = 'ctx-menu'; menu.style.left = x+'px'; menu.style.top = y+'px';
+  menu.innerHTML = `
+    <div class="ctx-menu-title">${colDef ? colDef.label : 'Column'}</div>
+    <div class="ctx-menu-item" data-ctx="align-left">${ALIGN_ICONS.left}<span>Align Left</span></div>
+    <div class="ctx-menu-item" data-ctx="align-center">${ALIGN_ICONS.center}<span>Align Center</span></div>
+    <div class="ctx-menu-item" data-ctx="align-right">${ALIGN_ICONS.right}<span>Align Right</span></div>
+    <div class="ctx-menu-divider"></div>
+    <div class="ctx-menu-title">Vertical Align</div>
+    <div class="ctx-menu-item" data-ctx="valign-top">${VALIGN_ICONS.top}<span>Vertical Top</span></div>
+    <div class="ctx-menu-item" data-ctx="valign-middle">${VALIGN_ICONS.middle}<span>Vertical Middle</span></div>
+    <div class="ctx-menu-item" data-ctx="valign-bottom">${VALIGN_ICONS.bottom}<span>Vertical Bottom</span></div>
+    <div class="ctx-menu-divider"></div>
+    <div class="ctx-menu-title">All Columns</div>
+    <div class="ctx-menu-item" data-ctx="all-left">${ALIGN_ICONS.left}<span>Align All Left</span></div>
+    <div class="ctx-menu-item" data-ctx="all-center">${ALIGN_ICONS.center}<span>Align All Center</span></div>
+    <div class="ctx-menu-item" data-ctx="all-right">${ALIGN_ICONS.right}<span>Align All Right</span></div>
+    <div class="ctx-menu-divider"></div>
+    <div class="ctx-menu-item" data-ctx="all-vtop">${VALIGN_ICONS.top}<span>Valign All Top</span></div>
+    <div class="ctx-menu-item" data-ctx="all-vmiddle">${VALIGN_ICONS.middle}<span>Valign All Middle</span></div>
+    <div class="ctx-menu-item" data-ctx="all-vbottom">${VALIGN_ICONS.bottom}<span>Valign All Bottom</span></div>
+    <div class="ctx-menu-divider"></div>
+    <div class="ctx-menu-item" data-ctx="autofit"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9c2.39 0 4.68.94 6.36 2.64L21 8"/><path d="M21 3v5h-5"/></svg><span>Auto-fit This Column</span></div>
+  `;
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 10) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 10) + 'px';
+
+  menu.querySelectorAll('.ctx-menu-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const a = item.dataset.ctx;
+      if (a === 'align-left')   { setAlign(colKey, 'left');   showToast(`Aligned ${colDef?.label} → left`, 'blue'); }
+      if (a === 'align-center') { setAlign(colKey, 'center'); showToast(`Aligned ${colDef?.label} → center`, 'blue'); }
+      if (a === 'align-right')  { setAlign(colKey, 'right');  showToast(`Aligned ${colDef?.label} → right`, 'blue'); }
+      if (a === 'valign-top')    { setVAlign(colKey, 'top');    showToast(`Valign ${colDef?.label} → top`, 'blue'); }
+      if (a === 'valign-middle') { setVAlign(colKey, 'middle'); showToast(`Valign ${colDef?.label} → middle`, 'blue'); }
+      if (a === 'valign-bottom') { setVAlign(colKey, 'bottom'); showToast(`Valign ${colDef?.label} → bottom`, 'blue'); }
+      if (a === 'all-left')     { setAllAlign('left');   showToast('All columns → left', 'blue'); }
+      if (a === 'all-center')   { setAllAlign('center'); showToast('All columns → center', 'blue'); }
+      if (a === 'all-right')    { setAllAlign('right');  showToast('All columns → right', 'blue'); }
+      if (a === 'all-vtop')     { setAllVAlign('top');    showToast('All valign → top', 'blue'); }
+      if (a === 'all-vmiddle')  { setAllVAlign('middle'); showToast('All valign → middle', 'blue'); }
+      if (a === 'all-vbottom')  { setAllVAlign('bottom'); showToast('All valign → bottom', 'blue'); }
+      if (a === 'autofit')      { autoFitColumn(colKey); }
+      menu.remove(); render();
+    });
+  });
+
+  const closeHandler = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', closeHandler); } };
+  setTimeout(() => document.addEventListener('click', closeHandler), 0);
+}
+
+/* ---------- Row drag-and-drop ---------- */
+
+function attachRowDragAndDrop() {
+  const tbody = document.getElementById('tbody');
+  if (!tbody) return;
+  let dragSrcIdx = null;
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.addEventListener('dragstart', (e) => {
+      dragSrcIdx = parseInt(tr.dataset.row);
+      tr.classList.add('row-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(dragSrcIdx));
+    });
+    tr.addEventListener('dragend', () => {
+      tr.classList.remove('row-dragging');
+      tbody.querySelectorAll('tr').forEach(r => r.classList.remove('row-drop-above', 'row-drop-below'));
+      dragSrcIdx = null;
+    });
+    tr.addEventListener('dragover', (e) => {
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      if (dragSrcIdx === null) return;
+      const t = parseInt(tr.dataset.row);
+      if (t === dragSrcIdx) return;
+      const rect = tr.getBoundingClientRect();
+      tbody.querySelectorAll('tr').forEach(r => r.classList.remove('row-drop-above', 'row-drop-below'));
+      tr.classList.add(e.clientY < rect.top + rect.height/2 ? 'row-drop-above' : 'row-drop-below');
+    });
+    tr.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (dragSrcIdx === null) return;
+      const t = parseInt(tr.dataset.row);
+      if (t === dragSrcIdx) return;
+      const rect = tr.getBoundingClientRect();
+      reorderRows(dragSrcIdx, t, e.clientY < rect.top + rect.height/2);
+    });
+  });
+}
+
+function reorderRows(fromIdx, toIdx, insertBefore) {
+  const rows = getRows();
+  if (fromIdx < 0 || fromIdx >= rows.length || toIdx < 0 || toIdx >= rows.length) return;
+  const [moved] = rows.splice(fromIdx, 1);
+  let insertIdx = toIdx;
+  if (fromIdx < toIdx) insertIdx = toIdx - 1;
+  if (!insertBefore) insertIdx = insertIdx + 1;
+  insertIdx = Math.max(0, Math.min(insertIdx, rows.length));
+  rows.splice(insertIdx, 0, moved);
+  if (selectedRowIdx === fromIdx) selectedRowIdx = insertIdx;
+  saveData(); render();
+  showToast(`Row moved from #${fromIdx+1} to #${insertIdx+1}`, 'blue');
+}
+
+/* ---------- Cell events ---------- */
+
+function onCellFocus(e) {
+  selectRow(parseInt(e.target.dataset.row));
+  requestAnimationFrame(() => { const s = window.getSelection(); const r = document.createRange(); r.selectNodeContents(e.target); s.removeAllRanges(); s.addRange(r); });
+}
+
+function onCellBlur(e) {
+  const row = parseInt(e.target.dataset.row);
+  const col = e.target.dataset.col;
+  const newVal = e.target.textContent.trim();
+  const vis = getVisibleRows(activeTab);
+  if (vis[row] && vis[row][col] !== newVal) {
+    vis[row][col] = newVal; saveData();
+    validateRow(row);
+    const cd = getColumns().find(c => c.key === col);
+    if (cd && cd.type === 'url' && newVal) render();
+  }
+}
+
+function onCellKeydown(e) {
+  const row = parseInt(e.target.dataset.row);
+  const colIdx = getColumns().findIndex(c => c.key === e.target.dataset.col);
+  if (e.key === 'Tab') {
+    e.preventDefault(); saveCell(e.target, row);
+    const cd = getColumns()[colIdx];
+    if (cd && cd.type === 'url' && e.target.textContent.trim()) { render(); setTimeout(() => focusCell(row, e.shiftKey ? colIdx-1 : colIdx+1), 30); return; }
+    if (e.shiftKey) { if (colIdx > 0) focusCell(row, colIdx-1); else if (row > 0) focusCell(row-1, getColumns().length-1); }
+    else { if (colIdx < getColumns().length-1) focusCell(row, colIdx+1); else if (row < getVisibleRows(activeTab).length-1) focusCell(row+1, 0); else addRow(); }
+  } else if (e.key === 'Enter') {
+    e.preventDefault(); saveCell(e.target, row);
+    const cd = getColumns()[colIdx];
+    if (cd && cd.type === 'url' && e.target.textContent.trim()) { render(); setTimeout(() => focusCell(row+1 < getVisibleRows(activeTab).length ? row+1 : row, colIdx), 30); return; }
+    if (row < getVisibleRows(activeTab).length-1) focusCell(row+1, colIdx);
+  } else if (e.key === 'Escape') { e.target.blur(); }
+  else if (e.key === 'Delete' && e.shiftKey) {
+    e.preventDefault(); e.target.textContent = ''; saveCell(e.target, row);
+    const cd = getColumns()[colIdx];
+    if (cd && cd.type === 'url') render();
+  }
+}
+
+function saveCell(cell, row) {
+  const col = cell.dataset.col;
+  const newVal = cell.textContent.trim();
+  const vis = getVisibleRows(activeTab);
+  if (vis[row]) { vis[row][col] = newVal; saveData(); validateRow(row); }
+}
+
+function makeUrlCellEditable(cell) {
+  const row = parseInt(cell.dataset.row);
+  const col = cell.dataset.col;
+  const vis = getVisibleRows(activeTab);
+  const val = vis[row]?.[col] || '';
+  cell.setAttribute('contenteditable', 'true');
+  cell.innerHTML = escapeHtml(val);
+  cell.focus();
+  const s = window.getSelection(); const r = document.createRange(); r.selectNodeContents(cell); s.removeAllRanges(); s.addRange(r);
+  const onBlur = () => { cell.removeAttribute('contenteditable'); if (vis[row]) { vis[row][col] = cell.textContent.trim(); saveData(); } cell.removeEventListener('blur', onBlur); render(); };
+  cell.addEventListener('blur', onBlur);
+  cell.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); cell.blur(); } else if (e.key === 'Escape') { cell.textContent = val; cell.blur(); } });
+}
+
+function onSelectChange(e) {
+  const sel = e.target; const row = parseInt(sel.dataset.row); const col = sel.dataset.col;
+  if (sel.value === '__add_new__') { showAddNewOption(sel, col); return; }
+  const vis = getVisibleRows(activeTab);
+  if (vis[row]) { vis[row][col] = sel.value; saveData(); validateRow(row); const cd = getColumns().find(c=>c.key===col); showToast(`${cd.label} updated: ${sel.value}`, 'blue'); }
+  render();
+}
+
+function showAddNewOption(sel, colKey) {
+  const parent = sel.parentElement; sel.style.display = 'none';
+  const w = document.createElement('div'); w.className = 'add-new-inline';
+  w.innerHTML = `<input type="text" placeholder="New option…" autofocus /><button class="confirm-btn">Add</button><button class="cancel-btn">✕</button>`;
+  parent.appendChild(w);
+  const input = w.querySelector('input'); input.focus();
+  const confirm = () => {
+    const v = input.value.trim();
+    if (v) { if (!customOptions[colKey]) customOptions[colKey] = []; if (!customOptions[colKey].includes(v)) customOptions[colKey].push(v); saveData(); showToast(`Added "${v}" to options`, 'green'); }
+    render();
+  };
+  w.querySelector('.confirm-btn').addEventListener('click', confirm);
+  w.querySelector('.cancel-btn').addEventListener('click', () => render());
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); confirm(); } else if (e.key === 'Escape') { e.preventDefault(); render(); } });
+}
+
+function focusCell(row, colIdx) {
+  if (colIdx < 0 || colIdx >= getColumns().length) return;
+  if (row < 0 || row >= getVisibleRows(activeTab).length) return;
+  const col = getColumns()[colIdx];
+  const cell = document.querySelector(`.excel-cell[data-row="${row}"][data-col="${col.key}"]`);
+  if (cell) {
+    if (cell.querySelector('select')) cell.querySelector('select').focus();
+    else if (!cell.hasAttribute('contenteditable') && !cell.classList.contains('cell-readonly')) makeUrlCellEditable(cell);
+    else if (cell.classList.contains('cell-readonly')) {}
+    else cell.focus();
+  }
+}
+
+function selectRow(rowIdx) {
+  if (selectedRowIdx === rowIdx) return;
+  selectedRowIdx = rowIdx;
+  document.querySelectorAll('tbody tr').forEach(tr => tr.classList.toggle('row-selected', parseInt(tr.dataset.row) === rowIdx));
+}
+
+function validateRow(rowIdx) {
+  const vis = getVisibleRows(activeTab);
+  getColumns().forEach(col => {
+    if (col.required) {
+      const cell = document.querySelector(`.excel-cell[data-row="${rowIdx}"][data-col="${col.key}"]`);
+      if (cell) { const v = vis[rowIdx]?.[col.key]?.trim() || ''; cell.classList.toggle('cell-invalid', !v); }
+    }
+  });
+}
+
+function addRow() {
+  const rows = getRows();
+  rows.forEach(r => delete r._isNew);
+  const cols = getColumns();
+  const newRow = { id: NEXT_ID[activeTab]++, owner: currentUserEmail(), _isNew: true };
+  cols.forEach(c => { newRow[c.key] = c.type === 'select' ? (c.options ? c.options[0] : '') : ''; });
+  rows.push(newRow);
+  selectedRowIdx = getVisibleRows(activeTab).length - 1;
+  saveData(); render();
+  setTimeout(() => focusCell(selectedRowIdx, 0), 50);
+  showToast('New row added — start typing', 'green');
+}
+
+/* ---------- Column resize ---------- */
+
+function startColResize(e) {
+  e.preventDefault(); e.stopPropagation();
+  const colKey = e.target.dataset.resize;
+  const cw = getColWidths();
+  const startX = e.clientX; const startW = cw[colKey];
+  const onMove = (ev) => {
+    const nw = Math.max(60, startW + (ev.clientX - startX));
+    cw[colKey] = nw;
+    document.querySelectorAll(`th[data-col="${colKey}"]`).forEach(el => { el.style.width = nw+'px'; el.style.minWidth = nw+'px'; });
+    document.querySelectorAll(`td .excel-cell[data-col="${colKey}"]`).forEach(el => { const td = el.parentElement; td.style.width = nw+'px'; td.style.minWidth = nw+'px'; });
+  };
+  const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); saveData(); };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+/* ---------- Export CSV ---------- */
+
+function exportCSV() {
+  const cols = getColumns();
+  if (!cols.length) { showToast('No table to export', 'red'); return; }
+  const rows = getVisibleRows(activeTab);
+  const headers = cols.map(c => c.label);
+  const data = rows.map(r => cols.map(col => `"${(r[col.key] || '').replace(/"/g, '""')}"`));
+  const csv = [headers.join(','), ...data.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${activeTab}_${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  showToast('CSV exported successfully', 'green');
+}
+
+/* ---------- Toast ---------- */
+
+function showToast(msg, color = 'blue') {
+  const toast = document.getElementById('toast');
+  const inner = document.getElementById('toastInner');
+  const colors = { blue: 'bg-blue-600 text-white', green: 'bg-green-600 text-white', red: 'bg-red-600 text-white' };
+  inner.className = `toast px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${colors[color]}`;
+  inner.textContent = msg;
+  toast.classList.remove('hidden');
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => toast.classList.add('hidden'), 2500);
+}
+
+/* ---------- Init ---------- */
+render();
