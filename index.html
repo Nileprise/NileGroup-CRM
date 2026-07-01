@@ -145,7 +145,6 @@
 
             <!-- DASHBOARD -->
             <div id="view-dashboard" class="content-view active">
-                <!-- Main Stats Grid -->
                 <div class="stats-grid">
                     <div class="stat-card"><div class="stat-icon cyan"><i class="fa-solid fa-users"></i></div>
                         <div class="stat-details"><h3>Total Candidates</h3><h2 id="stat-total">0</h2></div></div>
@@ -161,27 +160,6 @@
                         <div class="stat-details"><h3>Recruiters</h3><h2 id="stat-rec">0</h2></div></div>
                 </div>
 
-                <!-- Hub Stats -->
-                <div class="hub-stats-grid">
-                    <div class="hub-stat-card glass-panel">
-                        <div class="hub-stat-icon sub"><i class="fa-solid fa-paper-plane"></i></div>
-                        <div><h3>Submissions</h3><h2 id="hub-stat-submissions">0</h2></div>
-                    </div>
-                    <div class="hub-stat-card glass-panel">
-                        <div class="hub-stat-icon scr"><i class="fa-solid fa-clipboard-check"></i></div>
-                        <div><h3>Screenings</h3><h2 id="hub-stat-screenings">0</h2></div>
-                    </div>
-                    <div class="hub-stat-card glass-panel">
-                        <div class="hub-stat-icon int"><i class="fa-solid fa-video"></i></div>
-                        <div><h3>Interviews</h3><h2 id="hub-stat-interviews">0</h2></div>
-                    </div>
-                    <div class="hub-stat-card glass-panel">
-                        <div class="hub-stat-icon onb"><i class="fa-solid fa-user-graduate"></i></div>
-                        <div><h3>Onboarding</h3><h2 id="stat-onboarding">0</h2></div>
-                    </div>
-                </div>
-
-                <!-- Charts Row 1: Recruiter + Tech -->
                 <div class="charts-grid">
                     <div class="chart-container large-chart glass-panel">
                         <h3><i class="fa-solid fa-chart-column"></i> Candidates per Recruiter</h3>
@@ -191,83 +169,6 @@
                         <h3><i class="fa-solid fa-chart-pie"></i> Top Technologies</h3>
                         <div class="canvas-wrapper"><canvas id="chart-tech"></canvas></div>
                     </div>
-                </div>
-
-                <!-- Placement Trend Chart -->
-                <div class="charts-grid">
-                    <div class="chart-container full-chart glass-panel">
-                        <h3><i class="fa-solid fa-chart-line"></i> Placement Trend (Monthly)</h3>
-                        <div class="canvas-wrapper"><canvas id="chart-placement-trend"></canvas></div>
-                    </div>
-                </div>
-
-                <!-- Hub Activity Chart -->
-                <div class="charts-grid">
-                    <div class="chart-container full-chart glass-panel">
-                        <h3><i class="fa-solid fa-activity"></i> Hub Activity (Last 30 Days)</h3>
-                        <div class="canvas-wrapper"><canvas id="chart-hub-activity"></canvas></div>
-                    </div>
-                </div>
-
-                <!-- Recent Placements Table -->
-                <div class="dash-table-section glass-panel">
-                    <div class="dash-table-header">
-                        <h3><i class="fa-solid fa-trophy"></i> Recent Placements</h3>
-                        <span id="dash-placement-count" class="badge">0</span>
-                    </div>
-                    <div class="table-wrapper">
-                        <table>
-                            <thead><tr><th>First Name</th><th>Last Name</th><th>Technology</th><th>Location</th><th>Contract</th><th>Recruiter</th><th>Date</th></tr></thead>
-                            <tbody id="dash-placement-table-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Recent Candidates Table -->
-                <div class="dash-table-section glass-panel">
-                    <div class="dash-table-header">
-                        <h3><i class="fa-solid fa-users"></i> Recent Candidates</h3>
-                        <span id="dash-candidate-count" class="badge">0</span>
-                    </div>
-                    <div class="table-wrapper">
-                        <table>
-                            <thead><tr><th>First Name</th><th>Last Name</th><th>Technology</th><th>Recruiter</th><th>Status</th><th>Mobile</th></tr></thead>
-                            <tbody id="dash-candidate-table-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Team Members Table -->
-                <div class="dash-table-section glass-panel">
-                    <div class="dash-table-header">
-                        <h3><i class="fa-solid fa-id-card-clip"></i> Team Members</h3>
-                        <span id="dash-employee-count" class="badge">0</span>
-                    </div>
-                    <div class="table-wrapper">
-                        <table>
-                            <thead><tr><th>First Name</th><th>Last Name</th><th>Designation</th><th>Role</th><th>Official Email</th></tr></thead>
-                            <tbody id="dash-employee-table-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Onboarding Table -->
-                <div class="dash-table-section glass-panel">
-                    <div class="dash-table-header">
-                        <h3><i class="fa-solid fa-user-graduate"></i> Onboarding</h3>
-                        <span id="dash-onboarding-count" class="badge">0</span>
-                    </div>
-                    <div class="table-wrapper">
-                        <table>
-                            <thead><tr><th>First Name</th><th>Last Name</th><th>Mobile</th><th>Recruiter</th><th>Status</th><th>Comments</th></tr></thead>
-                            <tbody id="dash-onboarding-table-body"></tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Dashboard Footer -->
-                <div class="dash-footer">
-                    <p>Data synced live from Firestore · <span id="dash-last-refresh">--</span></p>
                 </div>
             </div>
 
