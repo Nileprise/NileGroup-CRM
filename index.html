@@ -190,7 +190,7 @@
                             <button class="btn-toggle text-success" data-status="Active">Active</button>
                             <button class="btn-toggle text-danger" data-status="Inactive">Inactive</button>
                         </div>
-                        <button class="btn-primary" onclick="openCandidateModal()"><i class="fa-solid fa-user-plus"></i> Add Candidate</button>
+                        <button class="btn-primary" onclick="createNewRow('candidates')"><i class="fa-solid fa-user-plus"></i> Add Candidate</button>
                         <button id="btn-delete-selected" class="btn-danger" style="display:none;" onclick="openDeleteModal('cand')">
                             <i class="fa-solid fa-trash"></i> Delete (<span id="selected-count">0</span>)
                         </button>
@@ -272,6 +272,7 @@
                             <i class="fa-solid fa-magnifying-glass"></i>
                             <input type="text" id="hub-search-input" placeholder="Search candidate...">
                         </div>
+                        <button class="btn-primary" onclick="createNewRow('hub')"><i class="fa-solid fa-plus"></i> Insert Row</button>
                     </div>
                 </div>
 
@@ -309,7 +310,7 @@
                         <input type="number" id="placement-year-picker" class="date-input-modern" min="2020" max="2050" style="display:none;" onchange="renderPlacementTable()">
                     </div>
                     <div class="control-group">
-                        <button class="btn-primary" onclick="openPlacementModal()"><i class="fa-solid fa-trophy"></i> Add Placement</button>
+                        <button class="btn-primary" onclick="manualAddPlacement()"><i class="fa-solid fa-trophy"></i> Add Placement</button>
                         <button id="btn-delete-placement" class="btn-danger" style="display:none;" onclick="openDeleteModal('place')">
                             <i class="fa-solid fa-trash"></i> Delete (<span id="place-selected-count">0</span>)
                         </button>
@@ -347,7 +348,7 @@
                         </div>
                     </div>
                     <div class="control-group">
-                        <button class="btn-primary" onclick="openEmployeeModal()"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
+                        <button class="btn-primary" onclick="createNewRow('employees')"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
                         <button id="btn-delete-employee" class="btn-danger" style="display:none;" onclick="openDeleteModal('emp')">
                             <i class="fa-solid fa-trash"></i> Delete (<span id="emp-selected-count">0</span>)
                         </button>
@@ -384,7 +385,7 @@
                         </div>
                     </div>
                     <div class="control-group">
-                        <button class="btn-primary" onclick="openOnboardingModal()"><i class="fa-solid fa-file-signature"></i> Add Record</button>
+                        <button class="btn-primary" onclick="createNewRow('onboarding')"><i class="fa-solid fa-file-signature"></i> Add Record</button>
                         <button id="btn-delete-onboarding" class="btn-danger" style="display:none;" onclick="openDeleteModal('onb')">
                             <i class="fa-solid fa-trash"></i> Delete (<span id="onboarding-selected-count">0</span>)
                         </button>
