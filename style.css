@@ -132,7 +132,7 @@ body {
   border-radius: 8px;
   font-weight: 600;
   font-size: 0.9rem;
-  cursor: pointer;
+  cursor: default;
   display: flex;
   align-items: center;
   gap: 8px;
