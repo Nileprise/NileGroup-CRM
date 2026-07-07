@@ -860,7 +860,7 @@ window.createNewRow = async (type) => {
     }
 
     try { await db.collection(collectionName).add(data); showToast(`Blank row added to ${type}`); } 
-    catch (error) { console.error("Insertion error:", error); showToast("Error adding row"); } 
+    catch (error) { console.error("Insertion error:", error); showToast("Error: " + error.message); } 
 };
 
 window.manualAddPlacement = async () => {
@@ -883,7 +883,7 @@ window.manualAddPlacement = async () => {
     };
     
     try { await db.collection('placements').add(data); showToast("Blank placement added"); } 
-    catch (error) { showToast("Error adding placement"); } 
+    catch (error) { showToast("Error: " + error.message); } 
 };
 
 window.inlineEdit = (id, field, col, el) => { 
