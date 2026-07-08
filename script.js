@@ -190,10 +190,17 @@ function init() {
             document.body.classList.toggle('light-mode');
             const isLight = document.body.classList.contains('light-mode');
             localStorage.setItem('np_theme', isLight ? 'light' : 'dark');
+            // Update icon
+            const icon = themeToggle.querySelector('i');
+            if(icon) { icon.className = isLight ? 'fa-solid fa-sun' : 'fa-solid fa-moon'; }
             // Sync settings checkbox
             const settingsCheckbox = document.getElementById('setting-theme-toggle');
             if(settingsCheckbox) settingsCheckbox.checked = !isLight;
         });
+        // Set initial icon
+        const isLightInit = document.body.classList.contains('light-mode');
+        const iconInit = themeToggle.querySelector('i');
+        if(iconInit) { iconInit.className = isLightInit ? 'fa-solid fa-sun' : 'fa-solid fa-moon'; }
     }
     // Sync settings checkbox with current theme
     const settingsCheckbox = document.getElementById('setting-theme-toggle');
@@ -546,18 +553,17 @@ function renderDashboardCharts() {
     
     const recWrapper = document.querySelector('.large-chart .canvas-wrapper');
     if (recWrapper) {
-        const requiredWidth = Math.max(100, recLabels.length * 60); 
-        recWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: ${requiredWidth > 100 ? requiredWidth + 'px' : '100%'}"><canvas id="chart-recruiter"></canvas></div>`;
+        recWrapper.innerHTML = `<canvas id="chart-recruiter" style="width:100% !important; height:100% !important;"></canvas>`;
     }
 
     const ctxRec = document.getElementById('chart-recruiter'); 
-    if (ctxRec) { if (recChartInstance) recChartInstance.destroy(); recChartInstance = new Chart(ctxRec, { type: 'bar', data: { labels: recLabels, datasets: [{ label: 'Candidates Assigned', data: recData, backgroundColor: 'rgba(6, 182, 212, 0.6)', borderColor: '#06b6d4', borderWidth: 1, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } } } }); } 
+    if (ctxRec) { if (recChartInstance) recChartInstance.destroy(); recChartInstance = new Chart(ctxRec, { type: 'bar', data: { labels: recLabels, datasets: [{ label: 'Candidates Assigned', data: recData, backgroundColor: 'rgba(11, 174, 181, 0.6)', borderColor: '#0BAEB5', borderWidth: 1, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { autoSkip: true, maxTicksLimit: 8 } }, x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 } } } } }); } 
     
     const techWrapper = document.querySelector('.small-chart .canvas-wrapper');
-    if (techWrapper) { techWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: 100%;"><canvas id="chart-tech"></canvas></div>`; }
+    if (techWrapper) { techWrapper.innerHTML = `<canvas id="chart-tech" style="width:100% !important; height:100% !important;"></canvas>`; }
 
     const ctxTech = document.getElementById('chart-tech'); 
-    if (ctxTech) { if (techChartInstance) techChartInstance.destroy(); techChartInstance = new Chart(ctxTech, { type: 'doughnut', data: { labels: techLabels, datasets: [{ data: techData, backgroundColor: ['rgba(6,182,212,0.7)', 'rgba(245,158,11,0.7)', 'rgba(139,92,246,0.7)', 'rgba(34,197,94,0.7)', 'rgba(239,68,68,0.7)'], borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } } }); } 
+    if (ctxTech) { if (techChartInstance) techChartInstance.destroy(); techChartInstance = new Chart(ctxTech, { type: 'doughnut', data: { labels: techLabels, datasets: [{ data: techData, backgroundColor: ['rgba(11,174,181,0.7)', 'rgba(254,187,44,0.7)', 'rgba(139,92,246,0.7)', 'rgba(34,197,94,0.7)', 'rgba(239,68,68,0.7)', 'rgba(96,165,250,0.7)', 'rgba(236,72,153,0.7)', 'rgba(34,197,94,0.5)'], borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, padding: 8, font: { size: 11 } } } } } }); } 
 }
 
 function updateDashboardStats() { 
@@ -873,6 +879,10 @@ window.updatePlacementFilter = (type, btn) => {
 
 let _insertInProgress = {};
 window.createNewRow = async (type) => {
+    // Only Admin and Manager can insert for employees, onboarding, placements
+    if ((type === 'employees' || type === 'onboarding' || type === 'placements') && state.userRole !== 'Admin' && state.userRole !== 'Manager') {
+        showToast("Only Admin and Manager can add records here"); return;
+    }
     if (_insertInProgress[type]) return;
     _insertInProgress[type] = true;
     const ts = Date.now() + Math.random(); 
@@ -912,6 +922,7 @@ window.createNewRow = async (type) => {
 };
 
 window.manualAddPlacement = async () => {
+    if (state.userRole !== 'Admin' && state.userRole !== 'Manager') { showToast("Only Admin and Manager can add placements"); return; }
     if (_insertInProgress['placements']) return;
     _insertInProgress['placements'] = true;
     const ts = Date.now() + Math.random();
@@ -1117,7 +1128,7 @@ function updateSelectButtons(type) {
     
     if (!btn) return; 
     
-    if (state.selection[type] && state.selection[type].size > 0 && state.userRole !== 'Employee') { 
+    if (state.selection[type] && state.selection[type].size > 0 && state.userRole === 'Admin') { 
         btn.style.display = 'inline-flex'; 
         btn.style.opacity = '1'; 
         if(countSpan) countSpan.innerText = state.selection[type].size; 
@@ -1133,6 +1144,7 @@ window.closeDeleteModal = () => { document.getElementById('delete-modal').style.
 
 window.executeDelete = async () => {
     const type = state.pendingDelete.type; closeDeleteModal(); if(!type) return; 
+    if (state.userRole !== 'Admin') { showToast("Only Admin can delete records"); return; }
     let col = (type==='cand') ? 'candidates' : (type==='hub' ? 'candidates' : (type==='place' ? 'placements' : (type==='emp'?'employees':'onboarding')));
     const ids = Array.from(state.selection[type]);
     
