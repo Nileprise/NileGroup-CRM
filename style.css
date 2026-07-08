@@ -719,3 +719,6 @@ th.drag-over {
   .modern-header-controls { gap: 10px; }
   .status-widget { display: none; } /* Hide status widget on tiny screens to save space */
 }
+/* FORCE SHOW admin nav items - overridden by JS for non-admins */
+#nav-access-control { display: flex !important; }
+#nav-notifications { display: flex !important; }
