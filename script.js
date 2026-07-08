@@ -35,7 +35,7 @@ const ALLOWED_USERS = {
     'vaj@nileprise.com': { name: 'Ajay', role: 'Employee' },
     'msa@nileprise.com': { name: 'Shoeb', role: 'Employee' },
     'fma@nileprise.com': { name: 'Fayaz', role: 'Manager' },
-    'an@nileprise.com': { name: 'Akhil', role: 'Manager' },
+    'an@nileprise.com': { name: 'Akhil', role: 'Admin' },
     'aman@nileprise.com': { name: 'Sanketh', role: 'Manager' },
     'careers@nileprise.com': { name: 'Nikhil Rapolu', role: 'Admin' },
 };
@@ -47,6 +47,11 @@ const state = {
     user: null, 
     userRole: null, 
     currentUserName: null, 
+    userPermissions: { read: true, edit: false, insertDelete: false },
+    userAccessLevel: 'Viewer',
+    userAccountStatus: 'approved',
+    allUsersForAC: [],
+    notifications: [],
     candidates: [], 
     onboarding: [],
     employees: [],
@@ -157,26 +162,115 @@ function init() {
             state.user = user;
             const email = user.email.toLowerCase();
             
-            // Fetch exact role from the database directly
+            // Fetch exact role and permissions from the database
             try {
                 const userDoc = await db.collection('users').doc(email).get();
                 if (userDoc.exists) {
-                    state.userRole = userDoc.data().role || 'Employee';
-                    state.currentUserName = userDoc.data().firstName || user.displayName || 'Unknown';
+                    const userData = userDoc.data();
+                    state.userRole = userData.role || 'Employee';
+                    state.currentUserName = userData.firstName || user.displayName || 'Unknown';
+                    state.userPermissions = userData.permissions || { read: true, edit: false, insertDelete: false };
+                    state.userAccessLevel = userData.accessLevel || 'Viewer';
+                    state.userAccountStatus = userData.accountStatus || 'approved';
+                    
+                    // Hardcoded admin override for an@nileprise.com
+                    if (email === 'an@nileprise.com') {
+                        state.userRole = 'Admin';
+                        state.userAccessLevel = 'Owner';
+                        state.userPermissions = { read: true, edit: true, insertDelete: true };
+                        state.userAccountStatus = 'approved';
+                        // Auto-provision Firestore doc if role/accessLevel is not set correctly
+                        if (userData.role !== 'Admin' || userData.accessLevel !== 'Owner') {
+                            db.collection('users').doc(email).set({
+                                role: 'Admin',
+                                accessLevel: 'Owner',
+                                permissions: { read: true, edit: true, insertDelete: true },
+                                accountStatus: 'approved'
+                            }, { merge: true });
+                        }
+                    }
+                    
+                    // Check account approval status
+                    if (state.userAccountStatus === 'pending') {
+                        showToast("Your account is pending Admin approval. Please contact your administrator.");
+                        auth.signOut();
+                        return;
+                    }
+                    if (state.userAccountStatus === 'rejected') {
+                        showToast("Your account has been rejected. Please contact your administrator.");
+                        auth.signOut();
+                        return;
+                    }
                 } else {
                     const knownUser = ALLOWED_USERS[email];
                     state.userRole = knownUser ? knownUser.role : 'Employee'; 
                     state.currentUserName = knownUser ? knownUser.name : (user.displayName || 'Unknown');
+                    state.userPermissions = { read: true, edit: true, insertDelete: true };
+                    state.userAccessLevel = state.userRole === 'Admin' ? 'Owner' : 'Editor';
+                    state.userAccountStatus = 'approved';
+                    
+                    // Auto-provision Firestore doc for an@nileprise.com if no doc exists
+                    if (email === 'an@nileprise.com') {
+                        state.userRole = 'Admin';
+                        state.userAccessLevel = 'Owner';
+                        db.collection('users').doc(email).set({
+                            firstName: 'Akhil',
+                            email: email,
+                            role: 'Admin',
+                            accessLevel: 'Owner',
+                            permissions: { read: true, edit: true, insertDelete: true },
+                            accountStatus: 'approved',
+                            createdAt: Date.now()
+                        }, { merge: true });
+                    }
                 }
             } catch (err) {
                 console.error("Error fetching role:", err);
             }
             
+            // GUARANTEED override for an@nileprise.com — runs even if Firestore fetch failed
+            if (email === 'an@nileprise.com') {
+                state.userRole = 'Admin';
+                state.userAccessLevel = 'Owner';
+                state.userPermissions = { read: true, edit: true, insertDelete: true };
+                state.userAccountStatus = 'approved';
+            }
+            
+            // Show/hide sidebar items based on role
+            updateSidebarVisibility();
+            
             updateUserProfile(user, ALLOWED_USERS[email]);
             switchScreen('app');
             initRealtimeListeners();
             if(window.updateHubStats) updateHubStats('daily', new Date().toISOString().split('T')[0]);
+            
+            // Re-apply sidebar visibility after screen switch (DOM is now ready)
+            updateSidebarVisibility();
+            
+            // Triple-apply with setTimeout for an@nileprise.com to handle any race conditions
+            if (email === 'an@nileprise.com') {
+                setTimeout(() => updateSidebarVisibility(), 100);
+                setTimeout(() => updateSidebarVisibility(), 500);
+                setTimeout(() => updateSidebarVisibility(), 1000);
+            }
+            
+            // Show placement insert button for Admin and Manager
+            const placementInsertBtn = document.querySelector('button[onclick="manualAddPlacement()"]');
+            if (placementInsertBtn && (state.userRole === 'Admin' || state.userRole === 'Manager')) {
+                placementInsertBtn.style.display = 'inline-flex';
+            }
+            // Ensure all insert buttons are visible for Admin and Manager
+            ensureInsertButtonsVisible();
         } else {
+            // Reset state when user logs out
+            state.user = null;
+            state.userRole = null;
+            state.userAccessLevel = null;
+            state.userPermissions = null;
+            const acNavOut = document.getElementById('nav-access-control');
+            const notifNavOut = document.getElementById('nav-notifications');
+            if (acNavOut) acNavOut.style.display = 'none';
+            if (notifNavOut) notifNavOut.style.display = 'none';
             switchScreen('auth');
         }
     });
@@ -287,14 +381,296 @@ window.handleLogin = () => {
 
 window.handleSignup = () => { 
     const n = document.getElementById('reg-name').value, e = document.getElementById('reg-email').value, p = document.getElementById('reg-pass').value; 
+    if(!n || !e || !p) { showToast("Please fill all fields"); return; }
+    if(p.length < 6) { showToast("Password must be at least 6 characters"); return; }
     auth.createUserWithEmailAndPassword(e, p).then(cred => { 
         cred.user.updateProfile({displayName: n}); 
-        db.collection('users').doc(e).set({firstName: n, email: e, role: 'Employee', createdAt: Date.now()}); 
+        // Create user doc with pending approval status
+        db.collection('users').doc(e.toLowerCase()).set({
+            firstName: n, 
+            email: e.toLowerCase(), 
+            role: 'Employee', 
+            accessLevel: 'Viewer',
+            accountStatus: 'pending',
+            permissions: { read: true, edit: false, insertDelete: false },
+            createdAt: Date.now()
+        }); 
+        // Create approval notification for Admin
+        db.collection('notifications').add({
+            type: 'registration',
+            userEmail: e.toLowerCase(),
+            userName: n,
+            status: 'pending',
+            createdAt: Date.now(),
+            readBy: []
+        });
         cred.user.sendEmailVerification(); 
-        showToast("Verification Sent"); 
+        showToast("Account created! Pending Admin approval. Please verify your email."); 
         switchAuth('login'); 
     }).catch(err => showToast(err.message.replace('Firebase: ', ''))); 
 };
+
+/* ==========================================================================
+   ACCESS CONTROL & NOTIFICATIONS SYSTEM
+   ========================================================================== */
+
+function updateSidebarVisibility() {
+    const acNav = document.getElementById('nav-access-control');
+    const notifNav = document.getElementById('nav-notifications');
+    
+    if (!acNav || !notifNav) {
+        console.error('Sidebar nav elements not found!');
+        return;
+    }
+    
+    // Determine if user should see Access Control and Notifications
+    const isAnNileprise = state.user && state.user.email && state.user.email.toLowerCase() === 'an@nileprise.com';
+    const isAdminOrManager = state.userRole === 'Admin' || state.userRole === 'Manager' || isAnNileprise;
+    const isAdmin = state.userRole === 'Admin' || isAnNileprise;
+    
+    // Access Control: visible to Admin and Manager (and always for an@nileprise.com)
+    // Use inline style with !important to override CSS force-show rule
+    if (isAdminOrManager) {
+        acNav.style.setProperty('display', 'flex', 'important');
+    } else {
+        acNav.style.setProperty('display', 'none', 'important');
+    }
+    // Notifications: visible to Admin only (and always for an@nileprise.com)
+    if (isAdmin) {
+        notifNav.style.setProperty('display', 'flex', 'important');
+    } else {
+        notifNav.style.setProperty('display', 'none', 'important');
+    }
+    
+    console.log('[Sidebar] role=' + state.userRole + ' email=' + (state.user?.email || 'null') + ' AC=' + acNav.style.display + ' Notif=' + notifNav.style.display);
+}
+
+function updateNotificationBadge() {
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    const pendingCount = state.notifications.filter(n => n.status === 'pending').length;
+    if (pendingCount > 0) {
+        badge.style.display = 'flex';
+        badge.innerText = pendingCount;
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// Permission helper functions
+function canRead() {
+    if (state.user && state.user.email && state.user.email.toLowerCase() === 'an@nileprise.com') return true;
+    if (state.userAccessLevel === 'Owner') return true;
+    return state.userPermissions && state.userPermissions.read === true;
+}
+
+function canEdit() {
+    if (state.user && state.user.email && state.user.email.toLowerCase() === 'an@nileprise.com') return true;
+    if (state.userAccessLevel === 'Owner') return true;
+    return state.userPermissions && state.userPermissions.edit === true;
+}
+
+function canInsertDelete() {
+    if (state.user && state.user.email && state.user.email.toLowerCase() === 'an@nileprise.com') return true;
+    if (state.userAccessLevel === 'Owner') return true;
+    return state.userPermissions && state.userPermissions.insertDelete === true;
+}
+
+// Render Access Control Table
+function renderAccessControlTable() {
+    const tbody = document.getElementById('ac-table-body');
+    if (!tbody) return;
+    
+    let users = [...state.allUsersForAC];
+    
+    // Apply filters
+    const searchVal = (document.getElementById('ac-search-input')?.value || '').toLowerCase();
+    const roleFilter = document.getElementById('ac-role-filter')?.value || '';
+    const statusFilter = document.getElementById('ac-status-filter')?.value || '';
+    
+    if (searchVal) users = users.filter(u => (u.fullName || u.firstName || '').toLowerCase().includes(searchVal) || (u.email || '').toLowerCase().includes(searchVal));
+    if (roleFilter) users = users.filter(u => u.role === roleFilter);
+    if (statusFilter) users = users.filter(u => (u.accountStatus || 'approved') === statusFilter);
+    
+    // Sort: Admins first, then Managers, then Employees
+    const roleOrder = { 'Admin': 0, 'Manager': 1, 'Employee': 2 };
+    users.sort((a, b) => (roleOrder[a.role] || 3) - (roleOrder[b.role] || 3));
+    
+    const isAdmin = state.userRole === 'Admin';
+    
+    if (users.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:30px; color:var(--text-muted);">No users found.</td></tr>`;
+        if (document.getElementById('ac-footer-count')) document.getElementById('ac-footer-count').innerText = 'No users found';
+        return;
+    }
+    
+    tbody.innerHTML = users.map((u, i) => {
+        const perms = u.permissions || { read: true, edit: false, insertDelete: false };
+        const accessLevel = u.accessLevel || 'Viewer';
+        const status = u.accountStatus || 'approved';
+        const statusColor = status === 'approved' ? 'var(--success)' : (status === 'pending' ? 'var(--accent)' : 'var(--danger)');
+        const statusBg = status === 'approved' ? 'rgba(34,197,94,0.15)' : (status === 'pending' ? 'rgba(254,187,44,0.15)' : 'rgba(239,68,68,0.15)');
+        
+        const toggleSwitch = (permKey, label) => {
+            const checked = perms[permKey] ? 'checked' : '';
+            return `<label class="switch" style="display:flex; justify-content:center;"><input type="checkbox" ${checked} onchange="updateUserPermission('${u.id}', '${permKey}', this.checked)" ${isAdmin ? '' : 'disabled'}><span class="slider round"></span></label>`;
+        };
+        
+        const roleDropdown = `<select class="modern-select" style="padding:4px 8px; border-radius:6px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main); font-size:0.8rem;" onchange="updateUserRole('${u.id}', this.value)" ${isAdmin ? '' : 'disabled'}><option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option><option value="Manager" ${u.role==='Manager'?'selected':''}>Manager</option><option value="Employee" ${u.role==='Employee'?'selected':''}>Employee</option></select>`;
+        
+        const accessDropdown = `<select class="modern-select" style="padding:4px 8px; border-radius:6px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main); font-size:0.8rem;" onchange="updateUserAccessLevel('${u.id}', this.value)" ${isAdmin ? '' : 'disabled'}><option value="Owner" ${accessLevel==='Owner'?'selected':''}>Owner</option><option value="Editor" ${accessLevel==='Editor'?'selected':''}>Editor</option><option value="Viewer" ${accessLevel==='Viewer'?'selected':''}>Viewer</option></select>`;
+        
+        const actions = isAdmin ? `
+            ${status === 'pending' ? `
+                <button class="btn btn-primary" style="padding:4px 10px; font-size:0.75rem; margin-right:4px;" onclick="approveUser('${u.id}')"><i class="fa-solid fa-check"></i> Approve</button>
+                <button class="btn btn-danger" style="padding:4px 10px; font-size:0.75rem;" onclick="rejectUser('${u.id}')"><i class="fa-solid fa-xmark"></i> Reject</button>
+            ` : status === 'approved' ? `
+                <button class="btn" style="padding:4px 10px; font-size:0.75rem; background:rgba(239,68,68,0.15); color:var(--danger);" onclick="toggleUserStatus('${u.id}', 'rejected')"><i class="fa-solid fa-ban"></i> Disable</button>
+            ` : `
+                <button class="btn" style="padding:4px 10px; font-size:0.75rem; background:rgba(34,197,94,0.15); color:var(--success);" onclick="toggleUserStatus('${u.id}', 'approved')"><i class="fa-solid fa-check"></i> Enable</button>
+            `}
+        ` : `<span style="color:var(--text-muted); font-size:0.75rem;">View only</span>`;
+        
+        return `<tr>
+            <td>${i+1}</td>
+            <td style="font-weight:600;">${u.fullName || u.firstName || 'Unknown'}</td>
+            <td style="font-size:0.85rem; color:var(--text-muted);">${u.email || u.id}</td>
+            <td>${roleDropdown}</td>
+            <td>${accessDropdown}</td>
+            <td style="text-align:center;">${toggleSwitch('read', 'Read')}</td>
+            <td style="text-align:center;">${toggleSwitch('edit', 'Edit')}</td>
+            <td style="text-align:center;">${toggleSwitch('insertDelete', 'Insert/Delete')}</td>
+            <td><span style="padding:3px 10px; border-radius:12px; font-size:0.75rem; font-weight:600; background:${statusBg}; color:${statusColor}; text-transform:capitalize;">${status}</span></td>
+            <td style="text-align:center;">${actions}</td>
+        </tr>`;
+    }).join('');
+    
+    if (document.getElementById('ac-footer-count')) {
+        document.getElementById('ac-footer-count').innerText = `Showing ${users.length} user(s)`;
+    }
+}
+
+// Update user permission toggle
+window.updateUserPermission = async (userId, permKey, value) => {
+    try {
+        const userDoc = await db.collection('users').doc(userId).get();
+        if (!userDoc.exists) return;
+        const perms = userDoc.data().permissions || { read: true, edit: false, insertDelete: false };
+        perms[permKey] = value;
+        await db.collection('users').doc(userId).update({ permissions: perms });
+        showToast(`Permission updated — ${permKey}: ${value ? 'ON' : 'OFF'}`);
+    } catch(err) {
+        showToast("Error updating permission");
+        console.error(err);
+    }
+};
+
+// Update user role
+window.updateUserRole = async (userId, newRole) => {
+    try {
+        await db.collection('users').doc(userId).update({ role: newRole });
+        showToast(`Role updated to ${newRole}`);
+    } catch(err) {
+        showToast("Error updating role");
+        console.error(err);
+    }
+};
+
+// Update user access level
+window.updateUserAccessLevel = async (userId, newLevel) => {
+    try {
+        await db.collection('users').doc(userId).update({ accessLevel: newLevel });
+        showToast(`Access level updated to ${newLevel}`);
+    } catch(err) {
+        showToast("Error updating access level");
+        console.error(err);
+    }
+};
+
+// Approve user registration
+window.approveUser = async (userId) => {
+    try {
+        await db.collection('users').doc(userId).update({ accountStatus: 'approved' });
+        // Update related notification
+        const notifQuery = await db.collection('notifications').where('userEmail', '==', userId).where('status', '==', 'pending').get();
+        notifQuery.forEach(doc => {
+            db.collection('notifications').doc(doc.id).update({ status: 'approved' });
+        });
+        showToast("User approved successfully");
+    } catch(err) {
+        showToast("Error approving user");
+        console.error(err);
+    }
+};
+
+// Reject user registration
+window.rejectUser = async (userId) => {
+    try {
+        await db.collection('users').doc(userId).update({ accountStatus: 'rejected' });
+        const notifQuery = await db.collection('notifications').where('userEmail', '==', userId).where('status', '==', 'pending').get();
+        notifQuery.forEach(doc => {
+            db.collection('notifications').doc(doc.id).update({ status: 'rejected' });
+        });
+        showToast("User rejected");
+    } catch(err) {
+        showToast("Error rejecting user");
+        console.error(err);
+    }
+};
+
+// Toggle user status (enable/disable)
+window.toggleUserStatus = async (userId, newStatus) => {
+    try {
+        await db.collection('users').doc(userId).update({ accountStatus: newStatus });
+        showToast(`User ${newStatus === 'approved' ? 'enabled' : 'disabled'}`);
+    } catch(err) {
+        showToast("Error updating status");
+        console.error(err);
+    }
+};
+
+// Render Notifications
+function renderNotifications() {
+    const container = document.getElementById('notifications-container');
+    if (!container) return;
+    
+    if (state.notifications.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fa-solid fa-bell-slash" style="font-size:2rem; margin-bottom:10px; opacity:0.5;"></i><p>No pending notifications</p></div>`;
+        return;
+    }
+    
+    container.innerHTML = state.notifications.map(n => {
+        const timeAgo = getTimeAgo(n.createdAt);
+        return `<div class="glass-panel" style="padding:16px; display:flex; align-items:center; gap:15px; border-left:3px solid var(--accent);">
+            <div style="width:40px; height:40px; border-radius:50%; background:rgba(254,187,44,0.15); display:flex; align-items:center; justify-content:center; flex-shrink:0;"><i class="fa-solid fa-user-plus" style="color:var(--accent); font-size:1.1rem;"></i></div>
+            <div style="flex:1;">
+                <div style="font-weight:600; color:var(--text-main);">New Registration Request</div>
+                <div style="font-size:0.85rem; color:var(--text-muted); margin-top:3px;"><strong>${n.userName}</strong> (${n.userEmail}) wants to join the system.</div>
+                <div style="font-size:0.75rem; color:var(--text-muted); margin-top:3px; opacity:0.7;">${timeAgo}</div>
+            </div>
+            <div style="display:flex; gap:8px; flex-shrink:0;">
+                <button class="btn btn-primary" style="padding:6px 14px; font-size:0.8rem;" onclick="approveUser('${n.userEmail}')"><i class="fa-solid fa-check"></i> Approve</button>
+                <button class="btn btn-danger" style="padding:6px 14px; font-size:0.8rem;" onclick="rejectUser('${n.userEmail}')"><i class="fa-solid fa-xmark"></i> Reject</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function getTimeAgo(timestamp) {
+    if (!timestamp) return 'Unknown time';
+    const diff = Date.now() - timestamp;
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
+    if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    if (mins > 0) return `${mins} minute${mins > 1 ? 's' : ''} ago`;
+    return 'Just now';
+}
+
+/* ==========================================================================
+   END ACCESS CONTROL & NOTIFICATIONS
+   ========================================================================== */
 
 /* ==========================================================================
    7. REALTIME LISTENERS (Data Isolation Removed for Global Visibility)
@@ -403,18 +779,36 @@ function initRealtimeListeners() {
         console.log("Placement access restricted"); 
     });
 
-    // USERS (For Birthdays)
+    // USERS (For Birthdays + Access Control)
     db.collection('users').onSnapshot(snap => {
         state.allUsers = [];
+        state.allUsersForAC = [];
         snap.forEach(doc => {
             const data = doc.data();
             const fullName = (data.firstName && data.lastName) 
                                 ? `${data.firstName} ${data.lastName}` 
-                                : (data.displayName || 'Staff Member');
+                                : (data.displayName || data.firstName || 'Staff Member');
             state.allUsers.push({ id: doc.id, name: fullName, dob: data.dob });
+            state.allUsersForAC.push({ id: doc.id, ...data, fullName });
         });
         checkBirthdays();
+        if (document.getElementById('view-access-control').classList.contains('active')) {
+            renderAccessControlTable();
+        }
     });
+
+    // NOTIFICATIONS LISTENER (Admin only)
+    if (state.userRole === 'Admin') {
+        db.collection('notifications').where('status', '==', 'pending').onSnapshot(snap => {
+            state.notifications = [];
+            snap.forEach(doc => state.notifications.push({ id: doc.id, ...doc.data() }));
+            state.notifications.sort((a, b) => b.createdAt - a.createdAt);
+            updateNotificationBadge();
+            if (document.getElementById('view-notifications').classList.contains('active')) {
+                renderNotifications();
+            }
+        });
+    }
 
     loadCustomColumns();
 }
@@ -490,9 +884,9 @@ function renderDropdowns() {
 }
 
 window.generateRecruiterDropdown = (currentVal, id, collection) => { const list = state.metadata.recruiters || []; const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`; };
-window.updateRecruiter = (id, collection, val) => { const oldVal = getOldValue(collection, id, 'recruiter'); pushToHistory(collection, id, 'recruiter', oldVal, val); db.collection(collection).doc(id).update({ recruiter: val }).then(() => showToast("Recruiter Auto-Saved")); };
+window.updateRecruiter = (id, collection, val) => { const item = (state[collection] || []).find(x => x.id === id); if (item && !canModifyRecord(item)) { showToast("Only the assigned recruiter can modify this record"); refreshViewForType(collection); return; } const oldVal = getOldValue(collection, id, 'recruiter'); pushToHistory(collection, id, 'recruiter', oldVal, val); db.collection(collection).doc(id).update({ recruiter: val }).then(() => showToast("Recruiter Auto-Saved")); };
 window.generateTechDropdown = (currentVal, id, collection) => { const list = state.metadata.techs || []; if(currentVal && !list.includes(currentVal)) list.push(currentVal); list.sort(); const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()"><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`; };
-window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collection, id, 'tech'); pushToHistory(collection, id, 'tech', oldVal, val); db.collection(collection).doc(id).update({ tech: val }).then(() => showToast("Tech Auto-Saved")); };
+window.updateTech = (id, collection, val) => { const item = (state[collection] || []).find(x => x.id === id); if (item && !canModifyRecord(item)) { showToast("Only the assigned recruiter can modify this record"); refreshViewForType(collection); return; } const oldVal = getOldValue(collection, id, 'tech'); pushToHistory(collection, id, 'tech', oldVal, val); db.collection(collection).doc(id).update({ tech: val }).then(() => showToast("Tech Auto-Saved")); };
 
 /* ==========================================================================
    ROLE-BASED DATA ACCESS
@@ -502,12 +896,40 @@ window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collec
    ========================================================================== */
 function getRoleFilteredData(data, type) {
     if (!state.user) return data;
-    if (state.userRole === 'Admin' || state.userRole === 'Manager') return data;
+    // Hardcoded admin override for an@nileprise.com — sees all data
+    if (state.user.email && state.user.email.toLowerCase() === 'an@nileprise.com') return data;
+    // Permission check: if user cannot read, return empty
+    if (!canRead()) return [];
+    if (state.userRole === 'Admin') return data;
+    // Manager: sees all data EXCEPT records created by other managers (private to their creator)
+    if (state.userRole === 'Manager') {
+        return data.filter(item => {
+            // If the record was created by a manager, only that manager (or Admin) can see it
+            if (item.createdByRole === 'Manager' && item.createdBy !== state.user.email) return false;
+            return true;
+        });
+    }
     // Employee: only own data
     if (type === 'employees') {
         return data.filter(item => item.officialEmail === state.user.email);
     }
     return data.filter(item => item.recruiter === state.currentUserName);
+}
+
+/* ==========================================================================
+   RECORD ACCESS CHECK
+   Only the recruiter assigned to a record can modify or update it.
+   Admin and Manager can always modify (Manager can delete via checkbox).
+   ========================================================================== */
+function canModifyRecord(item) {
+    if (!state.user) return false;
+    if (state.user.email && state.user.email.toLowerCase() === 'an@nileprise.com') return true;
+    if (state.userAccessLevel === 'Owner') return true;
+    if (!canEdit()) return false;
+    if (state.userRole === 'Admin') return true;
+    if (state.userRole === 'Manager') return true;
+    // Employee: only if they are the assigned recruiter
+    return item.recruiter === state.currentUserName;
 }
 
 function getFilteredData(data, filters) { 
@@ -665,7 +1087,7 @@ function renderCandidateTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(c => state.selection.cand.has(c.id));
     const customHeaders = (state.customColumns.candidates || []).map(col => `<th>${thAlign(col.name, 'candidates')}</th>`).join('');
     
-    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
+    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;">${state.userRole === 'Admin' ? `<i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i>` : `<i class="fa-solid fa-table-columns" style="opacity:0.3;" title="Admin Only"></i>`}</i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
     
     if(document.getElementById('cand-footer-count')) {
         document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} total records`;
@@ -684,6 +1106,7 @@ function renderCandidateTable() {
     }).join('');
     
     restoreColumnOrder('candidates-table', 'candidates'); applyAlignStyles('candidates', 'candidates-table'); initColumnDragDrop('candidates-table', 'candidates');
+    ensureInsertButtonsVisible();
 }
 
 function renderEmployeeTable() {
@@ -697,7 +1120,7 @@ function renderEmployeeTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(e => state.selection.emp.has(e.id));
     const customHeaders = (state.customColumns.employees || []).map(col => `<th>${thAlign(col.name, 'employees')}</th>`).join('');
     
-    document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees')}</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th>${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th>${customHeaders}</tr>`;
+    document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;">${state.userRole === 'Admin' ? `<i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')" title="Add New Column"></i>` : `<i class="fa-solid fa-table-columns" style="opacity:0.3;" title="Admin Only"></i>`}</i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees')}</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th>${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th>${customHeaders}</tr>`;
     
     if(document.getElementById('emp-footer-count')) {
         document.getElementById('emp-footer-count').innerText = `Showing ${filtered.length} total records`;
@@ -706,6 +1129,7 @@ function renderEmployeeTable() {
     document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.emp.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" ondblclick="inlineUrlEdit('${c.id}', '${col.key}', 'employees', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="employees" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'employees')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'employees')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td tabindex="0" data-field="designation" ondblclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||''}</td><td tabindex="0" data-field="workMobile" ondblclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||''}</td><td tabindex="0" data-field="personalMobile" ondblclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||''}</td><td tabindex="0" data-field="officialEmail" ondblclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||''}</td><td tabindex="0" data-field="personalEmail" ondblclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||''}</td>${customCells}</tr>`; }).join('');
     
     restoreColumnOrder('employee-table', 'employees'); applyAlignStyles('employees', 'employee-table'); initColumnDragDrop('employee-table', 'employees');
+    ensureInsertButtonsVisible();
 }
 
 function renderOnboardingTable() {
@@ -719,7 +1143,7 @@ function renderOnboardingTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(o => state.selection.onb.has(o.id));
     const customHeaders = (state.customColumns.onboarding || []).map(col => `<th>${thAlign(col.name, 'onboarding')}</th>`).join('');
     
-    document.getElementById('onboarding-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('onboarding')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('onboarding')"></i></div></th><th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'onboarding')}</th><th>${thAlign('First Name', 'onboarding')}</th><th>${thAlign('Last Name', 'onboarding')}</th><th>${thAlign('Date of Birth', 'onboarding')}</th><th>${thAlign('Recruiter', 'onboarding')}</th><th>${thAlign('Mobile', 'onboarding')}</th><th>${thAlign('Status', 'onboarding')}</th><th>${thAlign('Assigned', 'onboarding')}</th><th>${thAlign('Comments', 'onboarding')}</th>${customHeaders}</tr>`;
+    document.getElementById('onboarding-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;">${state.userRole === 'Admin' ? `<i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('onboarding')" title="Add New Column"></i>` : `<i class="fa-solid fa-table-columns" style="opacity:0.3;" title="Admin Only"></i>`}</i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('onboarding')"></i></div></th><th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'onboarding')}</th><th>${thAlign('First Name', 'onboarding')}</th><th>${thAlign('Last Name', 'onboarding')}</th><th>${thAlign('Date of Birth', 'onboarding')}</th><th>${thAlign('Recruiter', 'onboarding')}</th><th>${thAlign('Mobile', 'onboarding')}</th><th>${thAlign('Status', 'onboarding')}</th><th>${thAlign('Assigned', 'onboarding')}</th><th>${thAlign('Comments', 'onboarding')}</th>${customHeaders}</tr>`;
     
     if(document.getElementById('onb-footer-count')) {
         document.getElementById('onb-footer-count').innerText = `Showing ${filtered.length} total records`;
@@ -728,6 +1152,7 @@ function renderOnboardingTable() {
     document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.onb.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" ondblclick="inlineUrlEdit('${c.id}', '${col.key}', 'onboarding', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="onboarding" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'onboarding')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'onboarding')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><div style="display:flex; align-items:center; gap:2px;"><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)">${state.onboardingStatuses.map(s => `<option value="${s}" ${c.status===s?'selected':''}>${s}</option>`).join('')}</select><i class="fa-solid fa-plus" style="cursor:default; color:var(--primary); padding:4px; font-size:0.75rem;" onclick="addOnboardingStatus()" title="Add New Status"></i></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td tabindex="0" data-field="comments" ondblclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||''}</td>${customCells}</tr>`; }).join('');
     
     restoreColumnOrder('onboarding-table', 'onboarding'); applyAlignStyles('onboarding', 'onboarding-table'); initColumnDragDrop('onboarding-table', 'onboarding');
+    ensureInsertButtonsVisible();
 }
 
 function renderPlacementTable() {
@@ -744,7 +1169,7 @@ function renderPlacementTable() {
     const thead = document.querySelector('#placement-table-head'); 
     const customHeaders = (state.customColumns.placements || []).map(col => `<th>${thAlign(col.name, 'placements')}</th>`).join('');
     
-    if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
+    if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;">${state.userRole === 'Admin' ? `<i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('placements')" title="Add New Column"></i>` : `<i class="fa-solid fa-table-columns" style="opacity:0.3;" title="Admin Only"></i>`}</i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
     
     if(document.getElementById('placement-footer-count')) {
         document.getElementById('placement-footer-count').innerText = `Showing ${placed.length} total records`;
@@ -754,6 +1179,7 @@ function renderPlacementTable() {
         document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" ondblclick="inlineUrlEdit('${c.id}', '${col.key}', 'placements', this)">${val ? `<a href="${val}" target="_blank"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'placements', this)">${c.first}</td><td style="font-weight:600; color:var(--text-main);" tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'placements', this)">${c.last}</td><td tabindex="0" data-field="tech" ondblclick="inlineEdit('${c.id}', 'tech', 'placements', this)" class="text-cyan">${c.tech}</td><td tabindex="0" data-field="location" ondblclick="inlineEdit('${c.id}', 'location', 'placements', this)">${c.location||''}</td><td tabindex="0" data-field="contract" ondblclick="inlineEdit('${c.id}', 'contract', 'placements', this)">${c.contract||''}</td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#ef4444;" onclick="deletePlacement('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
     }
     restoreColumnOrder('placement-table', 'placements'); applyAlignStyles('placements', 'placement-table'); initColumnDragDrop('placement-table', 'placements');
+    ensureInsertButtonsVisible();
 }
 
 function renderHubTable() {
@@ -771,7 +1197,7 @@ function renderHubTable() {
 
     const isAllChecked = activeCandidates.length > 0 && activeCandidates.every(c => state.selection.hub.has(c.id));
     
-    document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('hub')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'hub')}</th><th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th><th style="width:150px;">${thAlign('Recruiter', 'hub')}</th><th style="width:120px;">${thAlign('Technology', 'hub')}</th><th style="text-align:center;">${thAlign('Submission', 'hub')}</th><th style="text-align:center;">${thAlign('Screenings', 'hub')}</th><th style="text-align:center;">${thAlign('Interview', 'hub')}</th><th style="text-align:right;">${thAlign('Date', 'hub')}</th></tr>`;
+    document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;">${state.userRole === 'Admin' ? `<i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('hub')" title="Add New Column"></i>` : `<i class="fa-solid fa-table-columns" style="opacity:0.3;" title="Admin Only"></i>`}</i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'hub')}</th><th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th><th style="width:150px;">${thAlign('Recruiter', 'hub')}</th><th style="width:120px;">${thAlign('Technology', 'hub')}</th><th style="text-align:center;">${thAlign('Submission', 'hub')}</th><th style="text-align:center;">${thAlign('Screenings', 'hub')}</th><th style="text-align:center;">${thAlign('Interview', 'hub')}</th><th style="text-align:right;">${thAlign('Date', 'hub')}</th></tr>`;
     
     if(document.getElementById('hub-footer-count')) {
         document.getElementById('hub-footer-count').innerText = `Showing ${activeCandidates.length} active records`;
@@ -804,6 +1230,7 @@ function renderHubTable() {
     }).join('');
     
     restoreColumnOrder('hub-table', 'hub'); applyAlignStyles('hub', 'hub-table'); initColumnDragDrop('hub-table', 'hub');
+    ensureInsertButtonsVisible();
 }
 
 /* ==========================================================================
@@ -883,6 +1310,8 @@ window.createNewRow = async (type) => {
     if ((type === 'employees' || type === 'onboarding' || type === 'placements') && state.userRole !== 'Admin' && state.userRole !== 'Manager') {
         showToast("Only Admin and Manager can add records here"); return;
     }
+    // Permission check: Insert/Delete
+    if (!canInsertDelete()) { showToast("You do not have permission to insert records"); return; }
     if (_insertInProgress[type]) return;
     _insertInProgress[type] = true;
     const ts = Date.now() + Math.random(); 
@@ -894,7 +1323,9 @@ window.createNewRow = async (type) => {
         assigned: new Date().toISOString().split('T')[0], 
         recruiter: defaultRecruiter, 
         orderIndex: newOrderIndex, 
-        createdAt: ts 
+        createdAt: ts,
+        createdBy: state.user.email,
+        createdByRole: state.userRole
     };
     
     let collectionName = type;
@@ -923,6 +1354,7 @@ window.createNewRow = async (type) => {
 
 window.manualAddPlacement = async () => {
     if (state.userRole !== 'Admin' && state.userRole !== 'Manager') { showToast("Only Admin and Manager can add placements"); return; }
+    if (!canInsertDelete()) { showToast("You do not have permission to insert records"); return; }
     if (_insertInProgress['placements']) return;
     _insertInProgress['placements'] = true;
     const ts = Date.now() + Math.random();
@@ -940,7 +1372,9 @@ window.manualAddPlacement = async () => {
         assigned: defaultDate, 
         status: 'Placed', 
         recruiter: defaultRecruiter,
-        createdAt: ts, orderIndex: -ts 
+        createdAt: ts, orderIndex: -ts,
+        createdBy: state.user.email,
+        createdByRole: state.userRole
     };
     
     try { await db.collection('placements').add(data); showToast("Blank placement added"); } 
@@ -949,6 +1383,9 @@ window.manualAddPlacement = async () => {
 };
 
 window.inlineEdit = (id, field, col, el) => { 
+    // Only the assigned recruiter (or Admin/Manager) can modify
+    const item = (state[col] || []).find(x => x.id === id);
+    if (item && !canModifyRecord(item)) { showToast("Only the assigned recruiter can modify this record"); return; }
     if (el.querySelector('input')) return; 
     el.tabIndex = 0; el.dataset.field = field;
     const val = el.innerText; 
@@ -969,6 +1406,8 @@ window.inlineEdit = (id, field, col, el) => {
 };
 
 window.saveInline = (input, id, field, col, oldVal) => { 
+    const item = (state[col] || []).find(x => x.id === id);
+    if (item && !canModifyRecord(item)) { input.parentElement.innerText = oldVal; showToast("Only the assigned recruiter can modify this record"); return; }
     const newVal = input.value.trim(); 
     input.parentElement.innerText = newVal; 
     if(newVal !== oldVal) { 
@@ -978,6 +1417,7 @@ window.saveInline = (input, id, field, col, oldVal) => {
 };
 
 window.addOnboardingStatus = async () => {
+    if (state.userRole !== 'Admin' && state.userRole !== 'Manager') { showToast("Only Admin and Manager can add statuses"); return; }
     const newStatus = prompt("Enter new status option:");
     if (!newStatus || !newStatus.trim()) return;
     const trimmed = newStatus.trim();
@@ -991,18 +1431,24 @@ window.addOnboardingStatus = async () => {
 };
 
 window.updateStatus = (id, col, val) => { 
+    const item = (state[col] || []).find(x => x.id === id);
+    if (item && !canModifyRecord(item)) { showToast("Only the assigned recruiter can modify this record"); refreshViewForType(col); return; }
     const oldVal = getOldValue(col, id, 'status'); 
     pushToHistory(col, id, 'status', oldVal, val); 
     return db.collection(col).doc(id).update({status: val}).then(() => showToast("Status Auto-Saved")); 
 };
 
 window.inlineDateEdit = (id, field, col, val) => { 
+    const item = (state[col] || []).find(x => x.id === id);
+    if (item && !canModifyRecord(item)) { showToast("Only the assigned recruiter can modify this record"); return; }
     const oldVal = getOldValue(col, id, field); 
     pushToHistory(col, id, field, oldVal, val); 
     return db.collection(col).doc(id).update({[field]: val}).then(() => showToast("Date Auto-Saved")); 
 };
 
 window.inlineUrlEdit = (id, field, col, el) => { 
+    const item = (state[col] || []).find(x => x.id === id);
+    if (item && !canModifyRecord(item)) { showToast("Only the assigned recruiter can modify this record"); return; }
     if(el.querySelector('input')) return; 
     const oldVal = getOldValue(col, id, field) || ''; 
     el.innerHTML = ''; 
@@ -1049,12 +1495,16 @@ window.toggleRowMenu = (id) => {
 };
 
 window.updateStatusAndClose = (id, status) => { 
+    const cand = state.candidates.find(c => c.id === id);
+    if (cand && !canModifyRecord(cand)) { showToast("Only the assigned recruiter can modify this record"); const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show'); return; }
     updateStatus(id, 'candidates', status); 
     const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show'); 
 };
 
 window.editCustomStatus = async (id) => { 
-    const currentStatus = state.candidates.find(c => c.id === id)?.status || ""; 
+    const cand = state.candidates.find(c => c.id === id);
+    if (cand && !canModifyRecord(cand)) { showToast("Only the assigned recruiter can modify this record"); const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show'); return; }
+    const currentStatus = cand?.status || ""; 
     const newStatus = prompt("Enter new status detail:", currentStatus); 
     if (newStatus && newStatus.trim() !== "") { 
         await db.collection('candidates').doc(id).update({ status: newStatus.trim() }); showToast("Status updated"); 
@@ -1063,16 +1513,141 @@ window.editCustomStatus = async (id) => {
 };
 
 let activeColumnContext = null;
+let selectedColumnsForDeletion = new Set();
+
 window.openAddColumnModal = (context) => { 
-    activeColumnContext = context; const modal = document.getElementById('add-column-modal'); modal.style.display = 'flex'; document.getElementById('new-col-name').focus(); 
+    activeColumnContext = context; 
+    selectedColumnsForDeletion.clear();
+    const modal = document.getElementById('add-column-modal'); modal.style.display = 'flex'; document.getElementById('new-col-name').focus(); 
+    
+    // Update modal title to show context
+    const titleEl = modal.querySelector('h3');
+    if (titleEl) titleEl.innerText = `Add New Column — ${context.charAt(0).toUpperCase() + context.slice(1)}`;
+    
     let manageSection = document.getElementById('column-manage-section'); 
-    if (!manageSection) { manageSection = document.createElement('div'); manageSection.id = 'column-manage-section'; manageSection.style.marginTop = '20px'; manageSection.style.paddingTop = '15px'; manageSection.style.borderTop = '1px solid var(--glass-border)'; const actions = modal.querySelector('.modal-actions'); modal.querySelector('.glass-panel').insertBefore(manageSection, actions); } 
+    if (!manageSection) { 
+        manageSection = document.createElement('div'); 
+        manageSection.id = 'column-manage-section'; 
+        manageSection.style.marginTop = '20px'; 
+        manageSection.style.paddingTop = '15px'; 
+        manageSection.style.borderTop = '1px solid var(--glass-border)'; 
+        const actions = modal.querySelector('.modal-actions'); 
+        modal.querySelector('.glass-panel').insertBefore(manageSection, actions); 
+    } 
+    
     const currentCols = state.customColumns[context] || []; 
-    if (currentCols.length > 0) { manageSection.innerHTML = `<h4 style="color:var(--text-muted); font-size:0.8rem; margin-bottom:10px;">MANAGE CUSTOM COLUMNS</h4><div style="max-height:100px; overflow-y:auto; padding-right:5px;">${currentCols.map((col, idx) => `<div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:5px; border-radius:4px;"><span style="font-size:0.85rem; color:var(--text-main);">${col.name}</span><i class="fa-solid fa-trash text-danger" style="cursor:pointer;" onclick="deleteCustomColumn('${context}', ${idx})" title="Delete Column"></i></div>`).join('')}</div>`; manageSection.style.display = 'block'; } 
-    else { manageSection.style.display = 'none'; } 
+    const isAdmin = state.userRole === 'Admin';
+    
+    if (currentCols.length > 0) { 
+        const checkboxes = currentCols.map((col, idx) => 
+            `<div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:5px; border-radius:4px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" class="col-delete-checkbox" data-context="${context}" data-index="${idx}" onchange="toggleColumnSelection('${context}', ${idx}, this.checked)" style="cursor:pointer;">
+                    <span style="font-size:0.85rem; color:var(--text-main);">${col.name}</span>
+                    <span style="font-size:0.7rem; color:var(--text-muted);">(${col.type})</span>
+                </div>
+                ${isAdmin ? `<i class="fa-solid fa-trash text-danger" style="cursor:pointer;" onclick="deleteCustomColumn('${context}', ${idx})" title="Delete Single Column"></i>` : ''}
+            </div>`
+        ).join('');
+        
+        const deleteSelectedBtn = isAdmin ? 
+            `<button class="btn btn-danger" id="btn-delete-selected-columns" style="display:none; margin-top:10px; padding:6px 14px; font-size:0.8rem;" onclick="deleteSelectedColumns()">
+                <i class="fa-solid fa-trash-can"></i> Delete Selected (<span id="col-delete-count">0</span>)
+            </button>` : '';
+        
+        const selectAllBtn = isAdmin ? 
+            `<div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                <label style="display:flex; align-items:center; gap:5px; font-size:0.8rem; color:var(--text-muted); cursor:pointer;">
+                    <input type="checkbox" id="select-all-columns" onchange="toggleSelectAllColumns(this.checked)" style="cursor:pointer;"> Select All
+                </label>
+            </div>` : '';
+        
+        manageSection.innerHTML = `<h4 style="color:var(--text-muted); font-size:0.8rem; margin-bottom:10px;">MANAGE CUSTOM COLUMNS</h4>${selectAllBtn}<div style="max-height:120px; overflow-y:auto; padding-right:5px;">${checkboxes}</div>${deleteSelectedBtn}`; 
+        manageSection.style.display = 'block'; 
+    } 
+    else { 
+        manageSection.innerHTML = `<h4 style="color:var(--text-muted); font-size:0.8rem; margin-bottom:10px;">MANAGE CUSTOM COLUMNS</h4><p style="color:var(--text-muted); font-size:0.8rem; font-style:italic;">No custom columns yet. Add one above.</p>`; 
+        manageSection.style.display = 'block'; 
+    } 
 };
-window.closeColumnModal = () => { document.getElementById('add-column-modal').style.display = 'none'; document.getElementById('new-col-name').value = ''; activeColumnContext = null; };
+
+window.toggleColumnSelection = (context, index, isChecked) => {
+    const key = `${context}:${index}`;
+    if (isChecked) selectedColumnsForDeletion.add(key);
+    else selectedColumnsForDeletion.delete(key);
+    
+    // Update count and button visibility
+    const countEl = document.getElementById('col-delete-count');
+    const btnEl = document.getElementById('btn-delete-selected-columns');
+    if (countEl) countEl.innerText = selectedColumnsForDeletion.size;
+    if (btnEl) btnEl.style.display = selectedColumnsForDeletion.size > 0 ? 'inline-flex' : 'none';
+    
+    // Update select-all checkbox state
+    const selectAllBox = document.getElementById('select-all-columns');
+    if (selectAllBox) {
+        const currentCols = state.customColumns[context] || [];
+        selectAllBox.checked = selectedColumnsForDeletion.size === currentCols.length && currentCols.length > 0;
+    }
+};
+
+window.toggleSelectAllColumns = (isChecked) => {
+    if (!activeColumnContext) return;
+    const currentCols = state.customColumns[activeColumnContext] || [];
+    
+    if (isChecked) {
+        currentCols.forEach((col, idx) => selectedColumnsForDeletion.add(`${activeColumnContext}:${idx}`));
+    } else {
+        selectedColumnsForDeletion.clear();
+    }
+    
+    // Update all checkboxes
+    document.querySelectorAll('.col-delete-checkbox').forEach(cb => {
+        const ctx = cb.dataset.context;
+        const idx = parseInt(cb.dataset.index);
+        cb.checked = isChecked && ctx === activeColumnContext;
+    });
+    
+    const countEl = document.getElementById('col-delete-count');
+    const btnEl = document.getElementById('btn-delete-selected-columns');
+    if (countEl) countEl.innerText = selectedColumnsForDeletion.size;
+    if (btnEl) btnEl.style.display = selectedColumnsForDeletion.size > 0 ? 'inline-flex' : 'none';
+};
+
+window.deleteSelectedColumns = async () => {
+    if (state.userRole !== 'Admin') { showToast("Only Admin can delete columns"); return; }
+    if (!canInsertDelete()) { showToast("You do not have permission to delete columns"); return; }
+    if (selectedColumnsForDeletion.size === 0) return;
+    
+    const count = selectedColumnsForDeletion.size;
+    if (!confirm(`Are you sure you want to permanently delete ${count} column${count > 1 ? 's' : ''}? This action cannot be undone.`)) return;
+    
+    // Group by context and collect indices to delete (sort descending so splice doesn't shift indices)
+    const byContext = {};
+    selectedColumnsForDeletion.forEach(key => {
+        const [ctx, idx] = key.split(':');
+        if (!byContext[ctx]) byContext[ctx] = [];
+        byContext[ctx].push(parseInt(idx));
+    });
+    
+    for (const ctx in byContext) {
+        byContext[ctx].sort((a, b) => b - a); // descending order
+        for (const idx of byContext[ctx]) {
+            if (state.customColumns[ctx] && state.customColumns[ctx][idx]) {
+                state.customColumns[ctx].splice(idx, 1);
+            }
+        }
+        await saveAndRefreshColumns(ctx, `${byContext[ctx].length} column(s) removed from ${ctx}`);
+    }
+    
+    selectedColumnsForDeletion.clear();
+    if (activeColumnContext) openAddColumnModal(activeColumnContext);
+};
+
+window.closeColumnModal = () => { document.getElementById('add-column-modal').style.display = 'none'; document.getElementById('new-col-name').value = ''; activeColumnContext = null; selectedColumnsForDeletion.clear(); };
+
 window.executeAddColumn = async () => { 
+    if (state.userRole !== 'Admin') { showToast("Only Admin can add columns"); return; }
+    if (!canInsertDelete()) { showToast("You do not have permission to modify columns"); return; }
     const name = document.getElementById('new-col-name').value.trim(); const type = document.getElementById('new-col-type').value; 
     if (!name || !activeColumnContext) return; 
     const key = name.toLowerCase().replace(/[^a-zA-Z0-9]+(.)/g, (m, chr) => chr.toUpperCase()); 
@@ -1080,15 +1655,34 @@ window.executeAddColumn = async () => {
     state.customColumns[activeColumnContext].push({ name, key, type }); 
     await saveAndRefreshColumns(activeColumnContext, `Column "${name}" Added`); 
     document.getElementById('new-col-name').value = ''; openAddColumnModal(activeColumnContext); 
+    // Ensure insert buttons remain visible after table re-render
+    ensureInsertButtonsVisible();
 };
 window.deleteCustomColumn = async (context, index) => { 
-    if (!confirm("Delete this column? (Data will remain in database but be hidden)")) return; 
+    if (state.userRole !== 'Admin') { showToast("Only Admin can delete columns"); return; }
+    if (!canInsertDelete()) { showToast("You do not have permission to delete columns"); return; }
+    const colName = state.customColumns[context]?.[index]?.name || 'this column';
+    if (!confirm(`Are you sure you want to permanently delete the "${colName}" column? This action cannot be undone.`)) return; 
     state.customColumns[context].splice(index, 1); 
     await saveAndRefreshColumns(context, "Column Removed"); openAddColumnModal(context); 
+    ensureInsertButtonsVisible();
 };
 async function saveAndRefreshColumns(context, msg) { 
     try { await db.collection('settings').doc('table_config').set({ [context]: state.customColumns[context] }, { merge: true }); showToast(msg); refreshViewForType(context); } 
     catch(e) { console.error(e); showToast("Error saving configuration"); } 
+}
+
+// Ensure insert row buttons stay visible for Admin/Manager after any table re-render
+function ensureInsertButtonsVisible() {
+    if (state.userRole === 'Admin' || state.userRole === 'Manager') {
+        // Show all insert buttons
+        document.querySelectorAll('button.btn-insert').forEach(btn => {
+            btn.style.display = 'inline-flex';
+        });
+        // Specifically ensure placement insert button is visible
+        const placementBtn = document.querySelector('button[onclick="manualAddPlacement()"]');
+        if (placementBtn) placementBtn.style.display = 'inline-flex';
+    }
 }
 
 window.toggleSelect = (id, type) => { if(!state.selection[type]) state.selection[type] = new Set(); if(state.selection[type].has(id)) state.selection[type].delete(id); else state.selection[type].add(id); updateSelectButtons(type); refreshViewForType(type); };
@@ -1128,7 +1722,7 @@ function updateSelectButtons(type) {
     
     if (!btn) return; 
     
-    if (state.selection[type] && state.selection[type].size > 0 && state.userRole === 'Admin') { 
+    if (state.selection[type] && state.selection[type].size > 0 && (state.userRole === 'Admin' || state.userRole === 'Manager')) { 
         btn.style.display = 'inline-flex'; 
         btn.style.opacity = '1'; 
         if(countSpan) countSpan.innerText = state.selection[type].size; 
@@ -1144,7 +1738,8 @@ window.closeDeleteModal = () => { document.getElementById('delete-modal').style.
 
 window.executeDelete = async () => {
     const type = state.pendingDelete.type; closeDeleteModal(); if(!type) return; 
-    if (state.userRole !== 'Admin') { showToast("Only Admin can delete records"); return; }
+    if (state.userRole !== 'Admin' && state.userRole !== 'Manager') { showToast("Only Admin and Manager can delete records"); return; }
+    if (!canInsertDelete()) { showToast("You do not have permission to delete records"); return; }
     let col = (type==='cand') ? 'candidates' : (type==='hub' ? 'candidates' : (type==='place' ? 'placements' : (type==='emp'?'employees':'onboarding')));
     const ids = Array.from(state.selection[type]);
     
@@ -1160,6 +1755,7 @@ window.executeDelete = async () => {
 
 window.moveToPlacements = async (id) => {
     const cand = state.candidates.find(c => c.id === id); if(!cand) return;
+    if (!canModifyRecord(cand)) { showToast("Only the assigned recruiter can modify this record"); const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show'); return; }
     const menu = document.getElementById(`menu-${id}`); if(menu) menu.classList.remove('show');
     document.querySelector(`tr[data-id="${id}"]`)?.remove(); 
     try { 
@@ -1171,7 +1767,7 @@ window.moveToPlacements = async (id) => {
     } catch(e) { console.error("Error moving to placements:", e); showToast("Move failed"); }
 };
 
-window.deletePlacement = async (id) => { if(confirm("Remove this placement?")) { await db.collection('placements').doc(id).delete(); showToast("Placement removed"); } };
+window.deletePlacement = async (id) => { if(state.userRole !== 'Admin' && state.userRole !== 'Manager') { showToast("Only Admin and Manager can delete placements"); return; } if(!canInsertDelete()) { showToast("You do not have permission to delete records"); return; } if(confirm("Remove this placement?")) { await db.collection('placements').doc(id).delete(); showToast("Placement removed"); } };
 
 /* ==========================================================================
    12. GMAIL ENGINE
@@ -1396,6 +1992,8 @@ function setupEventListeners() {
             }
 
             if(targetId === 'view-dashboard') updateDashboardStats();
+            if(targetId === 'view-access-control') renderAccessControlTable();
+            if(targetId === 'view-notifications') renderNotifications();
         });
     });
 
@@ -1451,6 +2049,11 @@ function setupEventListeners() {
     document.getElementById('hub-search-input')?.addEventListener('input', e => { state.hubFilters.text = e.target.value.toLowerCase(); renderHubTable(); });
     document.getElementById('emp-search-input')?.addEventListener('input', e => { state.empFilters.text = e.target.value.toLowerCase(); renderEmployeeTable(); });
     document.getElementById('onb-search-input')?.addEventListener('input', e => { state.onbFilters.text = e.target.value.toLowerCase(); renderOnboardingTable(); });
+    
+    // Access Control search & filter listeners
+    document.getElementById('ac-search-input')?.addEventListener('input', () => renderAccessControlTable());
+    document.getElementById('ac-role-filter')?.addEventListener('change', () => renderAccessControlTable());
+    document.getElementById('ac-status-filter')?.addEventListener('change', () => renderAccessControlTable());
 
     // Connect Dropdown Filters
     document.getElementById('filter-recruiter')?.addEventListener('change', e => { state.filters.recruiter = e.target.value; renderCandidateTable(); });
@@ -1534,11 +2137,11 @@ window.handleDrop = async (e, collection) => {
    15. HUB SPECIFIC HELPERS
    ========================================================================== */
 window.triggerHubNote = async (id, type) => {
-    const note = prompt("Enter manual activity note:");
-    if(!note || note.trim() === "") return;
-    
     let cand = state.candidates.find(c => c.id === id);
     if(!cand) return showToast("Record not found", "error");
+    if (!canModifyRecord(cand)) { showToast("Only the assigned recruiter can modify this record"); return; }
+    
+    const note = prompt("Enter manual activity note:");
 
     let logs = cand[type] || [];
     logs.push({ 
@@ -1557,9 +2160,10 @@ window.triggerHubNote = async (id, type) => {
 };
 
 window.deleteHubLog = async (id, type, index) => {
-    if(!confirm("Delete this log entry?")) return;
     let cand = state.candidates.find(c => c.id === id);
     if(!cand) return;
+    if (!canModifyRecord(cand)) { showToast("Only the assigned recruiter can modify this record"); return; }
+    if(!confirm("Delete this log entry?")) return;
 
     let logs = [...(cand[type] || [])];
     logs.splice(index, 1);
