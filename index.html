@@ -187,7 +187,7 @@
               <div class="pulse-dot"></div><span id="header-updated" class="status-text">Synced</span>
             </div>
             <div class="user-controls-pill">
-              <button id="theme-toggle" class="control-icon"><i class="fa-solid fa-circle-half-stroke"></i></button>
+              <button id="theme-toggle" class="control-icon"><i class="fa-solid fa-moon"></i></button>
               <div class="user-info-group">
                 <div class="user-avatar-small"><i class="fa-solid fa-user"></i></div>
                 <span id="display-username" class="user-name">User</span>
@@ -313,7 +313,7 @@
         <div id="view-placements" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="manualAddPlacement()">
+              <button class="btn-insert" onclick="manualAddPlacement()" style="display:none;">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
          
@@ -601,9 +601,13 @@
           if (checkbox.checked) {
               document.body.classList.remove('light-mode');
               localStorage.setItem('np_theme', 'dark');
+              const ti = document.getElementById('theme-toggle');
+              if(ti) { const i = ti.querySelector('i'); if(i) i.className = 'fa-solid fa-moon'; }
           } else {
               document.body.classList.add('light-mode');
               localStorage.setItem('np_theme', 'light');
+              const ti = document.getElementById('theme-toggle');
+              if(ti) { const i = ti.querySelector('i'); if(i) i.className = 'fa-solid fa-sun'; }
           }
       }
   </script>
