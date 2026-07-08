@@ -323,8 +323,8 @@ body.light-mode .kpi-value { background: none; -webkit-text-fill-color: var(--te
     box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
 }
 
-.large-chart { flex: 2 1 450px; }
-.small-chart { flex: 1 1 250px; }
+.large-chart { flex: 2 1 100px; }
+.small-chart { flex: 3 1 450px; }
 
 .chart-top { margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid var(--glass-border); }
 .chart-top h4 { margin: 0; color: var(--text-main); font-size: 1rem; font-weight: 600; }
