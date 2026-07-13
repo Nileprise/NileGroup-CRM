@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>NILEGROUP CRM | Unified Portal v11</title>
+  <title>NILEGROUP CRM | Unified Portal</title>
 
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -110,8 +110,6 @@
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">GROUP</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
           <button class="nav-item active" data-target="view-dashboard"><i class="fa-solid fa-chart-pie"></i> <span>Overview</span></button>
-          <button class="nav-item" data-target="view-access-control" id="nav-access-control"><i class="fa-solid fa-shield-halved"></i> <span>Access Control</span></button>
-          <button class="nav-item" data-target="view-notifications" id="nav-notifications" style="position:relative;"><i class="fa-solid fa-bell"></i> <span>Notifications</span><span id="notif-badge" style="display:none; position:absolute; top:2px; right:2px; background:var(--danger); color:#fff; font-size:0.6rem; min-width:16px; height:16px; border-radius:50%; display:none; align-items:center; justify-content:center; padding:0 4px;">0</span></button>
           
           <div class="nav-item" style="cursor: default;" onclick="toggleGmailMenu()">
               <i class="fa-brands fa-google"></i>
@@ -189,7 +187,7 @@
               <div class="pulse-dot"></div><span id="header-updated" class="status-text">Synced</span>
             </div>
             <div class="user-controls-pill">
-              <button id="theme-toggle" class="control-icon"><i class="fa-solid fa-moon"></i></button>
+              <button id="theme-toggle" class="control-icon"><i class="fa-solid fa-circle-half-stroke"></i></button>
               <div class="user-info-group">
                 <div class="user-avatar-small"><i class="fa-solid fa-user"></i></div>
                 <span id="display-username" class="user-name">User</span>
@@ -315,7 +313,7 @@
         <div id="view-placements" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="manualAddPlacement()" style="display:none;">
+              <button class="btn-insert" onclick="manualAddPlacement()">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
          
@@ -434,56 +432,6 @@
               <table class="modern-table" id="onboarding-table"><thead id="onboarding-table-head"></thead><tbody id="onboarding-table-body"></tbody></table>
             </div>
             <div class="footer-count"><small id="onb-footer-count">Showing records</small></div>
-          </div>
-        </div>
-
-        <div id="view-access-control" class="content-view">
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
-            <h2 style="color:var(--primary); margin:0;"><i class="fa-solid fa-shield-halved"></i> Access Control</h2>
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="ac-search-input" placeholder="Search users..." style="background:transparent; border:none; color:var(--text-main); outline:none; width:150px;"></div>
-              <select id="ac-role-filter" class="modern-select" style="padding:6px 10px; border-radius:8px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main);">
-                <option value="">All Roles</option>
-                <option value="Admin">Admin</option>
-                <option value="Manager">Manager</option>
-                <option value="Employee">Employee</option>
-              </select>
-              <select id="ac-status-filter" class="modern-select" style="padding:6px 10px; border-radius:8px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main);">
-                <option value="">All Status</option>
-                <option value="approved">Approved</option>
-                <option value="pending">Pending</option>
-                <option value="rejected">Rejected</option>
-              </select>
-            </div>
-          </div>
-          <div class="glass-panel" style="padding:0; overflow:hidden;">
-            <div class="table-wrapper">
-              <table class="modern-table" id="access-control-table">
-                <thead id="ac-table-head">
-                  <tr>
-                    <th style="width:40px;">#</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Access Level</th>
-                    <th style="text-align:center;">Read</th>
-                    <th style="text-align:center;">Edit</th>
-                    <th style="text-align:center;">Insert/Delete</th>
-                    <th>Status</th>
-                    <th style="text-align:center;">Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="ac-table-body"></tbody>
-              </table>
-            </div>
-          </div>
-          <div class="footer-count" style="margin-top:10px;"><small id="ac-footer-count">Loading users...</small></div>
-        </div>
-
-        <div id="view-notifications" class="content-view">
-          <h2 style="color:var(--primary); margin-bottom:20px;"><i class="fa-solid fa-bell"></i> Notifications</h2>
-          <div id="notifications-container" style="display:flex; flex-direction:column; gap:12px;">
-            <div style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fa-solid fa-bell-slash" style="font-size:2rem; margin-bottom:10px; opacity:0.5;"></i><p>Loading notifications...</p></div>
           </div>
         </div>
 
@@ -609,7 +557,7 @@
       <h3 style="margin-bottom: 15px; color: var(--text-main);">Add New Column</h3>
       <div class="input-group-modern">
         <label>Column Name</label>
-        <input type="text" id="new-col-name" class="modal-input" placeholder="e.g. Visa Status, Skype ID">
+        <input type="text" id="new-col-name" class="modal-input" placeholder="e.g. Visa Status, Skype ID" onkeydown="if(event.key==='Enter') executeAddColumn()">
       </div>
       <div class="input-group-modern">
         <label>Data Type</label>
@@ -622,7 +570,7 @@
       </div>
       <div class="modal-actions">
         <button class="btn-text" onclick="closeColumnModal()">Cancel</button>
-        <button class="btn-primary" onclick="executeAddColumn()">Add Column</button>
+        <button class="btn-primary" id="btn-add-column-confirm" onclick="executeAddColumn()">Add Column</button>
       </div>
     </div>
   </div>
@@ -653,13 +601,9 @@
           if (checkbox.checked) {
               document.body.classList.remove('light-mode');
               localStorage.setItem('np_theme', 'dark');
-              const ti = document.getElementById('theme-toggle');
-              if(ti) { const i = ti.querySelector('i'); if(i) i.className = 'fa-solid fa-moon'; }
           } else {
               document.body.classList.add('light-mode');
               localStorage.setItem('np_theme', 'light');
-              const ti = document.getElementById('theme-toggle');
-              if(ti) { const i = ti.querySelector('i'); if(i) i.className = 'fa-solid fa-sun'; }
           }
       }
   </script>
