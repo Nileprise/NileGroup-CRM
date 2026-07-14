@@ -53,6 +53,9 @@ const state = {
     employees: [],
     placements: [],
     allUsers: [],
+    accessUsers: [],
+    notifications: [],
+    acFilters: { text: '', role: '', status: '' },
     hubData: [],
     labels: [],
     selectedLabelColor: '#e91e63',
@@ -121,7 +124,9 @@ const dom = {
         onboarding: document.getElementById('view-onboarding'),
         settings: document.getElementById('view-settings'),
         profile: document.getElementById('view-profile'),
-        placements: document.getElementById('view-placements')
+        placements: document.getElementById('view-placements'),
+        accessControl: document.getElementById('view-access-control'),
+        notifications: document.getElementById('view-notifications')
     },
     headerUpdated: document.getElementById('header-updated'),
     gmail: {
@@ -141,6 +146,7 @@ function init() {
         if(doc.exists) {
             const data = doc.data();
             if(data.colOrders) state.colOrders = data.colOrders;
+            if(data.alignments) state.alignments = { ...state.alignments, ...data.alignments };
             if(data.candidates) state.customColumns.candidates = data.candidates;
             if(data.employees) state.customColumns.employees = data.employees;
             if(data.onboarding) state.customColumns.onboarding = data.onboarding;
@@ -425,18 +431,80 @@ function initRealtimeListeners() {
         console.log("Placement access restricted"); 
     });
 
-    // USERS (For Birthdays)
+    // USERS (Birthdays + Access Control)
     db.collection('users').onSnapshot(snap => {
         state.allUsers = [];
+        state.accessUsers = [];
         snap.forEach(doc => {
-            const data = doc.data();
-            const fullName = (data.firstName && data.lastName) 
-                                ? `${data.firstName} ${data.lastName}` 
-                                : (data.displayName || 'Staff Member');
-            state.allUsers.push({ id: doc.id, name: fullName, dob: data.dob });
+            const data = doc.data() || {};
+            const email = doc.id;
+            const fullName = (data.firstName && data.lastName)
+                ? `${data.firstName} ${data.lastName}`
+                : (data.displayName || data.firstName || email || 'Staff Member');
+            state.allUsers.push({ id: email, name: fullName, dob: data.dob });
+
+            const role = data.role || (ALLOWED_USERS[email] ? ALLOWED_USERS[email].role : 'Employee');
+            const isPrivileged = role === 'Admin' || role === 'Manager';
+            const perms = data.permissions || {
+                read: true,
+                edit: isPrivileged,
+                insert: isPrivileged,
+                delete: role === 'Admin'
+            };
+            state.accessUsers.push({
+                id: email,
+                email,
+                firstName: data.firstName || '',
+                lastName: data.lastName || '',
+                name: fullName,
+                role,
+                status: data.status || 'approved',
+                permissions: {
+                    read: perms.read !== false,
+                    edit: !!perms.edit,
+                    insert: !!perms.insert,
+                    delete: !!perms.delete
+                },
+                photoURL: data.photoURL || '',
+                createdAt: data.createdAt || 0
+            });
         });
         checkBirthdays();
+        renderAccessControlTable();
+    }, (error) => {
+        console.log("Users access restricted", error);
     });
+
+    // NOTIFICATIONS (per-user)
+    if (state.user && state.user.email) {
+        db.collection('notifications')
+            .where('userEmail', '==', state.user.email.toLowerCase())
+            .orderBy('createdAt', 'desc')
+            .limit(50)
+            .onSnapshot(snap => {
+                state.notifications = [];
+                snap.forEach(doc => state.notifications.push({ id: doc.id, ...doc.data() }));
+                updateNotificationBadge();
+                if (document.getElementById('view-notifications')?.classList.contains('active')) {
+                    renderNotifications();
+                }
+            }, (err) => {
+                // Fallback without orderBy if composite index is missing
+                console.warn("Notifications ordered query failed, falling back:", err);
+                db.collection('notifications')
+                    .where('userEmail', '==', state.user.email.toLowerCase())
+                    .limit(50)
+                    .onSnapshot(snap2 => {
+                        state.notifications = [];
+                        snap2.forEach(doc => state.notifications.push({ id: doc.id, ...doc.data() }));
+                        state.notifications.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                        updateNotificationBadge();
+                        if (document.getElementById('view-notifications')?.classList.contains('active')) {
+                            renderNotifications();
+                        }
+                    }, e2 => console.log("Notifications access restricted", e2));
+            });
+    }
 
     loadCustomColumns();
 }
@@ -486,7 +554,8 @@ function loadCustomColumns() {
             if(data.employees) state.customColumns.employees = data.employees; 
             if(data.onboarding) state.customColumns.onboarding = data.onboarding; 
             if(data.placements) state.customColumns.placements = data.placements; 
-            if(data.colOrders) state.colOrders = data.colOrders; 
+            if(data.colOrders) state.colOrders = data.colOrders;
+            if(data.alignments) state.alignments = { ...state.alignments, ...data.alignments };
             if(data.onboardingStatuses) state.onboardingStatuses = data.onboardingStatuses;
             renderCandidateTable(); 
             renderEmployeeTable(); 
@@ -511,9 +580,28 @@ function renderDropdowns() {
     }); 
 }
 
-window.generateRecruiterDropdown = (currentVal, id, collection) => { const list = state.metadata.recruiters || []; const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()" ${!canEdit() ? 'disabled' : ''}><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`; };
+function dropdownMinWidth(labels, minPx = 140, maxPx = 280) {
+    const longest = (labels || []).reduce((m, s) => Math.max(m, String(s || '').length), 8);
+    // ~8.5px per character + padding; clamp for readability
+    return Math.min(maxPx, Math.max(minPx, longest * 8.5 + 36));
+}
+window.generateRecruiterDropdown = (currentVal, id, collection) => {
+    const list = state.metadata.recruiters || [];
+    const labels = list.map(r => r.display || r.value);
+    if (currentVal) labels.push(currentVal);
+    const w = dropdownMinWidth(labels, 160, 260);
+    const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join('');
+    return `<select class="status-select table-select-auto" style="width:100%; min-width:${w}px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()" ${!canEdit() ? 'disabled' : ''}><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`;
+};
 window.updateRecruiter = (id, collection, val) => { const oldVal = getOldValue(collection, id, 'recruiter'); pushToHistory(collection, id, 'recruiter', oldVal, val); db.collection(collection).doc(id).update({ recruiter: val }).then(() => showToast("Recruiter Auto-Saved")); };
-window.generateTechDropdown = (currentVal, id, collection) => { const list = state.metadata.techs || []; if(currentVal && !list.includes(currentVal)) list.push(currentVal); list.sort(); const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join(''); return `<select class="status-select" style="width:100%; min-width:100px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()" ${!canEdit() ? 'disabled' : ''}><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`; };
+window.generateTechDropdown = (currentVal, id, collection) => {
+    const list = state.metadata.techs || [];
+    if (currentVal && !list.includes(currentVal)) list.push(currentVal);
+    list.sort();
+    const w = dropdownMinWidth(list, 150, 240);
+    const options = list.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join('');
+    return `<select class="status-select table-select-auto" style="width:100%; min-width:${w}px; color:var(--primary); font-weight:bold;" onchange="updateTech('${id}', '${collection}', this.value)" onclick="event.stopPropagation()" ${!canEdit() ? 'disabled' : ''}><option value="" ${!currentVal ? 'selected' : ''}>Select Tech</option>${options}</select>`;
+};
 window.updateTech = (id, collection, val) => { const oldVal = getOldValue(collection, id, 'tech'); pushToHistory(collection, id, 'tech', oldVal, val); db.collection(collection).doc(id).update({ tech: val }).then(() => showToast("Tech Auto-Saved")); };
 
 /* ==========================================================================
@@ -564,7 +652,232 @@ function applyPermissionUI() {
     document.querySelectorAll('[id^="btn-delete-"]').forEach(btn => {
         if (!canDelete()) btn.style.display = 'none';
     });
+    // Access Control nav: Admin only
+    const acNav = document.getElementById('nav-access-control');
+    if (acNav) acNav.style.display = (state.userRole === 'Admin') ? '' : 'none';
 }
+
+/* ==========================================================================
+   ACCESS CONTROL + NOTIFICATIONS
+   ========================================================================== */
+function getAccessLevelLabel(perms) {
+    if (!perms) return 'Read Only';
+    if (perms.read && perms.edit && perms.insert && perms.delete) return 'Full Access';
+    if (perms.read && perms.edit && perms.insert) return 'Read + Edit + Insert';
+    if (perms.read && perms.edit) return 'Read + Edit';
+    if (perms.read && perms.insert) return 'Read + Insert';
+    if (perms.read) return 'Read Only';
+    return 'No Access';
+}
+
+function defaultPermsForRole(role) {
+    const isPrivileged = role === 'Admin' || role === 'Manager';
+    return {
+        read: true,
+        edit: isPrivileged,
+        insert: isPrivileged,
+        delete: role === 'Admin'
+    };
+}
+
+window.renderAccessControlTable = () => {
+    const tbody = document.getElementById('ac-table-body');
+    const footer = document.getElementById('ac-footer-count');
+    if (!tbody) return;
+
+    if (state.userRole !== 'Admin') {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:24px; color:var(--text-muted);">Admin access required</td></tr>`;
+        if (footer) footer.innerText = 'Access restricted';
+        return;
+    }
+
+    const text = (state.acFilters.text || '').toLowerCase();
+    const roleF = state.acFilters.role || '';
+    const statusF = state.acFilters.status || '';
+
+    let rows = [...(state.accessUsers || [])];
+    rows = rows.filter(u => {
+        const matchesText = !text || (u.name || '').toLowerCase().includes(text) || (u.email || '').toLowerCase().includes(text);
+        const matchesRole = !roleF || u.role === roleF;
+        const matchesStatus = !statusF || (u.status || 'approved') === statusF;
+        return matchesText && matchesRole && matchesStatus;
+    });
+    rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:24px; color:var(--text-muted);">No users found</td></tr>`;
+        if (footer) footer.innerText = 'Showing 0 users';
+        return;
+    }
+
+    tbody.innerHTML = rows.map((u, i) => {
+        const p = u.permissions || defaultPermsForRole(u.role);
+        const status = u.status || 'approved';
+        const statusClass = status === 'approved' ? 'active' : (status === 'pending' ? '' : 'inactive');
+        const statusColor = status === 'approved' ? 'var(--success)' : (status === 'pending' ? 'var(--accent)' : 'var(--danger)');
+        return `<tr data-id="${u.email}">
+            <td>${i + 1}</td>
+            <td style="font-weight:600; color:var(--text-main);">${u.name || '—'}</td>
+            <td style="color:var(--text-muted); font-size:0.85rem;">${u.email}</td>
+            <td>
+                <select class="status-select" style="min-width:110px;" onchange="updateAccessRole('${u.email}', this.value)">
+                    <option value="Admin" ${u.role === 'Admin' ? 'selected' : ''}>Admin</option>
+                    <option value="Manager" ${u.role === 'Manager' ? 'selected' : ''}>Manager</option>
+                    <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
+                </select>
+            </td>
+            <td style="font-size:0.8rem; color:var(--text-muted);">${getAccessLevelLabel(p)}</td>
+            <td style="text-align:center;"><input type="checkbox" ${p.read ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'read', this.checked)" title="Read"></td>
+            <td style="text-align:center;"><input type="checkbox" ${p.edit ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'edit', this.checked)" title="Edit"></td>
+            <td style="text-align:center;">
+                <div style="display:flex; gap:10px; justify-content:center; align-items:center;">
+                    <label style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:4px;" title="Insert"><input type="checkbox" ${p.insert ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'insert', this.checked)"> I</label>
+                    <label style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:4px;" title="Delete"><input type="checkbox" ${p.delete ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'delete', this.checked)"> D</label>
+                </div>
+            </td>
+            <td><span class="status-badge ${statusClass}" style="width:auto; min-width:80px; justify-content:center; color:${statusColor}; border-color:${statusColor}33;">${status}</span></td>
+            <td style="text-align:center;">
+                <div style="display:flex; gap:4px; justify-content:center;">
+                    ${status !== 'approved' ? `<button class="btn-icon-small" style="color:var(--success);" title="Approve" onclick="updateAccessStatus('${u.email}', 'approved')"><i class="fa-solid fa-check"></i></button>` : ''}
+                    ${status !== 'rejected' ? `<button class="btn-icon-small" style="color:var(--danger);" title="Reject" onclick="updateAccessStatus('${u.email}', 'rejected')"><i class="fa-solid fa-ban"></i></button>` : ''}
+                    ${status !== 'pending' ? `<button class="btn-icon-small" style="color:var(--accent);" title="Set Pending" onclick="updateAccessStatus('${u.email}', 'pending')"><i class="fa-solid fa-clock"></i></button>` : ''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    if (footer) footer.innerText = `Showing ${rows.length} user${rows.length === 1 ? '' : 's'}`;
+};
+
+window.updateAccessRole = async (email, role) => {
+    if (state.userRole !== 'Admin') { showToast("Admin only"); return; }
+    try {
+        const perms = defaultPermsForRole(role);
+        await db.collection('users').doc(email).set({ role, permissions: perms }, { merge: true });
+        showToast(`Role updated to ${role}`);
+        logActivity('edit', 'users', email, `Role changed to ${role}`).catch(() => {});
+        createNotification(email, 'Role Updated', `Your role has been changed to ${role}.`, 'role_change');
+    } catch (e) {
+        console.error(e);
+        showToast("Failed to update role: " + (e.message || ''));
+    }
+};
+
+window.updateAccessPermission = async (email, perm, value) => {
+    if (state.userRole !== 'Admin') { showToast("Admin only"); return; }
+    try {
+        const user = state.accessUsers.find(u => u.email === email);
+        const current = { ...(user?.permissions || defaultPermsForRole(user?.role || 'Employee')) };
+        current[perm] = !!value;
+        if ((current.edit || current.insert || current.delete) && !current.read) current.read = true;
+        await db.collection('users').doc(email).set({ permissions: current }, { merge: true });
+        showToast(`${perm.charAt(0).toUpperCase() + perm.slice(1)} ${value ? 'granted' : 'revoked'}`);
+        logActivity('edit', 'users', email, `Permission "${perm}" set to ${value}`).catch(() => {});
+        createNotification(email, 'Permissions Updated', `Your ${perm} permission was ${value ? 'granted' : 'revoked'}.`, 'permission_change');
+    } catch (e) {
+        console.error(e);
+        showToast("Failed to update permission: " + (e.message || ''));
+        renderAccessControlTable();
+    }
+};
+
+window.updateAccessStatus = async (email, status) => {
+    if (state.userRole !== 'Admin') { showToast("Admin only"); return; }
+    try {
+        await db.collection('users').doc(email).set({ status }, { merge: true });
+        showToast(`Status set to ${status}`);
+        logActivity('edit', 'users', email, `Status changed to ${status}`).catch(() => {});
+        createNotification(email, 'Access Status Updated', `Your account status is now: ${status}.`, 'status_change');
+    } catch (e) {
+        console.error(e);
+        showToast("Failed to update status: " + (e.message || ''));
+    }
+};
+
+async function createNotification(userEmail, title, message, type) {
+    if (!userEmail) return;
+    try {
+        await db.collection('notifications').add({
+            userEmail: userEmail.toLowerCase(),
+            title: title || 'Notification',
+            message: message || '',
+            type: type || 'info',
+            read: false,
+            createdAt: Date.now(),
+            createdBy: state.currentUserName || 'System'
+        });
+    } catch (e) {
+        console.warn('Notification create failed:', e);
+    }
+}
+
+function updateNotificationBadge() {
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    const unread = (state.notifications || []).filter(n => !n.read).length;
+    if (unread > 0) {
+        badge.style.display = '';
+        badge.innerText = unread > 99 ? '99+' : String(unread);
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+window.renderNotifications = () => {
+    const container = document.getElementById('notifications-container');
+    if (!container) return;
+    const list = state.notifications || [];
+    if (list.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fa-solid fa-bell-slash" style="font-size:2rem; margin-bottom:10px; opacity:0.5;"></i><p>No notifications yet</p></div>`;
+        return;
+    }
+    container.innerHTML = list.map(n => {
+        const ts = n.createdAt ? new Date(n.createdAt).toLocaleString() : '';
+        const unreadStyle = n.read ? 'opacity:0.7;' : 'border-left:3px solid var(--primary);';
+        return `<div class="glass-panel notif-card" style="padding:14px 16px; ${unreadStyle}">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+                <div>
+                    <div style="font-weight:600; color:var(--text-main); margin-bottom:4px;">${n.title || 'Notification'}</div>
+                    <div style="font-size:0.9rem; color:var(--text-muted);">${n.message || ''}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px; opacity:0.8;">${ts}${n.createdBy ? ' · ' + n.createdBy : ''}</div>
+                </div>
+                <div style="display:flex; gap:4px; flex-shrink:0;">
+                    ${!n.read ? `<button class="btn-icon-small" style="color:var(--primary);" title="Mark read" onclick="markNotificationRead('${n.id}')"><i class="fa-solid fa-check"></i></button>` : ''}
+                    <button class="btn-icon-small" style="color:var(--danger);" title="Dismiss" onclick="deleteNotification('${n.id}')"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+};
+
+window.markNotificationRead = async (id) => {
+    try {
+        await db.collection('notifications').doc(id).update({ read: true });
+    } catch (e) {
+        showToast("Failed to mark read");
+    }
+};
+
+window.markAllNotificationsRead = async () => {
+    const unread = (state.notifications || []).filter(n => !n.read);
+    if (unread.length === 0) { showToast("All caught up"); return; }
+    try {
+        const batch = db.batch();
+        unread.forEach(n => batch.update(db.collection('notifications').doc(n.id), { read: true }));
+        await batch.commit();
+        showToast("All notifications marked read");
+    } catch (e) {
+        showToast("Failed to mark all read");
+    }
+};
+
+window.deleteNotification = async (id) => {
+    try {
+        await db.collection('notifications').doc(id).delete();
+    } catch (e) {
+        showToast("Failed to dismiss");
+    }
+};
 
 function getRoleFilteredData(data, type) {
     if (!state.user) return data;
@@ -650,8 +963,25 @@ function updateDashboardStats() {
 /* ==========================================================================
    9. ALIGNMENT & COLUMN CONFIG
    ========================================================================== */
-window.cycleAlign = (context, colName) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context][colName] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context][colName] = next; refreshViewForType(context); };
-window.cycleAlignAll = (context) => { const modes = ['left', 'center', 'right']; const current = state.alignments[context]['global'] || 'left'; const next = modes[(modes.indexOf(current) + 1) % 3]; state.alignments[context]['global'] = next; refreshViewForType(context); showToast(`All columns aligned ${next}`); };
+window.cycleAlign = (context, colName) => {
+    const modes = ['left', 'center', 'right'];
+    if (!state.alignments[context]) state.alignments[context] = {};
+    const current = state.alignments[context][colName] || 'left';
+    const next = modes[(modes.indexOf(current) + 1) % 3];
+    state.alignments[context][colName] = next;
+    db.collection('settings').doc('table_config').set({ alignments: state.alignments }, { merge: true }).catch(() => {});
+    refreshViewForType(context);
+};
+window.cycleAlignAll = (context) => {
+    const modes = ['left', 'center', 'right'];
+    if (!state.alignments[context]) state.alignments[context] = {};
+    const current = state.alignments[context]['global'] || 'left';
+    const next = modes[(modes.indexOf(current) + 1) % 3];
+    state.alignments[context]['global'] = next;
+    db.collection('settings').doc('table_config').set({ alignments: state.alignments }, { merge: true }).catch(() => {});
+    refreshViewForType(context);
+    showToast(`All columns aligned ${next}`);
+};
 
 function applyAlignStyles(context, tableId) { 
     const table = document.getElementById(tableId); if (!table) return;
@@ -660,7 +990,16 @@ function applyAlignStyles(context, tableId) {
         const div = th.querySelector('[data-colname]');
         if (div) {
             const colName = div.dataset.colname; const val = config[colName] || config['global'] || 'left';
-            if (val !== 'left') { rules += `#${tableId} th:nth-child(${idx+1}), #${tableId} td:nth-child(${idx+1}) { text-align: ${val} !important; }\n`; }
+            // Apply to header, cell, and common controls so date inputs / selects respect alignment
+            rules += `#${tableId} th:nth-child(${idx+1}), #${tableId} td:nth-child(${idx+1}) { text-align: ${val} !important; }\n`;
+            rules += `#${tableId} td:nth-child(${idx+1}) .date-input-modern, #${tableId} td:nth-child(${idx+1}) .status-select, #${tableId} td:nth-child(${idx+1}) .table-select-auto, #${tableId} td:nth-child(${idx+1}) input[type="text"], #${tableId} td:nth-child(${idx+1}) input[type="date"] { text-align: ${val} !important; }\n`;
+            if (val === 'center') {
+                rules += `#${tableId} td:nth-child(${idx+1}) .date-input-modern, #${tableId} td:nth-child(${idx+1}) .status-select, #${tableId} td:nth-child(${idx+1}) .table-select-auto { margin-left: auto; margin-right: auto; display: block; }\n`;
+            } else if (val === 'right') {
+                rules += `#${tableId} td:nth-child(${idx+1}) .date-input-modern, #${tableId} td:nth-child(${idx+1}) .status-select, #${tableId} td:nth-child(${idx+1}) .table-select-auto { margin-left: auto; margin-right: 0; display: block; }\n`;
+            } else {
+                rules += `#${tableId} td:nth-child(${idx+1}) .date-input-modern, #${tableId} td:nth-child(${idx+1}) .status-select, #${tableId} td:nth-child(${idx+1}) .table-select-auto { margin-left: 0; margin-right: auto; display: block; }\n`;
+            }
         }
     });
     let style = document.getElementById(`align-style-${context}`); 
@@ -830,7 +1169,7 @@ function renderCandidateTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(c => state.selection.cand.has(c.id));
     const customHeaders = (state.customColumns.candidates || []).map(col => `<th>${thAlign(col.name, 'candidates')}</th>`).join('');
     
-    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
+    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All Columns"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th style="min-width:180px; width:200px;">${thAlign('Recruiter', 'candidates')}</th><th style="width: 140px;">${thAlign('Status', 'candidates')}</th><th style="min-width:150px; width:160px;">${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
     
     if(document.getElementById('cand-footer-count')) {
         document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} total records`;
@@ -840,12 +1179,12 @@ function renderCandidateTable() {
         const isSel = state.selection.cand.has(c.id) ? 'checked' : ''; const rowClass = state.selection.cand.has(c.id) ? 'selected-row' : '';
         const statusClass = c.status === 'Active' ? 'active' : 'inactive'; const statusLabel = c.status || 'Inactive';
         const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt;
-        const customCells = (state.customColumns.candidates || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'candidates', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="urlCellContextMenu('${c.id}', '${col.key}', 'candidates', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', '${col.key}', 'candidates', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'candidates', this)">${val || ''}</td>`; }).join('');
-        const gmailIcon = c.gmail ? `<a href="${c.gmail}" target="_blank" onclick="event.stopPropagation()"><i class="fa-brands fa-google icon-gmail link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="gmail" onclick="urlCellContextMenu('${c.id}', 'gmail', 'candidates', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', 'gmail', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
-        const linkedinIcon = c.linkedin ? `<a href="${c.linkedin}" target="_blank" onclick="event.stopPropagation()"><i class="fa-brands fa-linkedin icon-linkedin link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="linkedin" onclick="urlCellContextMenu('${c.id}', 'linkedin', 'candidates', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', 'linkedin', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
-        const resumeIcon = c.resume ? `<a href="${c.resume}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-file-lines icon-resume link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="resume" onclick="urlCellContextMenu('${c.id}', 'resume', 'candidates', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', 'resume', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
-        const trackIcon = c.track ? `<a href="${c.track}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-location-crosshairs icon-track link-icon-btn"></i></a>` : `<div class="link-icon-btn icon-empty" tabindex="0" data-field="track" onclick="urlCellContextMenu('${c.id}', 'track', 'candidates', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', 'track', 'candidates', this)"><i class="fa-solid fa-plus"></i></div>`;
-        return `<tr class="${rowClass}" data-id="${c.id}" data-collection="candidates" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'candidates')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'candidates')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td><td>${i+1}</td><td tabindex="0" data-field="first" id="fname-${c.id}" onclick="showCandidateQuickActions('${c.id}', event)" style="cursor:pointer;" ondblclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first} <i class="fa-solid fa-chevron-down" style="font-size:0.6rem; opacity:0.4; margin-left:2px;"></i></td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td><td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td><td tabindex="0" data-field="wa" ondblclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td><td tabindex="0" data-field="tech" ondblclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td><td style="overflow:visible;"><div class="action-dropdown-container"><div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div><div id="menu-${c.id}" class="custom-dropdown-menu"><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div><div class="dropdown-option" onclick="moveToPlacements('${c.id}')"><span class="dot-gold" style="width:8px; height:8px; background:#f59e0b; border-radius:50%; display:inline-block;"></span> Move to Placements</div><div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div></div></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td><td style="text-align:center;">${gmailIcon}</td><td style="text-align:center;">${linkedinIcon}</td><td style="text-align:center;">${resumeIcon}</td><td style="text-align:center;">${trackIcon}</td><td tabindex="0" data-field="comments" ondblclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||''}</td>${customCells}</tr>`;
+        const customCells = (state.customColumns.candidates || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'candidates', this.value)"></td>`; if(col.type === 'url') return renderUrlCell(c.id, col.key, 'candidates', val, 'fa-solid fa-link text-cyan', 'fa-solid fa-plus icon-empty'); return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'candidates', this)">${val || ''}</td>`; }).join('');
+        const gmailCell = renderUrlCell(c.id, 'gmail', 'candidates', c.gmail, 'fa-brands fa-google icon-gmail', 'fa-solid fa-plus icon-empty');
+        const linkedinCell = renderUrlCell(c.id, 'linkedin', 'candidates', c.linkedin, 'fa-brands fa-linkedin icon-linkedin', 'fa-solid fa-plus icon-empty');
+        const resumeCell = renderUrlCell(c.id, 'resume', 'candidates', c.resume, 'fa-solid fa-file-lines icon-resume', 'fa-solid fa-plus icon-empty');
+        const trackCell = renderUrlCell(c.id, 'track', 'candidates', c.track, 'fa-solid fa-location-crosshairs icon-track', 'fa-solid fa-plus icon-empty');
+        return `<tr class="${rowClass}" data-id="${c.id}" data-collection="candidates" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'candidates')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'candidates')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td><td>${i+1}</td><td tabindex="0" data-field="first" id="fname-${c.id}" onclick="showCandidateQuickActions('${c.id}', event)" style="cursor:pointer;" ondblclick="inlineEdit('${c.id}', 'first', 'candidates', this)">${c.first} <i class="fa-solid fa-chevron-down" style="font-size:0.6rem; opacity:0.4; margin-left:2px;"></i></td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td><td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td><td tabindex="0" data-field="wa" ondblclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td><td tabindex="0" data-field="tech" ondblclick="inlineEdit('${c.id}', 'tech', 'candidates', this)">${c.tech}</td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'candidates')}</td><td style="overflow:visible;"><div class="action-dropdown-container"><div class="status-badge ${statusClass}" onclick="toggleRowMenu('${c.id}')">${statusLabel} <i class="fa-solid fa-chevron-down" style="font-size:10px;"></i></div><div id="menu-${c.id}" class="custom-dropdown-menu"><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Active')"><span class="dot-green"></span> Set Active</div><div class="dropdown-option" onclick="updateStatusAndClose('${c.id}', 'Inactive')"><span class="dot-red"></span> Set Inactive</div><div class="dropdown-option" onclick="moveToPlacements('${c.id}')"><span class="dot-gold" style="width:8px; height:8px; background:#f59e0b; border-radius:50%; display:inline-block;"></span> Move to Placements</div><div class="dropdown-option" onclick="editCustomStatus('${c.id}')"><i class="fa-solid fa-pen"></i> Edit</div></div></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'candidates', this.value)"></td>${gmailCell}${linkedinCell}${resumeCell}${trackCell}<td tabindex="0" data-field="comments" ondblclick="inlineEdit('${c.id}', 'comments', 'candidates', this)">${c.comments||''}</td>${customCells}</tr>`;
     }).join('');
     
     restoreColumnOrder('candidates-table', 'candidates'); applyAlignStyles('candidates', 'candidates-table'); initColumnDragDrop('candidates-table', 'candidates');
@@ -862,13 +1201,13 @@ function renderEmployeeTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(e => state.selection.emp.has(e.id));
     const customHeaders = (state.customColumns.employees || []).map(col => `<th>${thAlign(col.name, 'employees')}</th>`).join('');
     
-    document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees')}</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th>${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th>${customHeaders}</tr>`;
+    document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('employees')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees')}</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th style="min-width:150px; width:160px;">${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th>${customHeaders}</tr>`;
     
     if(document.getElementById('emp-footer-count')) {
         document.getElementById('emp-footer-count').innerText = `Showing ${filtered.length} total records`;
     }
     
-    document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.emp.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="urlCellContextMenu('${c.id}', '${col.key}', 'employees', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', '${col.key}', 'employees', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="employees" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'employees')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'employees')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td tabindex="0" data-field="designation" ondblclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||''}</td><td tabindex="0" data-field="workMobile" ondblclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||''}</td><td tabindex="0" data-field="personalMobile" ondblclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||''}</td><td tabindex="0" data-field="officialEmail" ondblclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||''}</td><td tabindex="0" data-field="personalEmail" ondblclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||''}</td>${customCells}</tr>`; }).join('');
+    document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.emp.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.employees || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'employees', this.value)"></td>`; if(col.type === 'url') return renderUrlCell(c.id, col.key, 'employees', val, 'fa-solid fa-link text-cyan', 'fa-solid fa-plus icon-empty'); return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'employees', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.emp.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="employees" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'employees')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'employees')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'emp')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'employees', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'employees', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'employees', this.value)"></td><td tabindex="0" data-field="designation" ondblclick="inlineEdit('${c.id}', 'designation', 'employees', this)">${c.designation||''}</td><td tabindex="0" data-field="workMobile" ondblclick="inlineEdit('${c.id}', 'workMobile', 'employees', this)">${c.workMobile||''}</td><td tabindex="0" data-field="personalMobile" ondblclick="inlineEdit('${c.id}', 'personalMobile', 'employees', this)">${c.personalMobile||''}</td><td tabindex="0" data-field="officialEmail" ondblclick="inlineEdit('${c.id}', 'officialEmail', 'employees', this)">${c.officialEmail||''}</td><td tabindex="0" data-field="personalEmail" ondblclick="inlineEdit('${c.id}', 'personalEmail', 'employees', this)">${c.personalEmail||''}</td>${customCells}</tr>`; }).join('');
     
     restoreColumnOrder('employee-table', 'employees'); applyAlignStyles('employees', 'employee-table'); initColumnDragDrop('employee-table', 'employees');
 }
@@ -890,7 +1229,7 @@ function renderOnboardingTable() {
         document.getElementById('onb-footer-count').innerText = `Showing ${filtered.length} total records`;
     }
     
-    document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.onb.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="urlCellContextMenu('${c.id}', '${col.key}', 'onboarding', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', '${col.key}', 'onboarding', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="onboarding" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'onboarding')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'onboarding')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><div style="display:flex; align-items:center; gap:2px;"><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)">${state.onboardingStatuses.map(s => `<option value="${s}" ${c.status===s?'selected':''}>${s}</option>`).join('')}</select><i class="fa-solid fa-plus" style="cursor:default; color:var(--primary); padding:4px; font-size:0.75rem;" onclick="addOnboardingStatus()" title="Add New Status"></i></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td tabindex="0" data-field="comments" ondblclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||''}</td>${customCells}</tr>`; }).join('');
+    document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => { const isSel = state.selection.onb.has(c.id) ? 'checked' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.onboarding || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'onboarding', this.value)"></td>`; if(col.type === 'url') return renderUrlCell(c.id, col.key, 'onboarding', val, 'fa-solid fa-link text-cyan', 'fa-solid fa-plus icon-empty'); return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'onboarding', this)">${val || ''}</td>`; }).join(''); return `<tr class="${state.selection.onb.has(c.id) ? 'selected-row' : ''}" data-id="${c.id}" data-collection="onboarding" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'onboarding')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'onboarding')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'onb')"></td><td>${i+1}</td><td tabindex="0" data-field="first" ondblclick="inlineEdit('${c.id}', 'first', 'onboarding', this)">${c.first}</td><td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'onboarding', this)">${c.last}</td><td><input type="date" class="date-input-modern" value="${c.dob||''}" onchange="inlineDateEdit('${c.id}', 'dob', 'onboarding', this.value)"></td><td>${generateRecruiterDropdown(c.recruiter, c.id, 'onboarding')}</td><td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'onboarding', this)">${c.mobile}</td><td><div style="display:flex; align-items:center; gap:2px;"><select class="status-select ${c.status === 'Onboarding' ? 'active' : 'inactive'}" onchange="updateStatus('${c.id}', 'onboarding', this.value)">${state.onboardingStatuses.map(s => `<option value="${s}" ${c.status===s?'selected':''}>${s}</option>`).join('')}</select><i class="fa-solid fa-plus" style="cursor:default; color:var(--primary); padding:4px; font-size:0.75rem;" onclick="addOnboardingStatus()" title="Add New Status"></i></div></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'onboarding', this.value)"></td><td tabindex="0" data-field="comments" ondblclick="inlineEdit('${c.id}', 'comments', 'onboarding', this)">${c.comments||''}</td>${customCells}</tr>`; }).join('');
     
     restoreColumnOrder('onboarding-table', 'onboarding'); applyAlignStyles('onboarding', 'onboarding-table'); initColumnDragDrop('onboarding-table', 'onboarding');
 }
@@ -916,7 +1255,7 @@ function renderPlacementTable() {
     }
     
     if(document.getElementById('placement-table-body')) {
-        document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return `<td style="text-align:center;" tabindex="0" data-field="${col.key}" onclick="urlCellContextMenu('${c.id}', '${col.key}', 'placements', event)" ondblclick="event.stopPropagation(); inlineUrlEdit('${c.id}', '${col.key}', 'placements', this)">${val ? `<a href="${val}" target="_blank" onclick="event.stopPropagation()"><i class="fa-solid fa-link text-cyan"></i></a>` : `<i class="fa-solid fa-plus icon-empty"></i>`}</td>`; return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);"><input type="text" class="placement-text-input" value="${c.first||''}" onchange="inlineTextSave('${c.id}', 'first', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td style="font-weight:600; color:var(--text-main);"><input type="text" class="placement-text-input" value="${c.last||''}" onchange="inlineTextSave('${c.id}', 'last', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="text" class="placement-text-input text-cyan" value="${c.tech||''}" onchange="inlineTextSave('${c.id}', 'tech', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="text" class="placement-text-input" value="${c.location||''}" onchange="inlineTextSave('${c.id}', 'location', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="text" class="placement-text-input" value="${c.contract||''}" onchange="inlineTextSave('${c.id}', 'contract', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#22c55e;" title="Move Back to Candidates" onclick="moveBackToCandidates('${c.id}')"><i class="fa-solid fa-arrow-left-long"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
+        document.getElementById('placement-table-body').innerHTML = placed.map((c, i) => { const isSel = state.selection.place.has(c.id) ? 'checked' : ''; const rowClass = state.selection.place.has(c.id) ? 'selected-row' : ''; const orderVal = c.orderIndex !== undefined ? c.orderIndex : -c.createdAt; const customCells = (state.customColumns.placements || []).map(col => { const val = c[col.key] || ''; if(col.type === 'date') return `<td><input type="date" class="date-input-modern" value="${val}" onchange="inlineDateEdit('${c.id}', '${col.key}', 'placements', this.value)"></td>`; if(col.type === 'url') return renderUrlCell(c.id, col.key, 'placements', val, 'fa-solid fa-link text-cyan', 'fa-solid fa-plus icon-empty'); return `<td tabindex="0" data-field="${col.key}" ondblclick="inlineEdit('${c.id}', '${col.key}', 'placements', this)">${val || ''}</td>`; }).join(''); return `<tr class="${rowClass}" data-id="${c.id}" data-collection="placements" data-order="${orderVal}" draggable="true" ondragstart="handleDragStart(event, 'placements')" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'placements')"><td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td><td style="text-align:center;"><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'place')"></td><td>${i+1}</td><td style="font-weight:600; color:var(--text-main);"><input type="text" class="placement-text-input" value="${c.first||''}" onchange="inlineTextSave('${c.id}', 'first', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td style="font-weight:600; color:var(--text-main);"><input type="text" class="placement-text-input" value="${c.last||''}" onchange="inlineTextSave('${c.id}', 'last', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="text" class="placement-text-input text-cyan" value="${c.tech||''}" onchange="inlineTextSave('${c.id}', 'tech', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="text" class="placement-text-input" value="${c.location||''}" onchange="inlineTextSave('${c.id}', 'location', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="text" class="placement-text-input" value="${c.contract||''}" onchange="inlineTextSave('${c.id}', 'contract', 'placements', this)" onkeydown="if(event.key==='Enter') this.blur()"></td><td><input type="date" class="date-input-modern" value="${c.assigned}" onchange="inlineDateEdit('${c.id}', 'assigned', 'placements', this.value)"></td><td>${state.userRole !== 'Employee' ? `<button class="btn-icon-small" style="color:#22c55e;" title="Move Back to Candidates" onclick="moveBackToCandidates('${c.id}')"><i class="fa-solid fa-arrow-left-long"></i></button>` : ''}</td>${customCells}</tr>`; }).join('');
     }
     restoreColumnOrder('placement-table', 'placements'); applyAlignStyles('placements', 'placement-table'); initColumnDragDrop('placement-table', 'placements');
 }
@@ -936,7 +1275,7 @@ function renderHubTable() {
 
     const isAllChecked = activeCandidates.length > 0 && activeCandidates.every(c => state.selection.hub.has(c.id));
     
-    document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('hub')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'hub')}</th><th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th><th style="width:150px;">${thAlign('Recruiter', 'hub')}</th><th style="width:120px;">${thAlign('Technology', 'hub')}</th><th style="text-align:center;">${thAlign('Submission', 'hub')}</th><th style="text-align:center;">${thAlign('Screenings', 'hub')}</th><th style="text-align:center;">${thAlign('Interview', 'hub')}</th><th style="text-align:right;">${thAlign('Date', 'hub')}</th></tr>`;
+    document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('hub')" title="Add New Column"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'hub')}</th><th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th><th style="min-width:180px; width:200px;">${thAlign('Recruiter', 'hub')}</th><th style="min-width:160px; width:180px;">${thAlign('Technology', 'hub')}</th><th style="min-width:110px; width:120px; text-align:center;">${thAlign('Submission', 'hub')}</th><th style="min-width:110px; width:120px; text-align:center;">${thAlign('Screenings', 'hub')}</th><th style="min-width:110px; width:120px; text-align:center;">${thAlign('Interview', 'hub')}</th><th style="min-width:140px; width:150px; text-align:right;">${thAlign('Date', 'hub')}</th></tr>`;
     
     if(document.getElementById('hub-footer-count')) {
         document.getElementById('hub-footer-count').innerText = `Showing ${activeCandidates.length} active records`;
@@ -1193,274 +1532,265 @@ window.inlineDateEdit = (id, field, col, val) => {
 };
 
 /* ==========================================================================
-   11b. URL CELL MANAGEMENT — Paste, Copy, Edit & Delete
+   11b. URL CELL MANAGEMENT — Select, Open Icon, Edit Mode
    ========================================================================== */
 function isValidUrl(url) {
     if (!url) return false;
     try {
         const u = new URL(url);
         return u.protocol === 'http:' || u.protocol === 'https:';
-    } catch(e) {
+    } catch (e) {
         return false;
     }
 }
 
-let _urlCellContext = null;
+function normalizeUrlInput(raw) {
+    let url = (raw || '').trim();
+    if (!url) return '';
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    return url;
+}
 
-// Show the URL cell context menu (Paste / Copy / Edit / Delete)
-window.urlCellContextMenu = (id, field, col, event) => {
-    event.stopPropagation();
-    event.preventDefault();
-    closeUrlContextMenu();
-    
-    const oldVal = getOldValue(col, id, field) || '';
-    const hasUrl = oldVal.length > 0;
-    const canModify = canEdit();
-    const canAdd = canInsert();
-    
-    // If read-only, just open the URL if it exists
-    if (!canModify && !canAdd) {
-        if (hasUrl) window.open(oldVal, '_blank');
-        return;
-    }
-    
-    _urlCellContext = { id, field, col, oldVal };
-    
-    const menu = document.createElement('div');
-    menu.id = 'url-context-menu';
-    menu.className = 'url-context-menu';
-    
-    let actions = '';
-    // Paste (requires edit or insert)
-    if (canModify || canAdd) {
-        actions += `<div class="url-menu-item" onclick="event.stopPropagation(); pasteUrlCell()"><i class="fa-solid fa-paste"></i> Paste URL</div>`;
-    }
-    // Copy (always available if URL exists)
-    if (hasUrl) {
-        actions += `<div class="url-menu-item" onclick="event.stopPropagation(); copyUrlCell()"><i class="fa-solid fa-copy"></i> Copy URL</div>`;
-    }
-    // Edit (requires edit)
-    if (canModify) {
-        actions += `<div class="url-menu-item" onclick="event.stopPropagation(); editUrlCell()"><i class="fa-solid fa-pen"></i> Edit URL</div>`;
-    }
-    // Open in new tab (if URL exists)
-    if (hasUrl) {
-        actions += `<div class="url-menu-item" onclick="event.stopPropagation(); openUrlCell()"><i class="fa-solid fa-external-link"></i> Open Link</div>`;
-    }
-    // Delete (requires edit)
-    if (canModify && hasUrl) {
-        actions += `<div class="url-menu-item url-menu-danger" onclick="event.stopPropagation(); deleteUrlCell()"><i class="fa-solid fa-trash"></i> Delete URL</div>`;
-    }
-    
-    menu.innerHTML = actions;
-    document.body.appendChild(menu);
-    
-    // Position near the clicked cell
-    const rect = event.target.closest('td, div') || event.target.getBoundingClientRect();
-    const targetRect = (event.target.closest('td, div') || event.target).getBoundingClientRect();
-    menu.style.position = 'fixed';
-    menu.style.top = (targetRect.bottom + 4) + 'px';
-    menu.style.left = targetRect.left + 'px';
-    menu.style.zIndex = '10001';
-    
-    // Close on outside click
-    setTimeout(() => {
-        document.addEventListener('click', closeUrlContextMenu, { once: true });
-    }, 10);
-};
+function escapeHtmlAttr(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
 
-window.closeUrlContextMenu = () => {
-    const menu = document.getElementById('url-context-menu');
-    if (menu) menu.remove();
-};
+// Shared URL cell renderer for Gmail / LinkedIn / Resume / Track / custom URL columns
+function renderUrlCell(id, field, col, value, iconClass, emptyIconClass) {
+    const val = value || '';
+    const hasUrl = !!val;
+    const safeVal = escapeHtmlAttr(val);
+    const title = hasUrl ? safeVal : 'Add URL';
+    const contentIcon = hasUrl
+        ? `<i class="${iconClass || 'fa-solid fa-link text-cyan'}"></i>`
+        : `<i class="${emptyIconClass || 'fa-solid fa-plus icon-empty'}"></i>`;
+    const openBtn = hasUrl
+        ? `<button type="button" class="url-open-btn" title="${safeVal}" onclick="openUrlFromCell('${id}', '${field}', '${col}', event)" aria-label="Open link"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>`
+        : '';
+    return `<td class="url-cell" style="text-align:center;" tabindex="0" data-field="${field}" data-id="${id}" data-collection="${col}" data-url-type="true" title="${title}" onclick="selectUrlCell(this, event)" ondblclick="startUrlEdit('${id}', '${field}', '${col}', this, event)" onkeydown="handleUrlCellKeydown(event, '${id}', '${field}', '${col}', this)">
+        <div class="url-cell-inner">
+            <span class="url-cell-display">${contentIcon}<span class="url-placeholder">${hasUrl ? '' : 'Add URL'}</span></span>
+            ${openBtn}
+            <span class="url-save-status" aria-live="polite"></span>
+        </div>
+    </td>`;
+}
 
-// Paste URL from clipboard
-window.pasteUrlCell = async () => {
-    closeUrlContextMenu();
-    if (!_urlCellContext) return;
-    const { id, field, col, oldVal } = _urlCellContext;
-    
-    try {
-        const text = await navigator.clipboard.readText();
-        if (!text || !text.trim()) { showToast("Clipboard is empty"); return; }
-        let url = text.trim();
-        if (!url.startsWith('http')) url = 'https://' + url;
-        if (!isValidUrl(url)) { showToast("Invalid URL format"); return; }
-        
-        pushToHistory(col, id, field, oldVal, url);
-        await db.collection(col).doc(id).update({ [field]: url });
-        showToast("URL pasted successfully");
-        logActivity('edit', col, id, `URL field "${field}" pasted: ${url}`);
-    } catch(e) {
-        // Fallback: open edit mode for manual paste
-        showToast("Clipboard access denied — opening edit mode");
-        editUrlCell();
-    }
-};
-
-// Copy URL to clipboard
-window.copyUrlCell = async () => {
-    closeUrlContextMenu();
-    if (!_urlCellContext) return;
-    const { oldVal } = _urlCellContext;
-    
-    try {
-        await navigator.clipboard.writeText(oldVal);
-        showToast("URL copied to clipboard");
-    } catch(e) {
-        // Fallback
-        const ta = document.createElement('textarea');
-        ta.value = oldVal;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        showToast("URL copied to clipboard");
-    }
-};
-
-// Edit URL inline
-window.editUrlCell = () => {
-    closeUrlContextMenu();
-    if (!_urlCellContext) return;
-    if (!canEdit()) { showToast("Edit permission required"); return; }
-    const { id, field, col, oldVal } = _urlCellContext;
-    
-    // Find the cell element
-    const selector = `td[data-field="${field}"][tabindex], div[data-field="${field}"][tabindex]`;
-    const row = document.querySelector(`tr[data-id="${id}"]`);
-    if (!row) return;
-    const el = row.querySelector(`[data-field="${field}"]`);
+window.selectUrlCell = (el, event) => {
     if (!el) return;
-    
-    el.innerHTML = '';
+    // Ignore clicks on the open-link button
+    if (event && event.target.closest('.url-open-btn')) return;
+    if (el.querySelector('input.url-input-active')) return;
+    document.querySelectorAll('.url-cell.selected-url-cell').forEach(c => c.classList.remove('selected-url-cell'));
+    el.classList.add('selected-url-cell');
+    el.focus({ preventScroll: true });
+};
+
+window.openUrlFromCell = (id, field, col, event) => {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    // Never open while editing
+    const td = event && event.target.closest('td');
+    if (td && td.querySelector('input.url-input-active')) return;
+    const url = getOldValue(col, id, field) || '';
+    if (!url) { showToast('No URL saved'); return; }
+    if (!isValidUrl(url)) { showToast('Invalid URL — please edit and fix it'); return; }
+    window.open(url, '_blank', 'noopener,noreferrer');
+};
+
+window.startUrlEdit = (id, field, col, el, event) => {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    if (!canEdit() && !canInsert()) { showToast('Edit permission required'); return; }
+    const cell = el.closest ? el.closest('td') || el : el;
+    if (!cell || cell.querySelector('input.url-input-active')) return;
+
+    const oldVal = getOldValue(col, id, field) || '';
+    const statusEl = cell.querySelector('.url-save-status');
+    cell.classList.add('url-editing');
+    cell.classList.add('selected-url-cell');
+
     const input = document.createElement('input');
     input.type = 'url';
-    input.placeholder = 'https://...';
     input.className = 'url-input-active';
+    input.placeholder = 'https://...';
     input.value = oldVal;
-    
-    input.onclick = (e) => e.stopPropagation();
-    input.ondblclick = (e) => e.stopPropagation();
-    
-    const save = () => {
-        let newVal = input.value.trim();
-        if (newVal && !newVal.startsWith('http')) newVal = 'https://' + newVal;
-        if (newVal && !isValidUrl(newVal)) { showToast("Invalid URL format — must start with http:// or https://"); refreshViewForType(col); return; }
-        if (newVal !== oldVal) {
-            pushToHistory(col, id, field, oldVal, newVal);
-            db.collection(col).doc(id).update({ [field]: newVal }).then(() => {
-                showToast("URL saved successfully");
-                logActivity('edit', col, id, `URL field "${field}" changed from "${oldVal}" to "${newVal}"`);
-            });
-        } else {
-            refreshViewForType(col);
-        }
-    };
-    
-    input.addEventListener('blur', save);
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') input.blur();
-        if (e.key === 'Escape') refreshViewForType(col);
-    });
-    
-    el.appendChild(input);
+    input.setAttribute('data-old-value', oldVal);
+    input.setAttribute('spellcheck', 'false');
+
+    // Replace display with input; keep open button hidden while editing
+    const inner = cell.querySelector('.url-cell-inner') || cell;
+    const display = cell.querySelector('.url-cell-display');
+    const openBtn = cell.querySelector('.url-open-btn');
+    if (display) display.style.display = 'none';
+    if (openBtn) openBtn.style.display = 'none';
+    if (statusEl) statusEl.textContent = '';
+    inner.insertBefore(input, statusEl || null);
+
     input.focus();
     input.select();
-};
 
-// Open URL in new tab
-window.openUrlCell = () => {
-    closeUrlContextMenu();
-    if (!_urlCellContext) return;
-    const { oldVal } = _urlCellContext;
-    if (oldVal) window.open(oldVal, '_blank');
-};
+    let cancelled = false;
+    let saving = false;
 
-// Delete URL with confirmation
-window.deleteUrlCell = async () => {
-    closeUrlContextMenu();
-    if (!_urlCellContext) return;
-    if (!canEdit()) { showToast("Edit permission required"); return; }
-    const { id, field, col, oldVal } = _urlCellContext;
-    
-    if (!confirm("Delete this URL?")) return;
-    
-    try {
-        await db.collection(col).doc(id).update({ [field]: firebase.firestore.FieldValue.delete() });
-        showToast("URL deleted successfully");
-        logActivity('edit', col, id, `URL field "${field}" deleted (was: ${oldVal})`);
-    } catch(e) {
-        showToast("Failed to delete URL");
-        console.error(e);
-    }
-};
+    const restore = () => {
+        cell.classList.remove('url-editing');
+        // Table re-render is preferred after save; for cancel restore local UI
+        if (display) display.style.display = '';
+        if (openBtn) openBtn.style.display = '';
+        if (input.parentNode) input.remove();
+    };
 
-// Global keyboard shortcuts for URL cells
-document.addEventListener('keydown', (e) => {
-    // Only handle when a URL cell is focused (has tabindex and data-field)
-    const focused = document.activeElement;
-    if (!focused || !focused.dataset || !focused.dataset.field) return;
-    // Only for URL-type cells (link-icon-btn or icon-empty parent)
-    const cell = focused.closest('td[data-field], div[data-field]');
-    if (!cell) return;
-    const field = focused.dataset.field || cell.dataset.field;
-    if (!field) return;
-    // Check if it's a URL field (gmail, linkedin, resume, track, or custom url column)
-    const urlFields = ['gmail', 'linkedin', 'resume', 'track'];
-    const isUrlCell = urlFields.includes(field) || cell.querySelector('a[href]') || cell.querySelector('.icon-empty') || cell.querySelector('.link-icon-btn');
-    if (!isUrlCell && focused.tagName !== 'INPUT') return;
-    
-    // Ctrl+V → Paste
-    if ((e.ctrlKey || e.metaKey) && e.key === 'v' && canEdit()) {
-        // Let browser handle paste in input fields; for cells, trigger paste
-        if (focused.tagName !== 'INPUT') {
-            e.preventDefault();
-            const row = focused.closest('tr');
-            if (!row) return;
-            const id = row.dataset.id;
-            const col = row.dataset.collection;
-            _urlCellContext = { id, field, col, oldVal: getOldValue(col, id, field) || '' };
-            pasteUrlCell();
+    const cancel = () => {
+        cancelled = true;
+        restore();
+        cell.focus({ preventScroll: true });
+    };
+
+    const save = async () => {
+        if (cancelled || saving) return;
+        let newVal = normalizeUrlInput(input.value);
+        if (newVal && !isValidUrl(newVal)) {
+            if (statusEl) statusEl.innerHTML = '<span class="url-status-error">Invalid URL</span>';
+            showToast('Invalid URL format — must start with http:// or https://');
+            input.focus();
+            input.select();
+            // Keep edit mode open until corrected
+            return;
         }
-    }
-    // Ctrl+C → Copy
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && focused.tagName !== 'INPUT') {
-        e.preventDefault();
-        const row = focused.closest('tr');
-        if (!row) return;
-        const id = row.dataset.id;
-        const col = row.dataset.collection;
-        _urlCellContext = { id, field, col, oldVal: getOldValue(col, id, field) || '' };
-        copyUrlCell();
-    }
-    // Delete/Backspace → Clear URL
-    if ((e.key === 'Delete' || e.key === 'Backspace') && focused.tagName !== 'INPUT' && canEdit()) {
-        e.preventDefault();
-        const row = focused.closest('tr');
-        if (!row) return;
-        const id = row.dataset.id;
-        const col = row.dataset.collection;
-        _urlCellContext = { id, field, col, oldVal: getOldValue(col, id, field) || '' };
-        if (_urlCellContext.oldVal) deleteUrlCell();
-    }
-    // F2 → Edit
-    if (e.key === 'F2' && canEdit()) {
-        e.preventDefault();
-        const row = focused.closest('tr');
-        if (!row) return;
-        const id = row.dataset.id;
-        const col = row.dataset.collection;
-        _urlCellContext = { id, field, col, oldVal: getOldValue(col, id, field) || '' };
-        editUrlCell();
-    }
-});
+        if (newVal === oldVal) {
+            restore();
+            refreshViewForType(col);
+            return;
+        }
+        // Empty URL clears the field
+        saving = true;
+        if (statusEl) statusEl.innerHTML = '<span class="url-status-saving">Saving…</span>';
+        try {
+            pushToHistory(col, id, field, oldVal, newVal);
+            if (!newVal) {
+                await db.collection(col).doc(id).update({ [field]: firebase.firestore.FieldValue.delete() });
+            } else {
+                await db.collection(col).doc(id).update({ [field]: newVal });
+            }
+            if (statusEl) statusEl.innerHTML = '<span class="url-status-saved">Saved</span>';
+            showToast(newVal ? 'URL saved successfully' : 'URL cleared');
+            logActivity('edit', col, id, `URL field "${field}" changed from "${oldVal}" to "${newVal}"`).catch(() => {});
+            // Let snapshot re-render; also force local refresh for snappy UI
+            setTimeout(() => refreshViewForType(col), 50);
+        } catch (e) {
+            console.error(e);
+            if (statusEl) statusEl.innerHTML = '<span class="url-status-error">Error</span>';
+            showToast('Failed to save URL: ' + (e.message || ''));
+            input.focus();
+            saving = false;
+        }
+    };
 
-window.inlineUrlEdit = (id, field, col, el) => { 
-    if (!canEdit()) { showToast("Edit permission required"); return; }
-    // Reuse the editUrlCell flow
-    _urlCellContext = { id, field, col, oldVal: getOldValue(col, id, field) || '' };
-    editUrlCell();
+    input.addEventListener('keydown', (e) => {
+        // Allow native clipboard shortcuts: Ctrl/Cmd + C/X/V/A/Z/Y and Backspace/Delete
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            save();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            cancel();
+            refreshViewForType(col);
+        } else if (e.key === 'Tab') {
+            // Save then let browser handle tab navigation after re-render
+            e.preventDefault();
+            save().then(() => {
+                // After re-render, focus next/prev cell roughly by row order is hard; leave default focus
+            });
+        }
+        e.stopPropagation();
+    });
+
+    input.addEventListener('blur', () => {
+        // Delay so click on open button / other controls can cancel first
+        setTimeout(() => {
+            if (!cancelled && document.activeElement !== input) save();
+        }, 120);
+    });
+
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('dblclick', (e) => e.stopPropagation());
+};
+
+window.handleUrlCellKeydown = (event, id, field, col, el) => {
+    if (!el || el.querySelector('input.url-input-active')) return;
+    // F2 or Enter starts edit
+    if (event.key === 'F2' || event.key === 'Enter') {
+        event.preventDefault();
+        startUrlEdit(id, field, col, el, event);
+        return;
+    }
+    // Delete/Backspace clears URL with confirmation when not editing
+    if ((event.key === 'Delete' || event.key === 'Backspace') && canEdit()) {
+        event.preventDefault();
+        const oldVal = getOldValue(col, id, field) || '';
+        if (!oldVal) return;
+        if (!confirm('Delete this URL?')) return;
+        db.collection(col).doc(id).update({ [field]: firebase.firestore.FieldValue.delete() })
+            .then(() => {
+                showToast('URL deleted successfully');
+                logActivity('edit', col, id, `URL field "${field}" deleted (was: ${oldVal})`).catch(() => {});
+            })
+            .catch(e => showToast('Failed to delete URL'));
+        return;
+    }
+    // Ctrl+C copies URL when cell selected
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
+        const oldVal = getOldValue(col, id, field) || '';
+        if (!oldVal) return;
+        event.preventDefault();
+        navigator.clipboard.writeText(oldVal).then(() => showToast('URL copied to clipboard')).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = oldVal; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+            showToast('URL copied to clipboard');
+        });
+        return;
+    }
+    // Ctrl+V pastes into cell when selected (not already editing)
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && (canEdit() || canInsert())) {
+        event.preventDefault();
+        navigator.clipboard.readText().then(text => {
+            let url = normalizeUrlInput(text);
+            if (!url) { showToast('Clipboard is empty'); return; }
+            if (!isValidUrl(url)) { showToast('Invalid URL format'); return; }
+            const oldVal = getOldValue(col, id, field) || '';
+            pushToHistory(col, id, field, oldVal, url);
+            db.collection(col).doc(id).update({ [field]: url })
+                .then(() => {
+                    showToast('URL pasted successfully');
+                    logActivity('edit', col, id, `URL field "${field}" pasted: ${url}`).catch(() => {});
+                })
+                .catch(e => showToast('Paste failed: ' + (e.message || '')));
+        }).catch(() => {
+            // Fallback to edit mode if clipboard blocked
+            startUrlEdit(id, field, col, el, event);
+        });
+    }
+};
+
+// Backward-compatible aliases
+window.inlineUrlEdit = (id, field, col, el) => startUrlEdit(id, field, col, el);
+window.openUrlCell = (id, field, col) => openUrlFromCell(id, field, col);
+window.editUrlCell = () => {};
+window.urlCellContextMenu = (id, field, col, event) => {
+    // Legacy: single-click now only selects; open menu no longer used
+    const cell = event && event.target && event.target.closest('td');
+    if (cell) selectUrlCell(cell, event);
 };
 
 window.toggleRowMenu = (id) => { 
@@ -1985,8 +2315,18 @@ function setupEventListeners() {
             }
 
             if(targetId === 'view-dashboard') updateDashboardStats();
+            if(targetId === 'view-access-control') renderAccessControlTable();
+            if(targetId === 'view-notifications') renderNotifications();
         });
     });
+
+    // Access Control filters
+    const acSearch = document.getElementById('ac-search-input');
+    const acRole = document.getElementById('ac-role-filter');
+    const acStatus = document.getElementById('ac-status-filter');
+    if (acSearch) acSearch.addEventListener('input', (e) => { state.acFilters.text = e.target.value || ''; renderAccessControlTable(); });
+    if (acRole) acRole.addEventListener('change', (e) => { state.acFilters.role = e.target.value || ''; renderAccessControlTable(); });
+    if (acStatus) acStatus.addEventListener('change', (e) => { state.acFilters.status = e.target.value || ''; renderAccessControlTable(); });
 
     // Allow Enter key to login
     const loginEmail = document.getElementById('login-email');
