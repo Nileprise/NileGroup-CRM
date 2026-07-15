@@ -66,7 +66,9 @@ const state = {
         gisInited: false,
         nextPageToken: null,
         currentLabel: 'INBOX',
-        currentEmailId: null
+        currentEmailId: null,
+        _scriptsLoading: false,
+        _syncTimer: null
     },
 
     hub: {
@@ -476,33 +478,51 @@ function initRealtimeListeners() {
     });
 
     // NOTIFICATIONS (per-user)
+    // Requires composite index: notifications (userEmail ASC, createdAt DESC)
+    // Create via Firebase console link logged on failed-precondition, or firestore.indexes.json
     if (state.user && state.user.email) {
+        const notifEmail = state.user.email.toLowerCase();
+        const applyNotifSnap = (snap) => {
+            state.notifications = [];
+            snap.forEach(doc => state.notifications.push({ id: doc.id, ...doc.data() }));
+            // Client-side sort if index fallback omitted orderBy
+            state.notifications.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            updateNotificationBadge();
+            if (document.getElementById('view-notifications')?.classList.contains('active')) {
+                renderNotifications();
+            }
+        };
+        const handleNotifError = (err, phase) => {
+            const code = err?.code || '';
+            const msg = String(err?.message || '');
+            console.warn(`Notifications query failed (${phase}):`, err);
+
+            // Surface Firebase console index-creation link when present
+            const indexUrlMatch = msg.match(/https:\/\/console\.firebase\.google\.com[^\s]+/);
+            if (code === 'failed-precondition' || msg.includes('requires an index')) {
+                if (indexUrlMatch) {
+                    console.error('Create the missing Firestore composite index:\n' + indexUrlMatch[0]);
+                    showToast('Missing Firestore index for notifications — see console for create link');
+                } else {
+                    showToast('Missing Firestore index: notifications userEmail + createdAt');
+                }
+            } else if (code === 'permission-denied') {
+                console.error('Firestore security rules blocked notifications. Authenticated users need read/write on their own notifications.');
+                showToast('Firestore rules blocked notifications access');
+            }
+        };
+
         db.collection('notifications')
-            .where('userEmail', '==', state.user.email.toLowerCase())
+            .where('userEmail', '==', notifEmail)
             .orderBy('createdAt', 'desc')
             .limit(50)
-            .onSnapshot(snap => {
-                state.notifications = [];
-                snap.forEach(doc => state.notifications.push({ id: doc.id, ...doc.data() }));
-                updateNotificationBadge();
-                if (document.getElementById('view-notifications')?.classList.contains('active')) {
-                    renderNotifications();
-                }
-            }, (err) => {
+            .onSnapshot(applyNotifSnap, (err) => {
+                handleNotifError(err, 'ordered');
                 // Fallback without orderBy if composite index is missing
-                console.warn("Notifications ordered query failed, falling back:", err);
                 db.collection('notifications')
-                    .where('userEmail', '==', state.user.email.toLowerCase())
+                    .where('userEmail', '==', notifEmail)
                     .limit(50)
-                    .onSnapshot(snap2 => {
-                        state.notifications = [];
-                        snap2.forEach(doc => state.notifications.push({ id: doc.id, ...doc.data() }));
-                        state.notifications.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                        updateNotificationBadge();
-                        if (document.getElementById('view-notifications')?.classList.contains('active')) {
-                            renderNotifications();
-                        }
-                    }, e2 => console.log("Notifications access restricted", e2));
+                    .onSnapshot(applyNotifSnap, (err2) => handleNotifError(err2, 'fallback'));
             });
     }
 
@@ -680,6 +700,456 @@ function defaultPermsForRole(role) {
     };
 }
 
+/* Access Control column layout: auto-fit + manual resize + persistence */
+/* Access Control column layout: smooth drag resize + autofit + persistence */
+const AC_COL_STORAGE_BASE = 'np_ac_column_widths_v2';
+const AC_COL_DEFAULTS = {
+    index: 48,
+    name: 180,
+    email: 260,
+    role: 130,
+    access: 160,
+    read: 70,
+    edit: 70,
+    insert_delete: 120,
+    status: 110,
+    actions: 120
+};
+// Soft floors only — users can still shrink freely without breaking controls
+const AC_COL_MIN = {
+    index: 36,
+    name: 80,
+    email: 120,
+    role: 90,
+    access: 90,
+    read: 48,
+    edit: 48,
+    insert_delete: 80,
+    status: 80,
+    actions: 80
+};
+// High ceilings so columns can grow freely; table scrolls horizontally
+const AC_COL_MAX = {
+    index: 120,
+    name: 900,
+    email: 1000,
+    role: 500,
+    access: 600,
+    read: 240,
+    edit: 240,
+    insert_delete: 400,
+    status: 400,
+    actions: 420
+};
+const AC_COL_ORDER = ['index', 'name', 'email', 'role', 'access', 'read', 'edit', 'insert_delete', 'status', 'actions'];
+const AC_AUTOFIT_COLS = ['role', 'access', 'read', 'edit', 'insert_delete', 'status', 'actions'];
+
+// Live width map kept in memory so re-renders restore immediately
+let __acLiveWidths = null;
+let __acResizeRaf = 0;
+let __acResizePending = null;
+let __acResizing = false;
+
+function getAcColumnStorageKey() {
+    const email = (state.user?.email || state.userEmail || '').toLowerCase().trim();
+    return email ? `${AC_COL_STORAGE_BASE}:${email}` : AC_COL_STORAGE_BASE;
+}
+
+function loadAcColumnWidths() {
+    if (__acLiveWidths) return { ...__acLiveWidths };
+    try {
+        // Prefer user-scoped key, fall back to shared key / v1
+        const keys = [getAcColumnStorageKey(), AC_COL_STORAGE_BASE, 'np_ac_column_widths_v1'];
+        let parsed = null;
+        for (const key of keys) {
+            const raw = localStorage.getItem(key);
+            if (!raw) continue;
+            try {
+                parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') break;
+            } catch (_) {}
+        }
+        const widths = { ...AC_COL_DEFAULTS };
+        if (parsed) {
+            AC_COL_ORDER.forEach(key => {
+                const n = Number(parsed[key]);
+                if (Number.isFinite(n) && n > 0) widths[key] = n;
+            });
+        }
+        __acLiveWidths = { ...widths };
+        return widths;
+    } catch (_) {
+        __acLiveWidths = { ...AC_COL_DEFAULTS };
+        return { ...AC_COL_DEFAULTS };
+    }
+}
+
+function saveAcColumnWidths(widths) {
+    try {
+        const payload = {};
+        AC_COL_ORDER.forEach(key => {
+            const n = Number(widths?.[key]);
+            payload[key] = Number.isFinite(n) ? n : AC_COL_DEFAULTS[key];
+        });
+        __acLiveWidths = { ...payload };
+        localStorage.setItem(getAcColumnStorageKey(), JSON.stringify(payload));
+        // Also keep a shared fallback for older sessions
+        localStorage.setItem(AC_COL_STORAGE_BASE, JSON.stringify(payload));
+    } catch (_) {}
+}
+
+function clampAcWidth(key, width) {
+    const min = AC_COL_MIN[key] ?? 40;
+    const max = AC_COL_MAX[key] ?? 900;
+    return Math.max(min, Math.min(max, Math.round(width)));
+}
+
+function getAcColIndex(key) {
+    return AC_COL_ORDER.indexOf(key);
+}
+
+/** Fast single-column apply used during drag (no full-table thrash). */
+function setAcElWidth(el, w) {
+    if (!el) return;
+    el.style.setProperty('width', w + 'px', 'important');
+    el.style.setProperty('min-width', w + 'px', 'important');
+    el.style.setProperty('max-width', w + 'px', 'important');
+}
+
+function applyAcSingleColumnWidth(key, width) {
+    const table = document.getElementById('access-control-table');
+    if (!table) return;
+    const w = clampAcWidth(key, width);
+    const idx = getAcColIndex(key);
+    if (idx < 0) return;
+
+    const col = table.querySelector(`#ac-colgroup col[data-col="${key}"]`);
+    if (col) {
+        col.style.setProperty('width', w + 'px', 'important');
+        col.style.setProperty('min-width', w + 'px', 'important');
+    }
+
+    // Header
+    setAcElWidth(table.querySelector(`thead th[data-col="${key}"]`), w);
+
+    // Body cells via row children (faster + stable)
+    const rows = table.tBodies[0] ? table.tBodies[0].rows : [];
+    for (let r = 0; r < rows.length; r++) {
+        setAcElWidth(rows[r].cells[idx], w);
+    }
+
+    // Keep table width = sum of columns so horizontal scroll works cleanly
+    if (!__acLiveWidths) __acLiveWidths = loadAcColumnWidths();
+    __acLiveWidths[key] = w;
+    let total = 0;
+    AC_COL_ORDER.forEach(k => { total += Number(__acLiveWidths[k]) || AC_COL_DEFAULTS[k] || 0; });
+    table.style.setProperty('width', total + 'px', 'important');
+    table.style.setProperty('min-width', total + 'px', 'important');
+}
+
+function applyAcColumnWidths(widths) {
+    const table = document.getElementById('access-control-table');
+    if (!table) return;
+    if (!widths) widths = loadAcColumnWidths();
+
+    let total = 0;
+    AC_COL_ORDER.forEach((key, idx) => {
+        const w = clampAcWidth(key, widths[key] ?? AC_COL_DEFAULTS[key] ?? 100);
+        widths[key] = w;
+        total += w;
+
+        const col = table.querySelector(`#ac-colgroup col[data-col="${key}"]`);
+        if (col) {
+            col.style.setProperty('width', w + 'px', 'important');
+            col.style.setProperty('min-width', w + 'px', 'important');
+        }
+
+        setAcElWidth(table.querySelector(`thead th[data-col="${key}"]`), w);
+
+        const rows = table.tBodies[0] ? table.tBodies[0].rows : [];
+        for (let r = 0; r < rows.length; r++) {
+            setAcElWidth(rows[r].cells[idx], w);
+        }
+    });
+
+    table.style.setProperty('width', total + 'px', 'important');
+    table.style.setProperty('min-width', total + 'px', 'important');
+    __acLiveWidths = { ...widths };
+}
+
+function measureAcTextWidth(text, font) {
+    if (!window.__acMeasureCanvas) window.__acMeasureCanvas = document.createElement('canvas');
+    const ctx = window.__acMeasureCanvas.getContext('2d');
+    ctx.font = font || '600 0.9rem Inter, sans-serif';
+    return ctx.measureText(String(text || '')).width;
+}
+
+function hasSavedAcColumnWidths() {
+    try {
+        return !!(localStorage.getItem(getAcColumnStorageKey()) || localStorage.getItem(AC_COL_STORAGE_BASE) || localStorage.getItem('np_ac_column_widths_v1'));
+    } catch (_) {
+        return false;
+    }
+}
+
+/** Measure longest header/cell content from the live DOM (most accurate autofit). */
+function measureAcColumnFromDom(key) {
+    const table = document.getElementById('access-control-table');
+    if (!table) return AC_COL_DEFAULTS[key] || 100;
+    const idx = getAcColIndex(key);
+    if (idx < 0) return AC_COL_DEFAULTS[key] || 100;
+
+    let max = 0;
+    const th = table.querySelector(`thead th[data-col="${key}"]`);
+    if (th) {
+        // Clone without resizer handle for accurate content width
+        const clone = th.cloneNode(true);
+        clone.querySelectorAll('.ac-col-resizer').forEach(n => n.remove());
+        clone.style.position = 'absolute';
+        clone.style.visibility = 'hidden';
+        clone.style.height = 'auto';
+        clone.style.width = 'auto';
+        clone.style.maxWidth = 'none';
+        clone.style.minWidth = '0';
+        clone.style.whiteSpace = 'nowrap';
+        document.body.appendChild(clone);
+        max = Math.max(max, clone.scrollWidth + 20);
+        document.body.removeChild(clone);
+    }
+
+    const rows = table.tBodies[0] ? table.tBodies[0].rows : [];
+    for (let r = 0; r < rows.length; r++) {
+        const cell = rows[r].cells[idx];
+        if (!cell) continue;
+        // Prefer measuring inner content wrapper if present
+        const target = cell.querySelector('.ac-cell-center, .ac-cell-left, .ac-actions, .ac-perm-group, select, .status-badge') || cell;
+        const prevWhiteSpace = target.style.whiteSpace;
+        const prevMax = target.style.maxWidth;
+        target.style.whiteSpace = 'nowrap';
+        target.style.maxWidth = 'none';
+        max = Math.max(max, Math.ceil(target.scrollWidth) + 28);
+        target.style.whiteSpace = prevWhiteSpace;
+        target.style.maxWidth = prevMax;
+    }
+
+    // Fallback canvas estimate if DOM is empty
+    if (max < 20) {
+        max = (AC_COL_DEFAULTS[key] || 100);
+    }
+    return clampAcWidth(key, max);
+}
+
+function computeAcContentWidths(rows) {
+    // Prefer live DOM measurements when table is rendered
+    const table = document.getElementById('access-control-table');
+    if (table && table.tBodies[0] && table.tBodies[0].rows.length) {
+        const out = {};
+        AC_COL_ORDER.forEach(key => {
+            out[key] = measureAcColumnFromDom(key);
+        });
+        return out;
+    }
+
+    // Fallback: estimate from data (pre-render)
+    const headerFonts = '800 0.75rem Inter, sans-serif';
+    const bodyFonts = '500 0.85rem Inter, sans-serif';
+
+    let maxName = measureAcTextWidth('Name', headerFonts) + 36;
+    let maxEmail = measureAcTextWidth('Email', headerFonts) + 36;
+    const contentMax = {
+        role: Math.max(measureAcTextWidth('Role', headerFonts), measureAcTextWidth('Employee', bodyFonts)) + 48,
+        access: Math.max(
+            measureAcTextWidth('Access Level', headerFonts),
+            measureAcTextWidth('Read + Edit + Insert', bodyFonts),
+            measureAcTextWidth('Full Access', bodyFonts)
+        ) + 36,
+        read: Math.max(measureAcTextWidth('Read', headerFonts) + 24, 64),
+        edit: Math.max(measureAcTextWidth('Edit', headerFonts) + 24, 64),
+        insert_delete: Math.max(measureAcTextWidth('Insert/Delete', headerFonts) + 24, 112),
+        status: Math.max(measureAcTextWidth('Status', headerFonts), measureAcTextWidth('approved', bodyFonts)) + 48,
+        actions: Math.max(measureAcTextWidth('Actions', headerFonts) + 24, 120)
+    };
+
+    (rows || []).forEach(u => {
+        maxName = Math.max(maxName, measureAcTextWidth(u.name || '—', '600 0.9rem Inter, sans-serif') + 36);
+        maxEmail = Math.max(maxEmail, measureAcTextWidth(u.email || '', '400 0.85rem Inter, sans-serif') + 36);
+        const p = u.permissions || defaultPermsForRole(u.role);
+        contentMax.access = Math.max(contentMax.access, measureAcTextWidth(getAccessLevelLabel(p), bodyFonts) + 36);
+        contentMax.status = Math.max(contentMax.status, measureAcTextWidth(u.status || 'approved', bodyFonts) + 48);
+        contentMax.role = Math.max(contentMax.role, measureAcTextWidth(u.role || 'Employee', bodyFonts) + 48);
+    });
+
+    return {
+        index: AC_COL_DEFAULTS.index,
+        name: clampAcWidth('name', Math.max(maxName, AC_COL_DEFAULTS.name)),
+        email: clampAcWidth('email', Math.max(maxEmail, AC_COL_DEFAULTS.email)),
+        role: clampAcWidth('role', contentMax.role),
+        access: clampAcWidth('access', contentMax.access),
+        read: clampAcWidth('read', contentMax.read),
+        edit: clampAcWidth('edit', contentMax.edit),
+        insert_delete: clampAcWidth('insert_delete', contentMax.insert_delete),
+        status: clampAcWidth('status', contentMax.status),
+        actions: clampAcWidth('actions', contentMax.actions)
+    };
+}
+
+function autoFitAccessControlColumns(rows) {
+    const table = document.getElementById('access-control-table');
+    if (!table) return loadAcColumnWidths();
+
+    // During active drag, never re-autofit (prevents flicker / fighting the user)
+    if (__acResizing) return loadAcColumnWidths();
+
+    const contentWidths = computeAcContentWidths(rows);
+    const saved = loadAcColumnWidths();
+    const hasSaved = hasSavedAcColumnWidths();
+    const widths = { ...AC_COL_DEFAULTS };
+
+    AC_COL_ORDER.forEach(key => {
+        if (key === 'index') {
+            widths.index = AC_COL_DEFAULTS.index;
+            return;
+        }
+        if (key === 'name' || key === 'email') {
+            // Keep Name/Email wide enough for full text, but honor larger user widths
+            const base = hasSaved ? (saved[key] || AC_COL_DEFAULTS[key]) : contentWidths[key];
+            widths[key] = clampAcWidth(key, Math.max(base, contentWidths[key]));
+            return;
+        }
+        if (hasSaved && Number.isFinite(Number(saved[key]))) {
+            widths[key] = clampAcWidth(key, Number(saved[key]));
+        } else {
+            widths[key] = contentWidths[key];
+        }
+    });
+
+    applyAcColumnWidths(widths);
+    return widths;
+}
+
+function scheduleAcColumnWidth(key, width) {
+    __acResizePending = { key, width };
+    if (__acResizeRaf) return;
+    __acResizeRaf = requestAnimationFrame(() => {
+        __acResizeRaf = 0;
+        const pending = __acResizePending;
+        __acResizePending = null;
+        if (!pending) return;
+        applyAcSingleColumnWidth(pending.key, pending.width);
+    });
+}
+
+function initAccessControlColumnResizers() {
+    const table = document.getElementById('access-control-table');
+    if (!table) return;
+    const headRow = table.querySelector('thead tr');
+    if (!headRow) return;
+
+    // Avoid duplicate handles on re-render
+    headRow.querySelectorAll('.ac-col-resizer').forEach(el => el.remove());
+
+    const widths = loadAcColumnWidths();
+    // Only re-apply full widths when not mid-drag
+    if (!__acResizing) applyAcColumnWidths(widths);
+
+    headRow.querySelectorAll('th[data-col]').forEach(th => {
+        const key = th.dataset.col;
+        if (!key) return;
+
+        const handle = document.createElement('div');
+        handle.className = 'ac-col-resizer';
+        handle.setAttribute('role', 'separator');
+        handle.setAttribute('aria-orientation', 'vertical');
+        handle.setAttribute('aria-label', `Resize ${key} column`);
+        handle.title = 'Drag to resize · Double-click to auto-fit';
+        th.appendChild(handle);
+
+        let startX = 0;
+        let startW = 0;
+        let lastW = 0;
+        let moved = false;
+
+        const onMove = (e) => {
+            if (e.cancelable) e.preventDefault();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const next = clampAcWidth(key, startW + (clientX - startX));
+            if (next === lastW) return;
+            lastW = next;
+            moved = true;
+            widths[key] = next;
+            __acLiveWidths = { ...widths };
+            // Real-time update via rAF — no lag, no full re-render
+            scheduleAcColumnWidth(key, next);
+        };
+
+        const onUp = (e) => {
+            if (e && e.cancelable) e.preventDefault();
+            handle.classList.remove('is-active');
+            document.body.classList.remove('ac-col-resizing');
+            table.classList.remove('is-col-resizing');
+            __acResizing = false;
+
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            window.removeEventListener('touchmove', onMove);
+            window.removeEventListener('touchend', onUp);
+            window.removeEventListener('touchcancel', onUp);
+            window.removeEventListener('blur', onUp);
+
+            // Flush any pending frame, then persist
+            if (__acResizeRaf) {
+                cancelAnimationFrame(__acResizeRaf);
+                __acResizeRaf = 0;
+            }
+            if (__acResizePending) {
+                applyAcSingleColumnWidth(__acResizePending.key, __acResizePending.width);
+                __acResizePending = null;
+            }
+            if (moved) {
+                saveAcColumnWidths(widths);
+            }
+        };
+
+        const onDown = (e) => {
+            // Ignore non-primary mouse buttons
+            if (e.type === 'mousedown' && e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            startX = e.touches ? e.touches[0].clientX : e.clientX;
+            startW = Number(widths[key]) || th.getBoundingClientRect().width || AC_COL_DEFAULTS[key] || 100;
+            lastW = startW;
+            moved = false;
+            __acResizing = true;
+
+            handle.classList.add('is-active');
+            document.body.classList.add('ac-col-resizing');
+            table.classList.add('is-col-resizing');
+
+            window.addEventListener('mousemove', onMove, { passive: false });
+            window.addEventListener('mouseup', onUp);
+            window.addEventListener('touchmove', onMove, { passive: false });
+            window.addEventListener('touchend', onUp);
+            window.addEventListener('touchcancel', onUp);
+            window.addEventListener('blur', onUp);
+        };
+
+        handle.addEventListener('mousedown', onDown);
+        handle.addEventListener('touchstart', onDown, { passive: false });
+
+        // Double-click divider → Auto Fit this column to longest header/cell content
+        handle.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const fitted = measureAcColumnFromDom(key);
+            widths[key] = fitted;
+            __acLiveWidths = { ...widths };
+            applyAcSingleColumnWidth(key, fitted);
+            saveAcColumnWidths(widths);
+        });
+    });
+}
+
 window.renderAccessControlTable = () => {
     const tbody = document.getElementById('ac-table-body');
     const footer = document.getElementById('ac-footer-count');
@@ -707,6 +1177,7 @@ window.renderAccessControlTable = () => {
     if (rows.length === 0) {
         tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:24px; color:var(--text-muted);">No users found</td></tr>`;
         if (footer) footer.innerText = 'Showing 0 users';
+        initAccessControlColumnResizers();
         return;
     }
 
@@ -715,36 +1186,49 @@ window.renderAccessControlTable = () => {
         const status = u.status || 'approved';
         const statusClass = status === 'approved' ? 'active' : (status === 'pending' ? '' : 'inactive');
         const statusColor = status === 'approved' ? 'var(--success)' : (status === 'pending' ? 'var(--accent)' : 'var(--danger)');
+        const safeEmail = String(u.email || '').replace(/'/g, "\\'");
         return `<tr data-id="${u.email}">
-            <td>${i + 1}</td>
-            <td style="font-weight:600; color:var(--text-main);">${u.name || '—'}</td>
-            <td style="color:var(--text-muted); font-size:0.85rem;">${u.email}</td>
-            <td>
-                <select class="status-select" style="min-width:110px;" onchange="updateAccessRole('${u.email}', this.value)">
+            <td class="ac-center">${i + 1}</td>
+            <td class="ac-col-name-cell"><div class="ac-cell-left"><span class="ac-name-text" title="${(u.name || '—').replace(/"/g, '&quot;')}">${u.name || '—'}</span></div></td>
+            <td class="ac-col-email-cell"><div class="ac-cell-left"><span class="ac-email-text" title="${(u.email || '').replace(/"/g, '&quot;')}">${u.email || ''}</span></div></td>
+            <td class="ac-col-role-cell">
+                <select class="status-select" onchange="updateAccessRole('${safeEmail}', this.value)">
                     <option value="Admin" ${u.role === 'Admin' ? 'selected' : ''}>Admin</option>
                     <option value="Manager" ${u.role === 'Manager' ? 'selected' : ''}>Manager</option>
                     <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
                 </select>
             </td>
-            <td style="font-size:0.8rem; color:var(--text-muted);">${getAccessLevelLabel(p)}</td>
-            <td style="text-align:center;"><input type="checkbox" ${p.read ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'read', this.checked)" title="Read"></td>
-            <td style="text-align:center;"><input type="checkbox" ${p.edit ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'edit', this.checked)" title="Edit"></td>
-            <td style="text-align:center;">
-                <div style="display:flex; gap:10px; justify-content:center; align-items:center;">
-                    <label style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:4px;" title="Insert"><input type="checkbox" ${p.insert ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'insert', this.checked)"> I</label>
-                    <label style="font-size:0.7rem; color:var(--text-muted); display:flex; align-items:center; gap:4px;" title="Delete"><input type="checkbox" ${p.delete ? 'checked' : ''} onchange="updateAccessPermission('${u.email}', 'delete', this.checked)"> D</label>
+            <td class="ac-col-access-cell"><div class="ac-cell-left"><span class="ac-access-text">${getAccessLevelLabel(p)}</span></div></td>
+            <td class="ac-center"><div class="ac-cell-center"><input type="checkbox" ${p.read ? 'checked' : ''} onchange="updateAccessPermission('${safeEmail}', 'read', this.checked)" title="Read"></div></td>
+            <td class="ac-center"><div class="ac-cell-center"><input type="checkbox" ${p.edit ? 'checked' : ''} onchange="updateAccessPermission('${safeEmail}', 'edit', this.checked)" title="Edit"></div></td>
+            <td class="ac-center">
+                <div class="ac-cell-center">
+                    <div class="ac-perm-group">
+                        <label title="Insert"><input type="checkbox" ${p.insert ? 'checked' : ''} onchange="updateAccessPermission('${safeEmail}', 'insert', this.checked)"> I</label>
+                        <label title="Delete"><input type="checkbox" ${p.delete ? 'checked' : ''} onchange="updateAccessPermission('${safeEmail}', 'delete', this.checked)"> D</label>
+                    </div>
                 </div>
             </td>
-            <td><span class="status-badge ${statusClass}" style="width:auto; min-width:80px; justify-content:center; color:${statusColor}; border-color:${statusColor}33;">${status}</span></td>
-            <td style="text-align:center;">
-                <div style="display:flex; gap:4px; justify-content:center;">
-                    ${status !== 'approved' ? `<button class="btn-icon-small" style="color:var(--success);" title="Approve" onclick="updateAccessStatus('${u.email}', 'approved')"><i class="fa-solid fa-check"></i></button>` : ''}
-                    ${status !== 'rejected' ? `<button class="btn-icon-small" style="color:var(--danger);" title="Reject" onclick="updateAccessStatus('${u.email}', 'rejected')"><i class="fa-solid fa-ban"></i></button>` : ''}
-                    ${status !== 'pending' ? `<button class="btn-icon-small" style="color:var(--accent);" title="Set Pending" onclick="updateAccessStatus('${u.email}', 'pending')"><i class="fa-solid fa-clock"></i></button>` : ''}
+            <td class="ac-center">
+                <div class="ac-cell-center">
+                    <span class="status-badge ${statusClass}" style="color:${statusColor}; border-color:${statusColor}33;">${status}</span>
+                </div>
+            </td>
+            <td class="ac-center">
+                <div class="ac-cell-center">
+                    <div class="ac-actions">
+                        ${status !== 'approved' ? `<button class="btn-icon-small" style="color:var(--success);" title="Approve" onclick="updateAccessStatus('${safeEmail}', 'approved')"><i class="fa-solid fa-check"></i></button>` : ''}
+                        ${status !== 'rejected' ? `<button class="btn-icon-small" style="color:var(--danger);" title="Reject" onclick="updateAccessStatus('${safeEmail}', 'rejected')"><i class="fa-solid fa-ban"></i></button>` : ''}
+                        ${status !== 'pending' ? `<button class="btn-icon-small" style="color:var(--accent);" title="Set Pending" onclick="updateAccessStatus('${safeEmail}', 'pending')"><i class="fa-solid fa-clock"></i></button>` : ''}
+                    </div>
                 </div>
             </td>
         </tr>`;
     }).join('');
+
+    // Restore saved widths / autofit defaults without overwriting user prefs every render
+    autoFitAccessControlColumns(rows);
+    initAccessControlColumnResizers();
 
     if (footer) footer.innerText = `Showing ${rows.length} user${rows.length === 1 ? '' : 's'}`;
 };
@@ -917,34 +1401,313 @@ function pushToHistory(collection, id, field, oldVal, newVal) {
 let recChartInstance = null;
 let techChartInstance = null;
 
-function renderDashboardCharts() { 
-    const candData = getRoleFilteredData(state.candidates, 'candidates').filter(c => c.status !== 'Placed'); 
-    const recCounts = {}; const techCounts = {}; 
-    candData.forEach(c => { 
-        const r = c.recruiter ? c.recruiter.trim() : 'Unassigned'; 
-        recCounts[r] = (recCounts[r] || 0) + 1; 
-        let tRaw = c.tech ? c.tech.trim() : 'Other'; if(tRaw === '') tRaw = 'Other';
-        const existingKey = Object.keys(techCounts).find(k => k.toLowerCase() === tRaw.toLowerCase());
-        const t = existingKey ? existingKey : tRaw; 
-        techCounts[t] = (techCounts[t] || 0) + 1; 
-    }); 
-    const recLabels = Object.keys(recCounts); const recData = Object.values(recCounts); const techLabels = Object.keys(techCounts); const techData = Object.values(techCounts); 
-    
-    const recWrapper = document.querySelector('.large-chart .canvas-wrapper');
-    if (recWrapper) {
-        const requiredWidth = Math.max(100, recLabels.length * 60); 
-        recWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: ${requiredWidth > 100 ? requiredWidth + 'px' : '100%'}"><canvas id="chart-recruiter"></canvas></div>`;
+function getDashboardChartTheme() {
+    const isLight = document.body.classList.contains('light-mode');
+    return {
+        tick: isLight ? '#334155' : '#cbd5e1',
+        muted: isLight ? '#64748b' : '#94a3b8',
+        grid: isLight ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255,255,255,0.05)',
+        legend: isLight ? '#0f172a' : '#f8fafc',
+        border: isLight ? '#ffffff' : '#0f172a'
+    };
+}
+
+function getTechLegendColumns(techCount) {
+    const width = window.innerWidth || 1200;
+    if (width <= 768) return techCount > 6 ? 2 : 1;
+    if (width <= 1200) return techCount > 6 ? 2 : 1;
+    if (techCount > 10) return 3;
+    if (techCount > 4) return 2;
+    return 1;
+}
+
+function applyTechCardDensity(techCount) {
+    const techCard = document.querySelector('.small-chart');
+    if (!techCard) return;
+    techCard.classList.remove('tech-dense', 'tech-very-dense');
+    if (techCount > 14) techCard.classList.add('tech-very-dense');
+    else if (techCount > 8) techCard.classList.add('tech-dense');
+}
+
+function buildRecruiterBarThickness(recruiterCount) {
+    if (recruiterCount <= 1) return { maxBarThickness: 56, categoryPercentage: 0.5, barPercentage: 0.7 };
+    if (recruiterCount <= 4) return { maxBarThickness: 48, categoryPercentage: 0.55, barPercentage: 0.75 };
+    if (recruiterCount <= 8) return { maxBarThickness: 40, categoryPercentage: 0.6, barPercentage: 0.8 };
+    if (recruiterCount <= 14) return { maxBarThickness: 32, categoryPercentage: 0.7, barPercentage: 0.85 };
+    return { maxBarThickness: 24, categoryPercentage: 0.8, barPercentage: 0.9 };
+}
+
+function escapeHtml(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderTechLegend(labels, data, colors) {
+    const legendEl = document.getElementById('tech-legend');
+    if (!legendEl) return;
+
+    const cols = getTechLegendColumns(labels.length);
+    legendEl.classList.remove('cols-2', 'cols-3');
+    if (cols === 2) legendEl.classList.add('cols-2');
+    if (cols === 3) legendEl.classList.add('cols-3');
+
+    if (!labels.length) {
+        legendEl.innerHTML = '<div class="tech-legend-label" style="opacity:0.7;">No technology data</div>';
+        return;
     }
 
-    const ctxRec = document.getElementById('chart-recruiter'); 
-    if (ctxRec) { if (recChartInstance) recChartInstance.destroy(); recChartInstance = new Chart(ctxRec, { type: 'bar', data: { labels: recLabels, datasets: [{ label: 'Candidates Assigned', data: recData, backgroundColor: 'rgba(6, 182, 212, 0.6)', borderColor: '#06b6d4', borderWidth: 1, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, x: { grid: { display: false } } } } }); } 
-    
-    const techWrapper = document.querySelector('.small-chart .canvas-wrapper');
-    if (techWrapper) { techWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: 100%;"><canvas id="chart-tech"></canvas></div>`; }
+    legendEl.innerHTML = labels.map((label, i) => {
+        const count = data[i] ?? 0;
+        const color = colors[i] || '#94a3b8';
+        return `
+            <div class="tech-legend-item" data-index="${i}" title="${escapeHtml(label)}: ${count}">
+                <span class="tech-legend-swatch" style="background:${color};"></span>
+                <span class="tech-legend-label">${escapeHtml(label)} <span class="tech-legend-count">(${count})</span></span>
+            </div>
+        `;
+    }).join('');
 
-    const ctxTech = document.getElementById('chart-tech'); 
-    if (ctxTech) { if (techChartInstance) techChartInstance.destroy(); techChartInstance = new Chart(ctxTech, { type: 'doughnut', data: { labels: techLabels, datasets: [{ data: techData, backgroundColor: ['rgba(6,182,212,0.7)', 'rgba(245,158,11,0.7)', 'rgba(139,92,246,0.7)', 'rgba(34,197,94,0.7)', 'rgba(239,68,68,0.7)'], borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } } }); } 
+    legendEl.querySelectorAll('.tech-legend-item').forEach(item => {
+        item.addEventListener('click', () => {
+            if (!techChartInstance) return;
+            const index = Number(item.dataset.index);
+            const visible = techChartInstance.getDataVisibility(index);
+            if (visible) techChartInstance.hide(0, index);
+            else techChartInstance.show(0, index);
+            item.classList.toggle('is-hidden', visible);
+            techChartInstance.update();
+        });
+    });
 }
+
+function equalizeDashboardChartHeights() {
+    const large = document.querySelector('.large-chart');
+    const small = document.querySelector('.small-chart');
+    if (!large || !small) return;
+
+    large.style.minHeight = '';
+    small.style.minHeight = '';
+
+    if (window.innerWidth <= 1024) {
+        if (recChartInstance) recChartInstance.resize();
+        if (techChartInstance) techChartInstance.resize();
+        return;
+    }
+
+    const h = Math.max(large.offsetHeight, small.offsetHeight, 420);
+    large.style.minHeight = h + 'px';
+    small.style.minHeight = h + 'px';
+    if (recChartInstance) recChartInstance.resize();
+    if (techChartInstance) techChartInstance.resize();
+}
+
+function safeDestroyChart(instance) {
+    try {
+        if (instance && typeof instance.destroy === 'function') instance.destroy();
+    } catch (e) {
+        console.warn('Chart destroy warning:', e);
+    }
+    return null;
+}
+
+function ensureChartJsReady() {
+    if (typeof Chart === 'undefined') {
+        console.error('Chart.js is not loaded. Ensure chart.umd.min.js is included before script.js');
+        return false;
+    }
+    return true;
+}
+
+function renderDashboardCharts() {
+    // Never create charts until Chart.js is available and dashboard canvases exist
+    if (!ensureChartJsReady()) return;
+
+    const recWrapper = document.querySelector('.large-chart .canvas-wrapper');
+    const techWrapper = document.querySelector('.small-chart .canvas-wrapper, .tech-canvas-wrap');
+    if (!recWrapper && !techWrapper) {
+        // Dashboard not in DOM yet — skip silently
+        return;
+    }
+
+    // CRITICAL: destroy existing Chart instances BEFORE replacing canvas DOM nodes
+    // (avoids "Canvas is already in use. Chart with ID 'x' must be destroyed...")
+    recChartInstance = safeDestroyChart(recChartInstance);
+    techChartInstance = safeDestroyChart(techChartInstance);
+
+    const candData = getRoleFilteredData(state.candidates, 'candidates').filter(c => c.status !== 'Placed');
+    const recCounts = {};
+    const techCounts = {};
+
+    candData.forEach(c => {
+        const r = c.recruiter ? c.recruiter.trim() : 'Unassigned';
+        recCounts[r] = (recCounts[r] || 0) + 1;
+        let tRaw = c.tech ? c.tech.trim() : 'Other';
+        if (tRaw === '') tRaw = 'Other';
+        const existingKey = Object.keys(techCounts).find(k => k.toLowerCase() === tRaw.toLowerCase());
+        const t = existingKey ? existingKey : tRaw;
+        techCounts[t] = (techCounts[t] || 0) + 1;
+    });
+
+    const recLabels = Object.keys(recCounts);
+    const recData = Object.values(recCounts);
+    const techLabels = Object.keys(techCounts);
+    const techData = Object.values(techCounts);
+    const theme = getDashboardChartTheme();
+    const barSizing = buildRecruiterBarThickness(recLabels.length);
+
+    applyTechCardDensity(techLabels.length);
+
+    // Recruiter chart: adaptive width so labels stay readable with equal bar spacing
+    if (recWrapper) {
+        const wrapperWidth = recWrapper.clientWidth || 600;
+        const perBar = recLabels.length > 12 ? 56 : (recLabels.length > 8 ? 64 : 72);
+        const contentWidth = Math.max(wrapperWidth, recLabels.length * perBar + 48);
+        const useFixedWidth = contentWidth > wrapperWidth + 4;
+        recWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: ${useFixedWidth ? contentWidth + 'px' : '100%'};"><canvas id="chart-recruiter"></canvas></div>`;
+    }
+
+    const ctxRec = document.getElementById('chart-recruiter');
+    if (ctxRec && ctxRec.isConnected) {
+        recChartInstance = new Chart(ctxRec, {
+            type: 'bar',
+            data: {
+                labels: recLabels,
+                datasets: [{
+                    label: 'Candidates Assigned',
+                    data: recData,
+                    backgroundColor: 'rgba(6, 182, 212, 0.6)',
+                    borderColor: '#06b6d4',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    maxBarThickness: barSizing.maxBarThickness,
+                    categoryPercentage: barSizing.categoryPercentage,
+                    barPercentage: barSizing.barPercentage
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: {
+                    padding: { left: 12, right: 12, top: 8, bottom: 4 }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => (items[0] && items[0].label) || ''
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            precision: 0,
+                            color: theme.tick,
+                            font: { size: 11, family: 'Inter, sans-serif' }
+                        },
+                        grid: { color: theme.grid }
+                    },
+                    x: {
+                        offset: true,
+                        ticks: {
+                            color: theme.tick,
+                            autoSkip: false,
+                            maxRotation: 40,
+                            minRotation: 0,
+                            font: { size: 11, family: 'Inter, sans-serif' },
+                            callback: function(value) {
+                                const label = this.getLabelForValue(value);
+                                return label == null ? '' : String(label);
+                            }
+                        },
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    }
+
+    if (techWrapper) {
+        techWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: 100%; height: 100%;"><canvas id="chart-tech"></canvas></div>`;
+    }
+
+    const palette = [
+        'rgba(6,182,212,0.75)',
+        'rgba(245,158,11,0.75)',
+        'rgba(139,92,246,0.75)',
+        'rgba(34,197,94,0.75)',
+        'rgba(239,68,68,0.75)',
+        'rgba(59,130,246,0.75)',
+        'rgba(236,72,153,0.75)',
+        'rgba(20,184,166,0.75)',
+        'rgba(251,146,60,0.75)',
+        'rgba(168,85,247,0.75)',
+        'rgba(132,204,22,0.75)',
+        'rgba(14,165,233,0.75)'
+    ];
+    const colors = techLabels.map((_, i) => palette[i % palette.length]);
+
+    const ctxTech = document.getElementById('chart-tech');
+    if (ctxTech && ctxTech.isConnected) {
+        techChartInstance = new Chart(ctxTech, {
+            type: 'doughnut',
+            data: {
+                labels: techLabels,
+                datasets: [{
+                    data: techData,
+                    backgroundColor: colors,
+                    borderWidth: 2,
+                    borderColor: theme.border,
+                    hoverOffset: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                // Slightly smaller donut so legend has more room
+                cutout: '58%',
+                radius: '78%',
+                layout: {
+                    padding: { top: 6, bottom: 6, left: 6, right: 6 }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                const label = ctx.label || '';
+                                const value = ctx.parsed || 0;
+                                const total = (ctx.dataset.data || []).reduce((a, b) => a + (Number(b) || 0), 0);
+                                const pct = total ? ((value / total) * 100).toFixed(1) : '0.0';
+                                return ` ${label}: ${value} (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    renderTechLegend(techLabels, techData, colors);
+
+    requestAnimationFrame(() => {
+        equalizeDashboardChartHeights();
+    });
+}
+
+// Re-layout charts on resize (responsive legend columns + bar spacing)
+let __dashChartResizeTimer = null;
+window.addEventListener('resize', () => {
+    clearTimeout(__dashChartResizeTimer);
+    __dashChartResizeTimer = setTimeout(() => {
+        if (recChartInstance || techChartInstance) renderDashboardCharts();
+    }, 200);
+});
 
 function updateDashboardStats() { 
     const roleCands = getRoleFilteredData(state.candidates, 'candidates');
@@ -1136,7 +1899,11 @@ window.quickActionLog = async (id, actionType) => {
     logs.push(newEntry);
     
     try {
-        await db.collection('candidates').doc(id).update({ [logField]: logs });
+        // New hub activity re-surfaces the candidate in Hub without recreating master data
+        await db.collection('candidates').doc(id).update({
+            [logField]: logs,
+            hiddenFromHub: false
+        });
         
         showToast(`${actionLabel} #${seqNum} logged successfully`);
         
@@ -1261,7 +2028,9 @@ function renderPlacementTable() {
 }
 
 function renderHubTable() {
-    let data = getRoleFilteredData(state.candidates, 'candidates');
+    let data = getRoleFilteredData(state.candidates, 'candidates')
+        // Hub delete only soft-hides; master Candidates rows stay forever
+        .filter(c => !c.hiddenFromHub);
     
     if(state.hubFilters && state.hubFilters.text) data = data.filter(c => (c.first + ' ' + c.last + ' ' + (c.tech||'')).toLowerCase().includes(state.hubFilters.text));
     
@@ -1352,7 +2121,8 @@ window.updateHubStats = (filterType, dateVal) => {
     
     const isInRange = (entry) => { const t = new Date(entry.date || entry).getTime(); return t >= start && t <= end; };
 
-    const roleFilteredCands = getRoleFilteredData(state.candidates, 'candidates');
+    const roleFilteredCands = getRoleFilteredData(state.candidates, 'candidates')
+        .filter(c => !c.hiddenFromHub);
     let subs=0, scrs=0, ints=0; 
     roleFilteredCands.forEach(c => { 
         subs += (c.submissionLog||[]).filter(isInRange).length; 
@@ -1988,27 +2758,117 @@ function updateSelectButtons(type) {
 
 window.openDeleteModal = (type) => { 
     if (!canDelete()) { showToast("Delete permission required"); return; }
-    state.pendingDelete.type = type; document.getElementById('delete-modal').style.display = 'flex'; document.getElementById('del-count').innerText = state.selection[type].size; 
+    state.pendingDelete.type = type;
+    const count = state.selection[type]?.size || 0;
+    document.getElementById('delete-modal').style.display = 'flex';
+    document.getElementById('del-count').innerText = count;
+
+    // Clarify that hub deletes never touch the master Candidates table
+    const msgEl = document.getElementById('delete-modal-message');
+    if (msgEl) {
+        if (type === 'hub') {
+            msgEl.innerHTML = `Remove <span id="del-count" class="text-danger" style="font-weight: 800; font-size: 1.2rem;">${count}</span> record(s) from Candidate Hub only?<br><span style="display:block; margin-top:8px; font-size:0.85rem;">Master Candidates table data will stay intact.</span>`;
+        } else {
+            msgEl.innerHTML = `Permanently delete <span id="del-count" class="text-danger" style="font-weight: 800; font-size: 1.2rem;">${count}</span> items?`;
+        }
+    }
 };
 window.closeDeleteModal = () => { document.getElementById('delete-modal').style.display = 'none'; };
 
+/**
+ * Candidate Hub delete:
+ * - NEVER deletes master documents from the `candidates` collection
+ * - Soft-hides the candidate from Hub only (preserves profile + history/logs)
+ * - Also removes any matching docs in the separate `hub` collection if present
+ * Candidates table profile, resume, LinkedIn, Gmail, tracking, notes, attachments, history stay.
+ */
+window.removeFromCandidateHub = async (ids) => {
+    const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
+    if (!uniqueIds.length) return { updated: 0, hubDocsRemoved: 0 };
+
+    const batch = db.batch();
+    let updated = 0;
+    let hubDocsRemoved = 0;
+
+    uniqueIds.forEach(id => {
+        // Soft-hide from Hub only — never delete the master candidate document
+        // and never wipe submission/screening/interview history.
+        const candRef = db.collection('candidates').doc(id);
+        batch.set(candRef, {
+            hiddenFromHub: true,
+            removedFromHubAt: new Date().toISOString(),
+            removedFromHubBy: state.currentUserName || 'Unknown'
+        }, { merge: true });
+        updated += 1;
+
+        // If a parallel hub collection entry exists with the same id, remove only that hub entry
+        const hubRef = db.collection('hub').doc(id);
+        batch.delete(hubRef);
+        hubDocsRemoved += 1;
+    });
+
+    await batch.commit();
+    return { updated, hubDocsRemoved };
+};
+
 window.executeDelete = async () => {
-    const type = state.pendingDelete.type; closeDeleteModal(); if(!type) return; 
-    let col = (type==='cand') ? 'candidates' : (type==='hub' ? 'candidates' : (type==='place' ? 'placements' : (type==='emp'?'employees':'onboarding')));
-    const ids = Array.from(state.selection[type]);
-    
-    state.selection[type].clear(); 
+    const type = state.pendingDelete.type;
+    closeDeleteModal();
+    if (!type) return;
+
+    const ids = Array.from(state.selection[type] || []);
+    if (!ids.length) return;
+
+    // Clear selection immediately for snappy UI
+    state.selection[type].clear();
     updateSelectButtons(type);
-    
-    const masterBox = document.getElementById(`select-all-${type}`); if(masterBox) masterBox.checked = false;
+    const masterBox = document.getElementById(`select-all-${type}`);
+    if (masterBox) masterBox.checked = false;
+
+    // --- Candidate Hub: remove hub entry only, preserve master Candidates ---
+    if (type === 'hub') {
+        refreshViewForType(type);
+        try {
+            const result = await window.removeFromCandidateHub(ids);
+            ids.forEach(id => logActivity(
+                'delete',
+                'hub',
+                id,
+                'Removed from Candidate Hub only (master candidate preserved)'
+            ));
+            showToast(
+                result.updated === 1
+                    ? 'Removed from Candidate Hub (candidate preserved)'
+                    : `Removed ${result.updated} records from Candidate Hub (candidates preserved)`
+            );
+            // Re-render hub after master docs update (snapshot may already fire)
+            refreshViewForType('hub');
+        } catch (e) {
+            console.error('Candidate Hub deletion error:', e);
+            showToast('Hub remove failed: ' + e.message);
+        }
+        return;
+    }
+
+    // --- All other modules: hard-delete from their own collection ---
+    const col = (type === 'cand')
+        ? 'candidates'
+        : (type === 'place'
+            ? 'placements'
+            : (type === 'emp' ? 'employees' : 'onboarding'));
+
     refreshViewForType(type);
-    
-    const batch = db.batch(); ids.forEach(id => batch.delete(db.collection(col).doc(id)));
-    try { 
-        await batch.commit(); 
-        showToast("Deleted successfully");
+
+    const batch = db.batch();
+    ids.forEach(id => batch.delete(db.collection(col).doc(id)));
+    try {
+        await batch.commit();
+        showToast('Deleted successfully');
         ids.forEach(id => logActivity('delete', col, id, 'Record deleted'));
-    } catch(e) { console.error("Background deletion error:", e); showToast("Delete Failed: " + e.message); }
+    } catch (e) {
+        console.error('Background deletion error:', e);
+        showToast('Delete Failed: ' + e.message);
+    }
 };
 
 window.moveToPlacements = async (id) => {
@@ -2095,35 +2955,162 @@ window.deletePlacement = async (id) => {
 /* ==========================================================================
    12. GMAIL ENGINE
    ========================================================================== */
-function loadGoogleScripts() { 
-    const s1 = document.createElement('script'); s1.src = "https://apis.google.com/js/api.js"; 
-    s1.onload = () => gapi.load('client', async () => { 
-        try { await gapi.client.init({ apiKey: G_API_KEY, discoveryDocs: [G_DISCOVERY_DOC] }); state.gmail.gapiInited = true; checkGmailAuth(); } 
-        catch(e) { console.error(e); } 
-    }); 
-    document.body.appendChild(s1); 
-    const s2 = document.createElement('script'); s2.src = "https://accounts.google.com/gsi/client"; 
-    s2.onload = () => { 
-        state.gmail.tokenClient = google.accounts.oauth2.initTokenClient({ 
-            client_id: G_CLIENT_ID, scope: G_SCOPES, callback: (resp) => { if(resp.error) return; updateGmailUI(true); renderGmailList('INBOX'); fetchGmailLabels(); startMailboxSync(); } 
-        }); 
-        state.gmail.gisInited = true; checkGmailAuth(); 
-    }; 
-    document.body.appendChild(s2); 
+function explainGmailApiError(err) {
+    const msg = String(err?.result?.error?.message || err?.message || err || '');
+    const status = err?.status || err?.result?.error?.code || err?.error;
+    const lower = msg.toLowerCase();
+
+    if (lower.includes('access_denied') || lower.includes('popup_closed')) {
+        return 'Gmail sign-in was cancelled. Click Connect Gmail and approve access.';
+    }
+    if (lower.includes('idpiframe_initialization_failed') || lower.includes('origin')) {
+        return 'OAuth origin not allowed. Add this site URL under Google Cloud → Credentials → OAuth Client → Authorized JavaScript origins.';
+    }
+    if (lower.includes('gmail') && (lower.includes('has not been used') || lower.includes('disabled') || lower.includes('not been enabled') || status === 403)) {
+        return 'Gmail API is not enabled. Enable it in Google Cloud Console → APIs & Services → Library → Gmail API.';
+    }
+    if (lower.includes('accessnotconfigured') || lower.includes('api key not valid') || lower.includes('api_key_invalid')) {
+        return 'Invalid API key / Gmail API not configured. Verify G_API_KEY and enable Gmail API.';
+    }
+    if (lower.includes('redirect_uri_mismatch')) {
+        return 'OAuth redirect mismatch. Check Authorized JavaScript origins for this domain.';
+    }
+    if (status === 401 || lower.includes('invalid_grant') || lower.includes('login required')) {
+        return 'Gmail session expired. Click Connect Gmail again.';
+    }
+    return msg || 'Gmail API error. Verify OAuth client, API key, and that Gmail API is enabled.';
 }
 
-function checkGmailAuth() { 
-    if (state.gmail.gapiInited && state.gmail.gisInited && gapi.client.getToken()) { updateGmailUI(true); fetchGmailLabels(); startMailboxSync(); setInterval(startMailboxSync, 5 * 60 * 1000); } 
-}
-function updateGmailUI(isSignedIn) { 
-    const btnAuth = document.getElementById('btn-gmail-auth'); const btnSignout = document.getElementById('btn-gmail-signout'); 
-    if(btnAuth) btnAuth.style.display = isSignedIn ? 'none' : 'inline-flex'; if(btnSignout) btnSignout.style.display = isSignedIn ? 'inline-flex' : 'none'; 
+function loadGoogleScripts() {
+    if (state.gmail._scriptsLoading) return;
+    state.gmail._scriptsLoading = true;
+
+    const s1 = document.createElement('script');
+    s1.src = 'https://apis.google.com/js/api.js';
+    s1.async = true;
+    s1.onload = () => gapi.load('client', async () => {
+        try {
+            await gapi.client.init({
+                apiKey: G_API_KEY,
+                discoveryDocs: [G_DISCOVERY_DOC]
+            });
+            // Explicitly load Gmail discovery (helps when API was just enabled)
+            try {
+                if (!gapi.client.gmail) {
+                    await gapi.client.load('https://gmail.googleapis.com/$discovery/rest?version=v1');
+                }
+            } catch (loadErr) {
+                console.error('Gmail discovery load failed:', loadErr);
+                showToast(explainGmailApiError(loadErr));
+            }
+            state.gmail.gapiInited = true;
+            checkGmailAuth();
+        } catch (e) {
+            console.error('gapi.client.init failed:', e);
+            showToast(explainGmailApiError(e));
+        }
+    });
+    s1.onerror = () => {
+        console.error('Failed to load Google API script');
+        showToast('Failed to load Google API script. Check network / CSP.');
+    };
+    document.body.appendChild(s1);
+
+    const s2 = document.createElement('script');
+    s2.src = 'https://accounts.google.com/gsi/client';
+    s2.async = true;
+    s2.onload = () => {
+        try {
+            state.gmail.tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: G_CLIENT_ID,
+                scope: G_SCOPES,
+                callback: (resp) => {
+                    if (resp.error) {
+                        console.error('Gmail OAuth error:', resp);
+                        showToast(explainGmailApiError(resp));
+                        updateGmailUI(false);
+                        return;
+                    }
+                    updateGmailUI(true);
+                    renderGmailList('INBOX');
+                    fetchGmailLabels();
+                    startMailboxSync();
+                    if (!state.gmail._syncTimer) {
+                        state.gmail._syncTimer = setInterval(startMailboxSync, 5 * 60 * 1000);
+                    }
+                },
+                error_callback: (err) => {
+                    console.error('Gmail OAuth error_callback:', err);
+                    showToast(explainGmailApiError(err));
+                }
+            });
+            state.gmail.gisInited = true;
+            checkGmailAuth();
+        } catch (e) {
+            console.error('initTokenClient failed:', e);
+            showToast(explainGmailApiError(e));
+        }
+    };
+    s2.onerror = () => {
+        console.error('Failed to load Google Identity Services');
+        showToast('Failed to load Google Identity Services. Check network / CSP.');
+    };
+    document.body.appendChild(s2);
 }
 
-if(document.getElementById('btn-gmail-auth')) document.getElementById('btn-gmail-auth').onclick = () => state.gmail.tokenClient.requestAccessToken({prompt: ''});
-if(document.getElementById('btn-gmail-signout')) document.getElementById('btn-gmail-signout').onclick = () => { 
-    const t = gapi.client.getToken(); if(t) google.accounts.oauth2.revoke(t.access_token); gapi.client.setToken(''); updateGmailUI(false); document.getElementById('gmail-rows-container').innerHTML = ''; 
-};
+function checkGmailAuth() {
+    try {
+        if (!(state.gmail.gapiInited && state.gmail.gisInited)) return;
+        const token = gapi.client.getToken && gapi.client.getToken();
+        if (token && token.access_token) {
+            updateGmailUI(true);
+            fetchGmailLabels();
+            startMailboxSync();
+            if (!state.gmail._syncTimer) {
+                state.gmail._syncTimer = setInterval(startMailboxSync, 5 * 60 * 1000);
+            }
+        } else {
+            updateGmailUI(false);
+        }
+    } catch (e) {
+        console.warn('checkGmailAuth:', e);
+    }
+}
+
+function updateGmailUI(isSignedIn) {
+    const btnAuth = document.getElementById('btn-gmail-auth');
+    const btnSignout = document.getElementById('btn-gmail-signout');
+    if (btnAuth) btnAuth.style.display = isSignedIn ? 'none' : 'inline-flex';
+    if (btnSignout) btnSignout.style.display = isSignedIn ? 'inline-flex' : 'none';
+}
+
+function requestGmailAccess() {
+    if (!state.gmail.tokenClient) {
+        showToast('Gmail client still loading… try again in a second');
+        loadGoogleScripts();
+        return;
+    }
+    // Empty prompt reuses consent; force consent if no existing token
+    const hasToken = !!(gapi?.client?.getToken?.()?.access_token);
+    state.gmail.tokenClient.requestAccessToken({ prompt: hasToken ? '' : 'consent' });
+}
+
+if (document.getElementById('btn-gmail-auth')) {
+    document.getElementById('btn-gmail-auth').onclick = () => requestGmailAccess();
+}
+if (document.getElementById('btn-gmail-signout')) {
+    document.getElementById('btn-gmail-signout').onclick = () => {
+        try {
+            const t = gapi.client.getToken();
+            if (t) google.accounts.oauth2.revoke(t.access_token);
+            gapi.client.setToken('');
+        } catch (_) {}
+        updateGmailUI(false);
+        const rows = document.getElementById('gmail-rows-container');
+        if (rows) rows.innerHTML = '';
+        showToast('Gmail disconnected');
+    };
+}
 
 function getHeader(headers, name) { const header = headers.find(h => h.name === name); return header ? header.value : ''; }
 function parseMessageBody(payload) { 
@@ -2146,23 +3133,52 @@ async function startMailboxSync() {
     const metadataRef = db.collection('sync_metadata').doc(state.user.uid); const metaDoc = await metadataRef.get(); 
     if (!metaDoc.exists || !metaDoc.data().historyId) { await runFullSync(null); } else { const lastHistoryId = metaDoc.data().historyId; await runIncrementalSync(lastHistoryId); } 
 }
-async function runFullSync(pageToken) { 
-    try { 
-        const res = await gapi.client.gmail.users.messages.list({ 'userId': 'me', 'maxResults': 20, 'pageToken': pageToken }); 
-        const messages = res.result.messages; 
-        if (messages && messages.length > 0) { 
-            await processMessageBatch(messages); 
-            if (!pageToken) { const firstMsgDetails = await gapi.client.gmail.users.messages.get({ 'userId': 'me', 'id': messages[0].id }); await db.collection('sync_metadata').doc(state.user.uid).set({ historyId: firstMsgDetails.result.historyId }, { merge: true }); } 
-        } 
-    } catch (e) { console.error("Full Sync Error:", e); } 
+async function runFullSync(pageToken) {
+    try {
+        if (!gapi?.client?.gmail) {
+            showToast(explainGmailApiError({ message: 'Gmail API has not been enabled or discovery failed' }));
+            return;
+        }
+        const res = await gapi.client.gmail.users.messages.list({ userId: 'me', maxResults: 20, pageToken: pageToken || undefined });
+        const messages = res.result.messages;
+        if (messages && messages.length > 0) {
+            await processMessageBatch(messages);
+            if (!pageToken) {
+                const firstMsgDetails = await gapi.client.gmail.users.messages.get({ userId: 'me', id: messages[0].id });
+                await db.collection('sync_metadata').doc(state.user.uid).set({ historyId: firstMsgDetails.result.historyId }, { merge: true });
+            }
+        }
+    } catch (e) {
+        console.error('Full Sync Error:', e);
+        showToast(explainGmailApiError(e));
+    }
 }
-async function runIncrementalSync(historyId) { 
-    try { 
-        const res = await gapi.client.gmail.users.history.list({ 'userId': 'me', 'startHistoryId': historyId }); const history = res.result.history; 
-        if (!history || history.length === 0) return; let newMsgIds = []; 
-        history.forEach(record => { if (record.messagesAdded) { record.messagesAdded.forEach(m => newMsgIds.push(m.message)); } }); 
-        if (newMsgIds.length > 0) { await processMessageBatch(newMsgIds); await db.collection('sync_metadata').doc(state.user.uid).set({ historyId: res.result.historyId }, { merge: true }); } 
-    } catch (e) { if (e.status === 404) { await runFullSync(null); } } 
+async function runIncrementalSync(historyId) {
+    try {
+        if (!gapi?.client?.gmail) return;
+        const res = await gapi.client.gmail.users.history.list({ userId: 'me', startHistoryId: historyId });
+        const history = res.result.history;
+        if (!history || history.length === 0) return;
+        let newMsgIds = [];
+        history.forEach(record => {
+            if (record.messagesAdded) record.messagesAdded.forEach(m => newMsgIds.push(m.message));
+        });
+        if (newMsgIds.length > 0) {
+            await processMessageBatch(newMsgIds);
+            await db.collection('sync_metadata').doc(state.user.uid).set({ historyId: res.result.historyId }, { merge: true });
+        }
+    } catch (e) {
+        if (e.status === 404) {
+            await runFullSync(null);
+            return;
+        }
+        console.error('Incremental Sync Error:', e);
+        // Don't toast every poll failure; only auth/config issues
+        const msg = String(e?.message || '');
+        if (e.status === 401 || e.status === 403 || msg.toLowerCase().includes('gmail')) {
+            showToast(explainGmailApiError(e));
+        }
+    }
 }
 
 async function processMessageBatch(messages) { 
@@ -2262,7 +3278,7 @@ window.syncCurrentEmailToCandidate = async () => {
     const candidateName = prompt("Enter Candidate FIRST NAME to sync this email to:", ""); if(!candidateName) return; 
     const candidate = state.candidates.find(c => c.first.toLowerCase() === candidateName.toLowerCase()); if(!candidate) return showToast("Candidate not found."); 
     let logs = candidate.submissionLog || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: subject, type: 'Imported Email', tech: candidate.tech || 'General', recruiter: state.currentUserName, note: `Imported from: ${senderText}`, timestamp: Date.now() }); 
-    await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs }); showToast(`Synced to ${candidate.first} ${candidate.last}`); 
+    await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs, hiddenFromHub: false }); showToast(`Synced to ${candidate.first} ${candidate.last}`); 
 };
 
 window.toggleCategories = () => { const sub = document.getElementById('categories-submenu'); if (sub.style.display === 'none') sub.style.display = 'block'; else sub.style.display = 'none'; }; 
@@ -2281,7 +3297,7 @@ window.sendCrmEmail = async () => {
         await gapi.client.gmail.users.messages.send({ 'userId': 'me', 'resource': { 'raw': raw } }); 
         showToast("Email Sent!"); closeComposeModal(); 
         const candidate = state.candidates.find(c => (c.gmail && c.gmail.includes(to)) || (c.email && c.email.includes(to))); 
-        if(candidate) { let logs = candidate.submissionLog || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: subject, type: 'Outbound Email', tech: candidate.tech||'General', recruiter: state.currentUserName, timestamp: Date.now() }); await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs }); showToast("Logged to Hub"); } 
+        if(candidate) { let logs = candidate.submissionLog || []; logs.push({ date: new Date().toISOString().split('T')[0], subject: subject, type: 'Outbound Email', tech: candidate.tech||'General', recruiter: state.currentUserName, timestamp: Date.now() }); await db.collection('candidates').doc(candidate.id).update({ submissionLog: logs, hiddenFromHub: false }); showToast("Logged to Hub"); } 
         document.getElementById('compose-to').value = ''; document.getElementById('compose-subject').value = ''; document.getElementById('compose-message').value = ''; 
     } catch (err) { showToast("Send Failed: " + err.message); } finally { sendBtn.innerHTML = originalText; sendBtn.disabled = false; } 
 };
