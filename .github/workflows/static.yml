@@ -1,44 +1,84 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+# Static site deploy for NILEGROUP CRM
+# GitHub Actions workflow for Firebase Hosting or GitHub Pages.
+
+name: Deploy Static CRM
 
 on:
-  # Runs automatically when you push to the main branch
   push:
-    branches: ["main"]
-
-  # Allows you to trigger the deployment manually from the Actions tab
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: static-deploy
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  FIREBASE_PROJECT: nilegroup-crm-448c4
 
 jobs:
-  deploy:
+  deploy-firebase:
+    name: Deploy Firebase Hosting
+    runs-on: ubuntu-latest
+    if: ${{ vars.DEPLOY_TARGET != 'github-pages' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Deploy Hosting + Firestore
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          firebase deploy \
+            --project "${FIREBASE_PROJECT}" \
+            --only hosting,firestore:rules,firestore:indexes \
+            --non-interactive
+
+  build-pages:
+    name: Build GitHub Pages artifact
+    runs-on: ubuntu-latest
+    if: ${{ vars.DEPLOY_TARGET == 'github-pages' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare static bundle
+        run: |
+          mkdir -p _site
+          cp index.html style.css script.js _site/
+          [ -f favicon.ico ] && cp favicon.ico _site/ || true
+          [ -d assets ] && cp -r assets _site/ || true
+          ls -la _site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy-pages:
+    name: Deploy GitHub Pages
+    needs: build-pages
+    if: ${{ vars.DEPLOY_TARGET == 'github-pages' }}
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # Uploads the current directory where your index.html and script.js live
-          path: '.'
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
