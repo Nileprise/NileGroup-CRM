@@ -444,7 +444,7 @@ body.light-mode .kpi-value { background: none; -webkit-text-fill-color: var(--te
 
 .tech-legend-item:hover { background: rgba(255, 255, 255, 0.06); }
 body.light-mode .tech-legend-item:hover { background: rgba(15, 23, 42, 0.06); }
-.tech-legend-item
+.tech-legend-item.is-hidden { opacity: 0.4; }
 .tech-legend-item.is-hidden .tech-legend-label { text-decoration: line-through; }
 
 .tech-legend-swatch {
@@ -590,7 +590,7 @@ body.light-mode .tech-legend-item:hover { background: rgba(15, 23, 42, 0.06); }
 .label-edit-input { background: var(--bg-app); border: 1px solid var(--primary); color: white; padding: 2px 5px; border-radius: 4px; width: 100%; font-size: 0.9rem; outline: none; }
 
 /* MANAGE MODE SHAKE ANIMATION */
-
+.manage-mode-active .label-item { border: 1px dashed var(--danger); animation: shake 0.5s infinite; }
 @keyframes shake {
   0% { transform: translate(1px, 1px) rotate(0deg); }
   10% { transform: translate(-1px, -2px) rotate(-1deg); }
@@ -1051,7 +1051,7 @@ body.light-mode .hub-date-input, body.light-mode .date-input-modern { color-sche
 
 /* Candidates: wider recruiter + assigned columns (headers already set min-width) */
 #candidates-table th[data-col-key="recruiter"],
-#candidates-table td
+#candidates-table td.col-recruiter { min-width: 180px; }
 #candidates-table .date-input-modern { min-width: 150px; }
 
 /* Hub metric columns stay readable */
@@ -1067,7 +1067,8 @@ body.light-mode .hub-date-input, body.light-mode .date-input-modern { color-sche
 .drag-handle-cell:hover { color: var(--primary); cursor: grabbing; }
 .drag-handle-icon { font-size: 1rem; vertical-align: middle; }
 .dragging { opacity: 0.5; background: rgba(6, 182, 212, 0.2) !important; }
-
+.link-icon-btn { font-size: 1.2rem; cursor: default; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+.link-icon-btn:hover { transform: scale(1.2); }
 .icon-gmail { color: #ea4335; }
 .icon-linkedin { color: #0a66c2; }
 .icon-resume { color: #f59e0b; }
@@ -1090,6 +1091,32 @@ body.light-mode .hub-date-input, body.light-mode .date-input-modern { color-sche
 .url-status-saving { color: var(--accent); }
 .url-status-saved { color: var(--success); }
 .url-status-error { color: var(--danger); font-weight: 600; }
+
+/* URL Cell Context Menu */
+.url-context-menu {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 150px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  animation: slideUp 0.15s ease-out;
+}
+.url-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+  color: var(--text-main);
+}
+.url-menu-item:hover { background: rgba(255,255,255,0.08); }
+.url-menu-item i { font-size: 0.8rem; width: 16px; text-align: center; }
+.url-menu-danger { color: var(--danger); }
+.url-menu-danger:hover { background: rgba(239,68,68,0.1); }
 
 /* Nav badge for notifications */
 .nav-badge {
@@ -1153,8 +1180,8 @@ body.light-mode .hub-date-input, body.light-mode .date-input-modern { color-sche
 .hub-log-list { list-style: none; padding: 0; margin: 10px 0 0 0; max-height: 180px; overflow-y: auto; position: relative; flex: 1; }
 .hub-log-item { position: relative; padding: 8px 10px 8px 35px; font-size: 0.85rem; color: var(--text-muted); border-bottom: 1px solid rgba(255,255,255,0.02); transition: 0.2s; display: flex; justify-content: space-between; align-items: center; z-index: 1; }
 .hub-log-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
-
-.hub-log-item:hover 
+.hub-log-actions { display: flex; gap: 5px; opacity: 0; transition: opacity 0.2s; }
+.hub-log-item:hover .hub-log-actions { opacity: 1; }
 .hub-action-btn { background: rgba(255,255,255,0.1); border: none; border-radius: 4px; cursor: default; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: var(--text-muted); transition: 0.2s; }
 .hub-action-btn:hover { background: var(--primary); color: #fff; }
 .hub-action-btn.delete:hover { background: var(--danger); color: #fff; }
@@ -1285,6 +1312,8 @@ th.drag-over {
 .placement-text-input:disabled { opacity: 0.7; cursor: not-allowed; }
 
 /* Read-only mode for inputs when user lacks edit permission */
+.readonly-input { opacity: 0.75; cursor: default; pointer-events: none; }
+.readonly-input:focus { border-color: transparent; box-shadow: none; }
 
 /* ========================================================
    14b. CANDIDATE QUICK ACTIONS POPOVER & MODAL
@@ -1434,6 +1463,7 @@ th.drag-over {
   .modern-header-controls { gap: 10px; }
   .status-widget { display: none; } /* Hide status widget on tiny screens to save space */
 }
+
 
 /* ===== Access Control — Candidates-parity enhancements ===== */
 #view-access-control .toolbar {
@@ -1673,6 +1703,7 @@ body.table-col-resizing a {
   }
 }
 
+
 /* Column drag free-placement + delete icons */
 .modern-table th.draggable-col {
   cursor: grab;
@@ -1718,6 +1749,7 @@ body.table-col-reordering * {
 .modern-table th .th-inner {
   pointer-events: auto;
 }
+
 
 /* Undo / Redo controls */
 #btn-undo:disabled,
