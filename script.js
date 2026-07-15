@@ -12,7 +12,7 @@ const FIREBASE_CONFIG = {
 
 // Gmail API configuration
 const G_API_KEY = "AIzaSyDTX7cHfS8sQEREb2qwOR50YuZsdsPhr40";
-const G_CLIENT_ID = "575678017832-34fs5qkepdnrgqdc58h0semgjrct5arl.apps.googleusercontent.com";
+const G_CLIENT_ID = "96773475717-dg0pdp2ujbts89n3dltkkpub2qaevlmf.apps.googleusercontent.com";
 const G_SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.labels";
 const G_DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest";
 
@@ -1414,10 +1414,12 @@ function getDashboardChartTheme() {
 
 function getTechLegendColumns(techCount) {
     const width = window.innerWidth || 1200;
-    if (width <= 768) return techCount > 6 ? 2 : 1;
-    if (width <= 1200) return techCount > 6 ? 2 : 1;
-    if (techCount > 10) return 3;
-    if (techCount > 4) return 2;
+    // Prefer 1 column so every technology name stays fully visible on a single line.
+    // Only use 2 columns when there are many short items and the viewport is wide.
+    if (width <= 768) return 1;
+    if (techCount <= 8) return 1;
+    if (width >= 1400 && techCount > 12) return 2;
+    if (width >= 1200 && techCount > 16) return 2;
     return 1;
 }
 
@@ -1451,7 +1453,8 @@ function renderTechLegend(labels, data, colors) {
     if (!legendEl) return;
 
     const cols = getTechLegendColumns(labels.length);
-    legendEl.classList.remove('cols-2', 'cols-3');
+    legendEl.classList.remove('cols-1', 'cols-2', 'cols-3');
+    if (cols === 1) legendEl.classList.add('cols-1');
     if (cols === 2) legendEl.classList.add('cols-2');
     if (cols === 3) legendEl.classList.add('cols-3');
 
@@ -1460,11 +1463,13 @@ function renderTechLegend(labels, data, colors) {
         return;
     }
 
+    // Full single-line labels: name + count, no truncation in 1-col mode
     legendEl.innerHTML = labels.map((label, i) => {
         const count = data[i] ?? 0;
         const color = colors[i] || '#94a3b8';
+        const full = `${label} (${count})`;
         return `
-            <div class="tech-legend-item" data-index="${i}" title="${escapeHtml(label)}: ${count}">
+            <div class="tech-legend-item" data-index="${i}" title="${escapeHtml(full)}">
                 <span class="tech-legend-swatch" style="background:${color};"></span>
                 <span class="tech-legend-label">${escapeHtml(label)} <span class="tech-legend-count">(${count})</span></span>
             </div>
@@ -1485,22 +1490,8 @@ function renderTechLegend(labels, data, colors) {
 }
 
 function equalizeDashboardChartHeights() {
-    const large = document.querySelector('.large-chart');
-    const small = document.querySelector('.small-chart');
-    if (!large || !small) return;
-
-    large.style.minHeight = '';
-    small.style.minHeight = '';
-
-    if (window.innerWidth <= 1024) {
-        if (recChartInstance) recChartInstance.resize();
-        if (techChartInstance) techChartInstance.resize();
-        return;
-    }
-
-    const h = Math.max(large.offsetHeight, small.offsetHeight, 420);
-    large.style.minHeight = h + 'px';
-    small.style.minHeight = h + 'px';
+    // CSS Grid already stretches both cards to the same row height.
+    // Just tell Chart.js to reflow into the responsive parent wrappers.
     if (recChartInstance) recChartInstance.resize();
     if (techChartInstance) techChartInstance.resize();
 }
@@ -1561,13 +1552,15 @@ function renderDashboardCharts() {
 
     applyTechCardDensity(techLabels.length);
 
-    // Recruiter chart: adaptive width so labels stay readable with equal bar spacing
+    // Recruiter chart: fill responsive parent; expand inner track only when many bars need it
     if (recWrapper) {
         const wrapperWidth = recWrapper.clientWidth || 600;
         const perBar = recLabels.length > 12 ? 56 : (recLabels.length > 8 ? 64 : 72);
         const contentWidth = Math.max(wrapperWidth, recLabels.length * perBar + 48);
         const useFixedWidth = contentWidth > wrapperWidth + 4;
-        recWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: ${useFixedWidth ? contentWidth + 'px' : '100%'};"><canvas id="chart-recruiter"></canvas></div>`;
+        recWrapper.innerHTML = useFixedWidth
+            ? `<div class="canvas-scroll-inner is-wide" style="width:${contentWidth}px;"><canvas id="chart-recruiter"></canvas></div>`
+            : `<div class="canvas-scroll-inner"><canvas id="chart-recruiter"></canvas></div>`;
     }
 
     const ctxRec = document.getElementById('chart-recruiter');
@@ -1633,7 +1626,7 @@ function renderDashboardCharts() {
     }
 
     if (techWrapper) {
-        techWrapper.innerHTML = `<div class="canvas-scroll-inner" style="width: 100%; height: 100%;"><canvas id="chart-tech"></canvas></div>`;
+        techWrapper.innerHTML = `<div class="canvas-scroll-inner"><canvas id="chart-tech"></canvas></div>`;
     }
 
     const palette = [
@@ -1669,11 +1662,11 @@ function renderDashboardCharts() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                // Slightly smaller donut so legend has more room
-                cutout: '58%',
-                radius: '78%',
+                // Smaller donut radius so Technology Spread legend has room for full names
+                cutout: '60%',
+                radius: '72%',
                 layout: {
-                    padding: { top: 6, bottom: 6, left: 6, right: 6 }
+                    padding: { top: 8, bottom: 8, left: 4, right: 4 }
                 },
                 plugins: {
                     legend: { display: false },
