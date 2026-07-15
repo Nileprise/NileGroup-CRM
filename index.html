@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-  
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
   <link rel="stylesheet" href="style.css">
@@ -35,9 +35,7 @@
       <div id="bday-names" class="bday-names"></div>
     </div>
   </div>
-
-  <input type="file" id="hub-file-input" accept=".eml,.msg,.pdf,.docx" style="display:none;" onchange="handleHubFileSelect(this)">
-  <input type="file" id="profile-upload-input" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
+<input type="file" id="profile-upload-input" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
 
   <div id="app" class="app-container">
     <div id="sidebar-overlay" class="sidebar-overlay"></div>
@@ -50,12 +48,12 @@
 
         <div id="form-login" class="auth-form active">
           <h3 class="form-title">Secure Portal Login</h3>
-          
+
           <div class="input-group">
             <i class="fa-solid fa-envelope input-icon"></i>
             <input type="email" id="login-email" placeholder="Official Email ID" autocomplete="email">
           </div>
-          
+
           <div class="input-group">
             <i class="fa-solid fa-lock input-icon"></i>
             <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
@@ -71,7 +69,7 @@
           <h3 class="form-title">Activate Account</h3>
           <div class="input-group"><i class="fa-solid fa-user input-icon"></i><input type="text" id="reg-name" placeholder="Full Name"></div>
           <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reg-email" placeholder="Official Email ID"></div>
-          
+
           <div class="input-group">
             <i class="fa-solid fa-lock input-icon"></i>
             <input type="password" id="reg-pass" placeholder="Set Password (Min 6 chars)">
@@ -104,13 +102,13 @@
     </section>
 
     <section id="dashboard-screen" class="screen">
-      
+
       <aside class="sidebar glass-panel" id="sidebar">
         <div class="brand-logo-small"><img src="https://nileprise.com/wp-content/uploads/2022/01/nile.png" alt="Nile Logo" class="brand-logo-img-small"></div>
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">GROUP</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
           <button class="nav-item active" data-target="view-dashboard"><i class="fa-solid fa-chart-pie"></i> <span>Overview</span></button>
-          
+
           <div class="nav-item" style="cursor: default;" onclick="toggleGmailMenu()">
               <i class="fa-brands fa-google"></i>
               <span>Gmail</span>
@@ -133,7 +131,7 @@
               <button class="nav-item" onclick="renderGmailList('Drafts', this)">
                   <span class="material-icons" style="font-size: 18px;">drafts</span> <span>Drafts</span>
               </button>
-             
+
               <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
                   <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
               </div>
@@ -154,7 +152,7 @@
                       <small>Create label</small>
                   </div>
               </div>
-             
+
               <div style="margin-top: 15px; padding-left: 5px; color: gray; font-size: 10px; font-weight: bold; display:flex; justify-content:space-between; padding-right:10px;">
                   <span>LABELS</span>
                   <span id="manage-indicator" style="display:none; color:var(--danger); cursor:pointer;" onclick="toggleManageMode()">Done</span>
@@ -180,7 +178,7 @@
       </aside>
 
       <main class="main-content">
-       
+
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
           <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
@@ -189,6 +187,8 @@
               <div class="pulse-dot"></div><span id="header-updated" class="status-text">Synced</span>
             </div>
             <div class="user-controls-pill">
+              <button id="btn-undo" class="control-icon" title="Undo (Ctrl+Z)" onclick="undoLastAction()" disabled><i class="fa-solid fa-rotate-left"></i></button>
+              <button id="btn-redo" class="control-icon" title="Redo (Ctrl+Y)" onclick="redoLastAction()" disabled><i class="fa-solid fa-rotate-right"></i></button>
               <button id="theme-toggle" class="control-icon"><i class="fa-solid fa-circle-half-stroke"></i></button>
               <div class="user-info-group">
                 <div class="user-avatar-small"><i class="fa-solid fa-user"></i></div>
@@ -204,7 +204,7 @@
             <div><h2 style="margin:0;">Executive Overview</h2></div>
             <div class="date-badge"><i class="fa-regular fa-calendar"></i> <span id="current-date-display">Live</span></div>
           </div>
-          
+
           <div class="kpi-grid">
             <div class="kpi-card accent-blue">
               <div class="kpi-content">
@@ -289,13 +289,13 @@
               <button class="btn-insert" onclick="createNewRow('candidates')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-             
+
               <div class="status-toggles">
                 <button class="btn-toggle active" data-status="">All</button>
                 <button class="btn-toggle" data-status="Active">Active</button>
                 <button class="btn-toggle" data-status="Inactive">Inactive</button>
               </div>
-         
+
               <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="selected-count">0</span>)
               </button>
@@ -321,7 +321,7 @@
               <button class="btn-insert" onclick="manualAddPlacement()">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-         
+
               <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)
               </button>
@@ -377,7 +377,7 @@
               <button class="btn-insert" onclick="createNewRow('hub')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-             
+
               <button id="btn-delete-hub" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('hub')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="hub-selected-count">0</span>)
               </button>
@@ -400,7 +400,7 @@
               <button class="btn-insert" onclick="createNewRow('employees')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-             
+
               <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="emp-selected-count">0</span>)
               </button>
@@ -423,7 +423,7 @@
               <button class="btn-insert" onclick="createNewRow('onboarding')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-         
+
               <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)
               </button>
@@ -441,58 +441,67 @@
         </div>
 
         <div id="view-access-control" class="content-view">
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
-            <h2 style="color:var(--primary); margin:0;"><i class="fa-solid fa-shield-halved"></i> Access Control</h2>
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="ac-search-input" placeholder="Search users..." style="background:transparent; border:none; color:var(--text-main); outline:none; width:150px;"></div>
-              <select id="ac-role-filter" class="modern-select" style="padding:6px 10px; border-radius:8px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main);">
-                <option value="">All Roles</option>
-                <option value="Admin">Admin</option>
-                <option value="Manager">Manager</option>
-                <option value="Employee">Employee</option>
-              </select>
-              <select id="ac-status-filter" class="modern-select" style="padding:6px 10px; border-radius:8px; background:var(--glass-bg); border:1px solid var(--glass-border); color:var(--text-main);">
-                <option value="">All Status</option>
-                <option value="approved">Approved</option>
-                <option value="pending">Pending</option>
-                <option value="rejected">Rejected</option>
-              </select>
+          <div class="toolbar glass-panel">
+            <div class="left-actions">
+              <h2 class="ac-page-title" style="color:var(--primary); margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-shield-halved"></i> Access Control
+              </h2>
+              <div class="status-toggles" id="ac-status-toggles">
+                <button class="btn-toggle active" data-ac-status="" onclick="setAcStatusFilter('', this)">All</button>
+                <button class="btn-toggle" data-ac-status="approved" onclick="setAcStatusFilter('approved', this)">Approved</button>
+                <button class="btn-toggle" data-ac-status="pending" onclick="setAcStatusFilter('pending', this)">Pending</button>
+                <button class="btn-toggle" data-ac-status="rejected" onclick="setAcStatusFilter('rejected', this)">Rejected</button>
+              </div>
+            </div>
+            <div class="filters-group modern-filter-row">
+              <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="ac-search-input" placeholder="Search name or email..."></div>
+              <div class="filter-pill"><i class="fa-solid fa-user-shield"></i>
+                <select id="ac-role-filter">
+                  <option value="">All Roles</option>
+                  <option value="Admin">Admin</option>
+                  <option value="Manager">Manager</option>
+                  <option value="Employee">Employee</option>
+                </select>
+                <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
+              </div>
+              <div class="filter-pill"><i class="fa-solid fa-toggle-on"></i>
+                <select id="ac-status-filter">
+                  <option value="">All Status</option>
+                  <option value="approved">Approved</option>
+                  <option value="pending">Pending</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+                <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
+              </div>
+              <button id="btn-reset-ac-filters" class="btn-circle-refresh" title="Reset filters" onclick="resetAcFilters()"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
           </div>
-          <div class="glass-panel" style="padding:0; overflow:hidden;">
+          <div class="table-container glass-panel">
             <div class="table-wrapper ac-table-wrapper">
               <table class="modern-table ac-table" id="access-control-table">
-                <colgroup id="ac-colgroup">
-                  <col data-col="index" style="width:48px;">
-                  <col data-col="name" style="width:180px;">
-                  <col data-col="email" style="width:260px;">
-                  <col data-col="role" style="width:130px;">
-                  <col data-col="access" style="width:160px;">
-                  <col data-col="read" style="width:70px;">
-                  <col data-col="edit" style="width:70px;">
-                  <col data-col="insert_delete" style="width:120px;">
-                  <col data-col="status" style="width:110px;">
-                  <col data-col="actions" style="width:120px;">
-                </colgroup>
-                <thead id="ac-table-head">
-                  <tr>
-                    <th data-col="index" class="ac-col-index">#</th>
-                    <th data-col="name" class="ac-col-name">Name</th>
-                    <th data-col="email" class="ac-col-email">Email</th>
-                    <th data-col="role" class="ac-col-role">Role</th>
-                    <th data-col="access" class="ac-col-access">Access Level</th>
-                    <th data-col="read" class="ac-col-read ac-center">Read</th>
-                    <th data-col="edit" class="ac-col-edit ac-center">Edit</th>
-                    <th data-col="insert_delete" class="ac-col-insert-delete ac-center">Insert/Delete</th>
-                    <th data-col="status" class="ac-col-status ac-center">Status</th>
-                    <th data-col="actions" class="ac-col-actions ac-center">Actions</th>
-                  </tr>
-                </thead>
+                <colgroup id="ac-colgroup"></colgroup>
+                <thead id="ac-table-head"></thead>
                 <tbody id="ac-table-body"></tbody>
               </table>
             </div>
+            <div class="footer-count ac-footer-bar">
+              <small id="ac-footer-count">Loading users...</small>
+              <div class="ac-pagination" id="ac-pagination">
+                <label class="ac-page-size-label">Rows
+                  <select id="ac-page-size" onchange="setAcPageSize(this.value)">
+                    <option value="10">10</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="0">All</option>
+                  </select>
+                </label>
+                <button class="btn-icon-small" id="ac-page-prev" title="Previous page" onclick="changeAcPage(-1)"><i class="fa-solid fa-chevron-left"></i></button>
+                <span id="ac-page-label">Page 1</span>
+                <button class="btn-icon-small" id="ac-page-next" title="Next page" onclick="changeAcPage(1)"><i class="fa-solid fa-chevron-right"></i></button>
+              </div>
+            </div>
           </div>
-          <div class="footer-count" style="margin-top:10px;"><small id="ac-footer-count">Loading users...</small></div>
         </div>
 
         <div id="view-notifications" class="content-view">
@@ -536,7 +545,7 @@
               </div>
               <div class="save-container"><button class="btn btn-primary btn-block btn-lg" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></div>
             </div>
-           
+
             <div class="profile-editor-card glass-panel">
               <div id="tab-personal" class="tab-content active">
                 <h3 class="tab-title">Basic Information</h3>
@@ -549,23 +558,6 @@
                   <div class="input-group-modern full-width"><label>Personal Email</label><div class="input-wrapper"><i class="fa-regular fa-envelope"></i><input type="email" id="prof-personal-email"></div></div>
                   <div class="input-group-modern"><label>Official Email <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-envelope"></i><input type="email" id="prof-office-email" readonly></div></div>
                   <div class="input-group-modern"><label>Designation <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-id-badge"></i><input type="text" id="prof-designation" readonly></div></div>
-                </div>
-
-                <div style="margin-top: 30px; border-top: 1px solid var(--glass-border); padding-top: 20px;">
-                  <h3 class="tab-title"><i class="fa-solid fa-laptop-medical"></i> Active Sessions</h3>
-                  <div class="glass-panel" style="background: rgba(0,0,0,0.2); padding: 0;">
-                    <table class="modern-table" style="width:100%;">
-                      <thead>
-                        <tr>
-                          <th style="background: transparent;">Device</th>
-                          <th style="background: transparent;">Location (IP)</th>
-                          <th style="background: transparent;">Last Active</th>
-                          <th style="background: transparent; text-align: right;">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody id="session-list-body"></tbody>
-                    </table>
-                  </div>
                 </div>
               </div>
             </div>
@@ -649,9 +641,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
-  
+
   <script src="script.js"></script>
-  
+
   <script>
       function toggleGmailMenu() {
           const menu = document.getElementById('gmail-sub-menu');
@@ -666,7 +658,7 @@
               icon.classList.add('fa-chevron-down');
           }
       }
-      
+
       function handleSettingsTheme(checkbox) {
           if (checkbox.checked) {
               document.body.classList.remove('light-mode');
