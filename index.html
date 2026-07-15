@@ -242,7 +242,10 @@
               <div class="chart-top">
                   <h4><i class="fa-solid fa-chart-pie text-gold"></i> Technology Spread</h4>
               </div>
-              <div class="canvas-wrapper"><canvas id="chart-tech"></canvas></div>
+              <div class="tech-chart-body">
+                <div class="canvas-wrapper tech-canvas-wrap"><canvas id="chart-tech"></canvas></div>
+                <div class="tech-legend" id="tech-legend" aria-label="Technology legend"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -457,20 +460,32 @@
             </div>
           </div>
           <div class="glass-panel" style="padding:0; overflow:hidden;">
-            <div class="table-wrapper">
-              <table class="modern-table" id="access-control-table">
+            <div class="table-wrapper ac-table-wrapper">
+              <table class="modern-table ac-table" id="access-control-table">
+                <colgroup id="ac-colgroup">
+                  <col data-col="index" style="width:48px;">
+                  <col data-col="name" style="width:180px;">
+                  <col data-col="email" style="width:260px;">
+                  <col data-col="role" style="width:130px;">
+                  <col data-col="access" style="width:160px;">
+                  <col data-col="read" style="width:70px;">
+                  <col data-col="edit" style="width:70px;">
+                  <col data-col="insert_delete" style="width:120px;">
+                  <col data-col="status" style="width:110px;">
+                  <col data-col="actions" style="width:120px;">
+                </colgroup>
                 <thead id="ac-table-head">
                   <tr>
-                    <th style="width:40px;">#</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Access Level</th>
-                    <th style="text-align:center;">Read</th>
-                    <th style="text-align:center;">Edit</th>
-                    <th style="text-align:center;">Insert/Delete</th>
-                    <th>Status</th>
-                    <th style="text-align:center;">Actions</th>
+                    <th data-col="index" class="ac-col-index">#</th>
+                    <th data-col="name" class="ac-col-name">Name</th>
+                    <th data-col="email" class="ac-col-email">Email</th>
+                    <th data-col="role" class="ac-col-role">Role</th>
+                    <th data-col="access" class="ac-col-access">Access Level</th>
+                    <th data-col="read" class="ac-col-read ac-center">Read</th>
+                    <th data-col="edit" class="ac-col-edit ac-center">Edit</th>
+                    <th data-col="insert_delete" class="ac-col-insert-delete ac-center">Insert/Delete</th>
+                    <th data-col="status" class="ac-col-status ac-center">Status</th>
+                    <th data-col="actions" class="ac-col-actions ac-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody id="ac-table-body"></tbody>
@@ -565,7 +580,7 @@
     <div class="glass-panel modal-box" style="max-width: 400px; text-align: center;">
       <div class="icon-box" style="margin: 0 auto 20px; background: rgba(239,68,68,0.2); color: var(--danger); width: 60px; height: 60px; border-radius: 50%; font-size: 1.5rem; display:flex; align-items:center; justify-content:center;"><i class="fa-solid fa-triangle-exclamation"></i></div>
       <h3 style="margin-bottom: 10px; color: var(--text-main);">Confirm Deletion</h3>
-      <p style="color: var(--text-muted); margin-bottom: 30px;">Permanently delete <span id="del-count" class="text-danger" style="font-weight: 800; font-size: 1.2rem;">0</span> items?</p>
+      <p id="delete-modal-message" style="color: var(--text-muted); margin-bottom: 30px;">Permanently delete <span id="del-count" class="text-danger" style="font-weight: 800; font-size: 1.2rem;">0</span> items?</p>
       <div style="display: flex; gap: 10px; justify-content: center;">
         <button class="btn" style="background: rgba(255,255,255,0.1); color: var(--text-main);" onclick="closeDeleteModal()">Cancel</button>
         <button id="btn-confirm-delete" class="btn btn-danger" onclick="executeDelete()">Yes, Delete</button>
