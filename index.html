@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-
+  
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
   <link rel="stylesheet" href="style.css">
@@ -35,7 +35,9 @@
       <div id="bday-names" class="bday-names"></div>
     </div>
   </div>
-<input type="file" id="profile-upload-input" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
+
+  <input type="file" id="hub-file-input" accept=".eml,.msg,.pdf,.docx" style="display:none;" onchange="handleHubFileSelect(this)">
+  <input type="file" id="profile-upload-input" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
 
   <div id="app" class="app-container">
     <div id="sidebar-overlay" class="sidebar-overlay"></div>
@@ -48,12 +50,12 @@
 
         <div id="form-login" class="auth-form active">
           <h3 class="form-title">Secure Portal Login</h3>
-
+          
           <div class="input-group">
             <i class="fa-solid fa-envelope input-icon"></i>
             <input type="email" id="login-email" placeholder="Official Email ID" autocomplete="email">
           </div>
-
+          
           <div class="input-group">
             <i class="fa-solid fa-lock input-icon"></i>
             <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
@@ -69,7 +71,7 @@
           <h3 class="form-title">Activate Account</h3>
           <div class="input-group"><i class="fa-solid fa-user input-icon"></i><input type="text" id="reg-name" placeholder="Full Name"></div>
           <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reg-email" placeholder="Official Email ID"></div>
-
+          
           <div class="input-group">
             <i class="fa-solid fa-lock input-icon"></i>
             <input type="password" id="reg-pass" placeholder="Set Password (Min 6 chars)">
@@ -102,13 +104,13 @@
     </section>
 
     <section id="dashboard-screen" class="screen">
-
+      
       <aside class="sidebar glass-panel" id="sidebar">
         <div class="brand-logo-small"><img src="https://nileprise.com/wp-content/uploads/2022/01/nile.png" alt="Nile Logo" class="brand-logo-img-small"></div>
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">GROUP</span> <span class="text-gold">CRM</span></div>
         <nav class="nav-menu">
           <button class="nav-item active" data-target="view-dashboard"><i class="fa-solid fa-chart-pie"></i> <span>Overview</span></button>
-
+          
           <div class="nav-item" style="cursor: default;" onclick="toggleGmailMenu()">
               <i class="fa-brands fa-google"></i>
               <span>Gmail</span>
@@ -131,7 +133,7 @@
               <button class="nav-item" onclick="renderGmailList('Drafts', this)">
                   <span class="material-icons" style="font-size: 18px;">drafts</span> <span>Drafts</span>
               </button>
-
+             
               <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
                   <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
               </div>
@@ -152,7 +154,7 @@
                       <small>Create label</small>
                   </div>
               </div>
-
+             
               <div style="margin-top: 15px; padding-left: 5px; color: gray; font-size: 10px; font-weight: bold; display:flex; justify-content:space-between; padding-right:10px;">
                   <span>LABELS</span>
                   <span id="manage-indicator" style="display:none; color:var(--danger); cursor:pointer;" onclick="toggleManageMode()">Done</span>
@@ -178,7 +180,7 @@
       </aside>
 
       <main class="main-content">
-
+       
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
           <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
@@ -204,7 +206,7 @@
             <div><h2 style="margin:0;">Executive Overview</h2></div>
             <div class="date-badge"><i class="fa-regular fa-calendar"></i> <span id="current-date-display">Live</span></div>
           </div>
-
+          
           <div class="kpi-grid">
             <div class="kpi-card accent-blue">
               <div class="kpi-content">
@@ -289,13 +291,13 @@
               <button class="btn-insert" onclick="createNewRow('candidates')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-
+             
               <div class="status-toggles">
                 <button class="btn-toggle active" data-status="">All</button>
                 <button class="btn-toggle" data-status="Active">Active</button>
                 <button class="btn-toggle" data-status="Inactive">Inactive</button>
               </div>
-
+         
               <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="selected-count">0</span>)
               </button>
@@ -321,7 +323,7 @@
               <button class="btn-insert" onclick="manualAddPlacement()">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-
+         
               <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)
               </button>
@@ -377,7 +379,7 @@
               <button class="btn-insert" onclick="createNewRow('hub')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-
+             
               <button id="btn-delete-hub" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('hub')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="hub-selected-count">0</span>)
               </button>
@@ -400,7 +402,7 @@
               <button class="btn-insert" onclick="createNewRow('employees')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-
+             
               <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="emp-selected-count">0</span>)
               </button>
@@ -423,7 +425,7 @@
               <button class="btn-insert" onclick="createNewRow('onboarding')">
                 <i class="fa-solid fa-plus"></i> Insert Row
               </button>
-
+         
               <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')">
                 <i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)
               </button>
@@ -545,7 +547,7 @@
               </div>
               <div class="save-container"><button class="btn btn-primary btn-block btn-lg" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></div>
             </div>
-
+           
             <div class="profile-editor-card glass-panel">
               <div id="tab-personal" class="tab-content active">
                 <h3 class="tab-title">Basic Information</h3>
@@ -558,6 +560,23 @@
                   <div class="input-group-modern full-width"><label>Personal Email</label><div class="input-wrapper"><i class="fa-regular fa-envelope"></i><input type="email" id="prof-personal-email"></div></div>
                   <div class="input-group-modern"><label>Official Email <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-envelope"></i><input type="email" id="prof-office-email" readonly></div></div>
                   <div class="input-group-modern"><label>Designation <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-id-badge"></i><input type="text" id="prof-designation" readonly></div></div>
+                </div>
+
+                <div style="margin-top: 30px; border-top: 1px solid var(--glass-border); padding-top: 20px;">
+                  <h3 class="tab-title"><i class="fa-solid fa-laptop-medical"></i> Active Sessions</h3>
+                  <div class="glass-panel" style="background: rgba(0,0,0,0.2); padding: 0;">
+                    <table class="modern-table" style="width:100%;">
+                      <thead>
+                        <tr>
+                          <th style="background: transparent;">Device</th>
+                          <th style="background: transparent;">Location (IP)</th>
+                          <th style="background: transparent;">Last Active</th>
+                          <th style="background: transparent; text-align: right;">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody id="session-list-body"></tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
@@ -641,9 +660,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
-
+  
   <script src="script.js"></script>
-
+  
   <script>
       function toggleGmailMenu() {
           const menu = document.getElementById('gmail-sub-menu');
@@ -658,7 +677,7 @@
               icon.classList.add('fa-chevron-down');
           }
       }
-
+      
       function handleSettingsTheme(checkbox) {
           if (checkbox.checked) {
               document.body.classList.remove('light-mode');
