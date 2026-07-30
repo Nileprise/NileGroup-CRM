@@ -5,29 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>NILEGROUP CRM | Unified Portal</title>
 
+  <!-- Fonts & Icons -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   
+  <!-- Chart.js (external library) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
+  <!-- Our custom CSS (no inline styles) -->
   <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
+  <!-- Background Animation -->
   <div class="bg-animation">
     <div class="blob blob-1"></div>
     <div class="blob blob-2"></div>
     <div class="blob blob-3"></div>
   </div>
 
+  <!-- Toast Notification -->
   <div id="toast" class="toast">
-    <div class="toast-icon" id="toast-icon-container"><i class="fa-solid fa-circle-check"></i></div>
+    <div class="toast-icon"><i class="fa-solid fa-circle-check"></i></div>
     <div class="toast-content"><span class="toast-message" id="toast-msg">Operation completed.</span></div>
   </div>
 
+  <!-- Birthday Card -->
   <div id="birthday-card" class="birthday-card glass-panel" style="display:none;">
     <div class="bday-icon"><i class="fa-solid fa-cake-candles"></i></div>
     <div class="bday-content">
@@ -36,52 +42,41 @@
     </div>
   </div>
 
+  <!-- Hidden File Inputs -->
   <input type="file" id="hub-file-input" accept=".eml,.msg,.pdf,.docx" style="display:none;" onchange="handleHubFileSelect(this)">
   <input type="file" id="profile-upload-input" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
 
   <div id="app" class="app-container">
     <div id="sidebar-overlay" class="sidebar-overlay"></div>
 
+    <!-- ==================== AUTH SCREEN ==================== -->
     <section id="auth-screen" class="screen active">
       <div class="glass-panel auth-box">
         <div class="brand-logo"><img src="https://nileprise.com/wp-content/uploads/2022/01/nile.png" alt="Nile Logo" class="brand-logo-img"></div>
         <div class="brand-large"><span class="text-cyan">NI</span><span class="text-white">LE</span><span class="text-gold">GROUP</span></div>
         <p class="subtitle">Next Innovative Leading Enterprises</p>
 
+        <!-- Login Form -->
         <div id="form-login" class="auth-form active">
           <h3 class="form-title">Secure Portal Login</h3>
-          
-          <div class="input-group">
-            <i class="fa-solid fa-envelope input-icon"></i>
-            <input type="email" id="login-email" placeholder="Official Email ID" autocomplete="email">
-          </div>
-          
-          <div class="input-group">
-            <i class="fa-solid fa-lock input-icon"></i>
-            <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
-            <i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('login-pass', this)"></i>
-          </div>
-
+          <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="login-email" placeholder="Official Email ID" autocomplete="email"></div>
+          <div class="input-group"><i class="fa-solid fa-lock input-icon"></i><input type="password" id="login-pass" placeholder="Password" autocomplete="current-password"><i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('login-pass', this)"></i></div>
           <div class="form-actions"><span class="link-text" onclick="switchAuth('forgot')">Forgot Password?</span></div>
           <button id="btn-login-action" class="btn btn-primary btn-block" onclick="handleLogin()">Login</button>
           <p class="switch-text">First time? <span onclick="switchAuth('signup')">Activate Account</span></p>
         </div>
 
+        <!-- Signup Form -->
         <div id="form-signup" class="auth-form">
           <h3 class="form-title">Activate Account</h3>
           <div class="input-group"><i class="fa-solid fa-user input-icon"></i><input type="text" id="reg-name" placeholder="Full Name"></div>
           <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reg-email" placeholder="Official Email ID"></div>
-          
-          <div class="input-group">
-            <i class="fa-solid fa-lock input-icon"></i>
-            <input type="password" id="reg-pass" placeholder="Set Password (Min 6 chars)">
-            <i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('reg-pass', this)"></i>
-          </div>
-
+          <div class="input-group"><i class="fa-solid fa-lock input-icon"></i><input type="password" id="reg-pass" placeholder="Set Password (Min 6 chars)"><i class="fa-solid fa-eye toggle-password" onclick="togglePasswordVisibility('reg-pass', this)"></i></div>
           <button id="btn-signup-action" class="btn btn-primary btn-block" onclick="handleSignup()">Register</button>
           <p class="switch-text">Back to <span onclick="switchAuth('login')">Login</span></p>
         </div>
 
+        <!-- Forgot Password Form -->
         <div id="form-forgot" class="auth-form">
           <h3 class="form-title">Reset Password</h3>
           <div class="input-group"><i class="fa-solid fa-envelope input-icon"></i><input type="email" id="reset-email" placeholder="Official Email ID"></div>
@@ -91,6 +86,7 @@
       </div>
     </section>
 
+    <!-- ==================== VERIFY SCREEN ==================== -->
     <section id="verify-screen" class="screen">
       <div class="glass-panel auth-box">
         <h3 class="form-title">Verify Your Email</h3>
@@ -103,8 +99,10 @@
       </div>
     </section>
 
+    <!-- ==================== DASHBOARD SCREEN ==================== -->
     <section id="dashboard-screen" class="screen">
       
+      <!-- Sidebar -->
       <aside class="sidebar glass-panel" id="sidebar">
         <div class="brand-logo-small"><img src="https://nileprise.com/wp-content/uploads/2022/01/nile.png" alt="Nile Logo" class="brand-logo-img-small"></div>
         <div class="brand-small"><span class="text-cyan">NILE</span><span class="text-white">GROUP</span> <span class="text-gold">CRM</span></div>
@@ -179,8 +177,8 @@
         </nav>
       </aside>
 
+      <!-- Main Content Area -->
       <main class="main-content">
-       
         <header class="top-bar">
           <button id="btn-mobile-menu" class="btn-icon" style="margin-right: 10px; display: none;"><i class="fa-solid fa-bars"></i></button>
           <h2 id="page-title"><i class="fa-solid fa-chart-pie"></i> Overview</h2>
@@ -201,22 +199,15 @@
           </div>
         </header>
 
+        <!-- ========== DASHBOARD VIEW ========== -->
         <div id="view-dashboard" class="content-view active">
           <div class="dashboard-header-row">
             <div><h2 style="margin:0;">Executive Overview</h2></div>
             <div class="date-badge"><i class="fa-regular fa-calendar"></i> <span id="current-date-display">Live</span></div>
           </div>
-          
           <div class="kpi-grid">
             <div class="kpi-card accent-blue">
-              <div class="kpi-content">
-                <span class="kpi-label">Total Candidates</span>
-                <h1 id="stat-total" class="kpi-value">0</h1>
-                <div class="kpi-subtext">
-                  <span class="text-success" style="margin-right: 15px;"><span id="stat-active">0</span> Active</span>
-                  <span class="text-danger"><span id="stat-inactive">0</span> Inactive</span>
-                </div>
-              </div>
+              <div class="kpi-content"><span class="kpi-label">Total Candidates</span><h1 id="stat-total" class="kpi-value">0</h1><div class="kpi-subtext"><span class="text-success" style="margin-right: 15px;"><span id="stat-active">0</span> Active</span><span class="text-danger"><span id="stat-inactive">0</span> Inactive</span></div></div>
               <div class="kpi-icon"><i class="fa-solid fa-users"></i></div>
             </div>
             <div class="kpi-card accent-green">
@@ -232,26 +223,19 @@
               <div class="kpi-icon"><i class="fa-solid fa-user-tie"></i></div>
             </div>
           </div>
-
           <div class="charts-grid">
-            <div class="chart-container large-chart">
-              <div class="chart-top">
-                  <h4><i class="fa-solid fa-chart-column text-cyan"></i> Candidates by Recruiter</h4>
-              </div>
-              <div class="canvas-wrapper"><canvas id="chart-recruiter"></canvas></div>
-            </div>
+            <div class="chart-container large-chart"><div class="chart-top"><h4><i class="fa-solid fa-chart-column text-cyan"></i> Candidates by Recruiter</h4></div><div class="canvas-wrapper"><canvas id="chart-recruiter"></canvas></div></div>
             <div class="chart-container small-chart">
-              <div class="chart-top">
-                  <h4><i class="fa-solid fa-chart-pie text-gold"></i> Technology Spread</h4>
-              </div>
+              <div class="chart-top"><h4><i class="fa-solid fa-chart-pie text-gold"></i> Technology Spread</h4></div>
               <div class="tech-chart-body">
                 <div class="canvas-wrapper tech-canvas-wrap"><canvas id="chart-tech"></canvas></div>
-                <div class="tech-legend" id="tech-legend" aria-label="Technology legend"></div>
+                <div class="tech-legend" id="tech-legend"></div>
               </div>
             </div>
           </div>
         </div>
 
+        <!-- ========== GMAIL INBOX VIEW ========== -->
         <div id="view-inbox" class="content-view" style="padding: 0; overflow: hidden;">
             <div class="gmail-main-area glass-panel" id="gmail-list-view" style="height: 100%;">
                 <div class="gmail-toolbar">
@@ -266,7 +250,6 @@
                 </div>
                 <div class="gmail-scroll-area" id="gmail-rows-container"></div>
             </div>
-
             <div class="gmail-main-area glass-panel" id="gmail-detail-view" style="display: none; height: 100%;">
                 <div class="gmail-toolbar">
                     <button class="btn-icon-small" onclick="backToGmailList()"><span class="material-icons">arrow_back</span></button>
@@ -285,22 +268,17 @@
             </div>
         </div>
 
+        <!-- ========== CANDIDATES VIEW ========== -->
         <div id="view-candidates" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('candidates')">
-                <i class="fa-solid fa-plus"></i> Insert Row
-              </button>
-             
+              <button class="btn-insert" onclick="createNewRow('candidates')"><i class="fa-solid fa-plus"></i> Insert Row</button>
               <div class="status-toggles">
                 <button class="btn-toggle active" data-status="">All</button>
                 <button class="btn-toggle" data-status="Active">Active</button>
                 <button class="btn-toggle" data-status="Inactive">Inactive</button>
               </div>
-         
-              <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')">
-                <i class="fa-solid fa-trash-can"></i> (<span id="selected-count">0</span>)
-              </button>
+              <button id="btn-delete-selected" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('cand')"><i class="fa-solid fa-trash-can"></i> (<span id="selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="search-input" placeholder="Search..."></div>
@@ -317,16 +295,12 @@
           </div>
         </div>
 
+        <!-- ========== PLACEMENTS VIEW ========== -->
         <div id="view-placements" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="manualAddPlacement()">
-                <i class="fa-solid fa-plus"></i> Insert Row
-              </button>
-         
-              <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')">
-                <i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)
-              </button>
+              <button class="btn-insert" onclick="manualAddPlacement()"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')"><i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="date-filter-pill" style="margin-right: 10px;">
@@ -344,14 +318,13 @@
           </div>
           <div class="table-container glass-panel">
             <div class="table-wrapper">
-              <table class="modern-table" id="placement-table">
-                <thead id="placement-table-head"></thead> <tbody id="placement-table-body"></tbody>
-              </table>
+              <table class="modern-table" id="placement-table"><thead id="placement-table-head"></thead><tbody id="placement-table-body"></tbody></table>
             </div>
             <div class="footer-count"><small id="placement-footer-count">Showing 0 records</small></div>
           </div>
         </div>
 
+        <!-- ========== CANDIDATE HUB VIEW ========== -->
         <div id="view-hub" class="content-view">
           <div class="glass-panel" style="padding: 20px; margin-bottom: 20px; flex-shrink: 0;">
             <div class="hub-header-row">
@@ -376,13 +349,8 @@
           </div>
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('hub')">
-                <i class="fa-solid fa-plus"></i> Insert Row
-              </button>
-             
-              <button id="btn-delete-hub" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('hub')">
-                <i class="fa-solid fa-trash-can"></i> (<span id="hub-selected-count">0</span>)
-              </button>
+              <button class="btn-insert" onclick="createNewRow('hub')"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button id="btn-delete-hub" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('hub')"><i class="fa-solid fa-trash-can"></i> (<span id="hub-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="hub-search-input" placeholder="Search Candidate..."></div>
@@ -396,16 +364,12 @@
           </div>
         </div>
 
+        <!-- ========== EMPLOYEES VIEW ========== -->
         <div id="view-employees" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('employees')">
-                <i class="fa-solid fa-plus"></i> Insert Row
-              </button>
-             
-              <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')">
-                <i class="fa-solid fa-trash-can"></i> (<span id="emp-selected-count">0</span>)
-              </button>
+              <button class="btn-insert" onclick="createNewRow('employees')"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')"><i class="fa-solid fa-trash-can"></i> (<span id="emp-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="emp-search-input" placeholder="Search Employee..."></div>
@@ -419,16 +383,12 @@
           </div>
         </div>
 
+        <!-- ========== ONBOARDING VIEW ========== -->
         <div id="view-onboarding" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('onboarding')">
-                <i class="fa-solid fa-plus"></i> Insert Row
-              </button>
-         
-              <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')">
-                <i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)
-              </button>
+              <button class="btn-insert" onclick="createNewRow('onboarding')"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')"><i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="onb-search-input" placeholder="Search Name..."></div>
@@ -442,12 +402,11 @@
           </div>
         </div>
 
+        <!-- ========== ACCESS CONTROL VIEW ========== -->
         <div id="view-access-control" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <h2 class="ac-page-title" style="color:var(--primary); margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
-                <i class="fa-solid fa-shield-halved"></i> Access Control
-              </h2>
+              <h2 class="ac-page-title" style="color:var(--primary); margin:0; font-size:1.15rem; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-shield-halved"></i> Access Control</h2>
               <div class="status-toggles" id="ac-status-toggles">
                 <button class="btn-toggle active" data-ac-status="" onclick="setAcStatusFilter('', this)">All</button>
                 <button class="btn-toggle" data-ac-status="approved" onclick="setAcStatusFilter('approved', this)">Approved</button>
@@ -457,24 +416,8 @@
             </div>
             <div class="filters-group modern-filter-row">
               <div class="filter-pill"><i class="fa-solid fa-search"></i><input type="text" id="ac-search-input" placeholder="Search name or email..."></div>
-              <div class="filter-pill"><i class="fa-solid fa-user-shield"></i>
-                <select id="ac-role-filter">
-                  <option value="">All Roles</option>
-                  <option value="Admin">Admin</option>
-                  <option value="Manager">Manager</option>
-                  <option value="Employee">Employee</option>
-                </select>
-                <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
-              </div>
-              <div class="filter-pill"><i class="fa-solid fa-toggle-on"></i>
-                <select id="ac-status-filter">
-                  <option value="">All Status</option>
-                  <option value="approved">Approved</option>
-                  <option value="pending">Pending</option>
-                  <option value="rejected">Rejected</option>
-                </select>
-                <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
-              </div>
+              <div class="filter-pill"><i class="fa-solid fa-user-shield"></i><select id="ac-role-filter"><option value="">All Roles</option><option value="Admin">Admin</option><option value="Manager">Manager</option><option value="Employee">Employee</option></select><i class="fa-solid fa-chevron-down dropdown-arrow"></i></div>
+              <div class="filter-pill"><i class="fa-solid fa-toggle-on"></i><select id="ac-status-filter"><option value="">All Status</option><option value="approved">Approved</option><option value="pending">Pending</option><option value="rejected">Rejected</option></select><i class="fa-solid fa-chevron-down dropdown-arrow"></i></div>
               <button id="btn-reset-ac-filters" class="btn-circle-refresh" title="Reset filters" onclick="resetAcFilters()"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
           </div>
@@ -506,6 +449,7 @@
           </div>
         </div>
 
+        <!-- ========== NOTIFICATIONS VIEW ========== -->
         <div id="view-notifications" class="content-view">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:10px;">
             <h2 style="color:var(--primary); margin:0;"><i class="fa-solid fa-bell"></i> Notifications</h2>
@@ -516,6 +460,7 @@
           </div>
         </div>
 
+        <!-- ========== SETTINGS VIEW ========== -->
         <div id="view-settings" class="content-view">
           <h2 style="margin-bottom: 20px; color: var(--primary);">Settings</h2>
           <div class="glass-panel setting-card">
@@ -527,6 +472,7 @@
           </div>
         </div>
 
+        <!-- ========== PROFILE VIEW ========== -->
         <div id="view-profile" class="content-view">
           <div class="profile-modern-container">
             <div class="profile-identity-card glass-panel">
@@ -547,7 +493,6 @@
               </div>
               <div class="save-container"><button class="btn btn-primary btn-block btn-lg" onclick="saveProfileData()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></div>
             </div>
-           
             <div class="profile-editor-card glass-panel">
               <div id="tab-personal" class="tab-content active">
                 <h3 class="tab-title">Basic Information</h3>
@@ -561,19 +506,11 @@
                   <div class="input-group-modern"><label>Official Email <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-envelope"></i><input type="email" id="prof-office-email" readonly></div></div>
                   <div class="input-group-modern"><label>Designation <span class="badge-locked">Locked</span></label><div class="input-wrapper locked"><i class="fa-solid fa-id-badge"></i><input type="text" id="prof-designation" readonly></div></div>
                 </div>
-
                 <div style="margin-top: 30px; border-top: 1px solid var(--glass-border); padding-top: 20px;">
                   <h3 class="tab-title"><i class="fa-solid fa-laptop-medical"></i> Active Sessions</h3>
                   <div class="glass-panel" style="background: rgba(0,0,0,0.2); padding: 0;">
                     <table class="modern-table" style="width:100%;">
-                      <thead>
-                        <tr>
-                          <th style="background: transparent;">Device</th>
-                          <th style="background: transparent;">Location (IP)</th>
-                          <th style="background: transparent;">Last Active</th>
-                          <th style="background: transparent; text-align: right;">Action</th>
-                        </tr>
-                      </thead>
+                      <thead><tr><th style="background: transparent;">Device</th><th style="background: transparent;">Location (IP)</th><th style="background: transparent;">Last Active</th><th style="background: transparent; text-align: right;">Action</th></tr></thead>
                       <tbody id="session-list-body"></tbody>
                     </table>
                   </div>
@@ -587,6 +524,8 @@
     </section>
   </div>
 
+  <!-- ==================== MODALS ==================== -->
+  <!-- Delete Confirmation Modal -->
   <div id="delete-modal" class="modal-overlay">
     <div class="glass-panel modal-box" style="max-width: 400px; text-align: center;">
       <div class="icon-box" style="margin: 0 auto 20px; background: rgba(239,68,68,0.2); color: var(--danger); width: 60px; height: 60px; border-radius: 50%; font-size: 1.5rem; display:flex; align-items:center; justify-content:center;"><i class="fa-solid fa-triangle-exclamation"></i></div>
@@ -599,6 +538,7 @@
     </div>
   </div>
 
+  <!-- Compose Email Modal -->
   <div id="crm-compose-modal" class="modal-overlay" style="z-index: 3000;">
     <div class="glass-panel modal-box compose-box">
       <div class="compose-header"><h3>New Message</h3><div class="window-controls"><button class="btn-icon-small" onclick="closeComposeModal()"><i class="fa-solid fa-xmark"></i></button></div></div>
@@ -615,6 +555,7 @@
     </div>
   </div>
 
+  <!-- Create Label Modal -->
   <div id="create-label-modal" class="modal-overlay">
     <div class="modal-box glass-panel">
         <h3 style="margin-bottom: 15px; color: var(--text-main);">New Label</h3>
@@ -633,6 +574,7 @@
     </div>
   </div>
 
+  <!-- Add Column Modal -->
   <div id="add-column-modal" class="modal-overlay">
     <div class="glass-panel modal-box">
       <h3 style="margin-bottom: 15px; color: var(--text-main);">Add New Column</h3>
@@ -656,37 +598,13 @@
     </div>
   </div>
 
+  <!-- ==================== EXTERNAL SCRIPTS ==================== -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
   
+  <!-- Our custom JavaScript file (contains all logic + improvements) -->
   <script src="script.js"></script>
-  
-  <script>
-      function toggleGmailMenu() {
-          const menu = document.getElementById('gmail-sub-menu');
-          const icon = document.getElementById('gmail-toggle-icon');
-          if (menu.style.display === 'none') {
-              menu.style.display = 'block';
-              icon.classList.remove('fa-chevron-down');
-              icon.classList.add('fa-chevron-up');
-          } else {
-              menu.style.display = 'none';
-              icon.classList.remove('fa-chevron-up');
-              icon.classList.add('fa-chevron-down');
-          }
-      }
-      
-      function handleSettingsTheme(checkbox) {
-          if (checkbox.checked) {
-              document.body.classList.remove('light-mode');
-              localStorage.setItem('np_theme', 'dark');
-          } else {
-              document.body.classList.add('light-mode');
-              localStorage.setItem('np_theme', 'light');
-          }
-      }
-  </script>
 </body>
 </html>
