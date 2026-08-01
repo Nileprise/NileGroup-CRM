@@ -421,14 +421,24 @@ function initRealtimeListeners() {
         updateHubStats(state.hub.filterType, state.hub.date);
     });
 
-    db.collection('employees').onSnapshot(snap => {
+    // ========== SECURE EMPLOYEE FETCH ==========
+    let empQuery = db.collection('employees');
+    
+    // Database-level restriction: Employees only fetch data matching their login email
+    if (state.userRole === 'Employee' && state.user && state.user.email) {
+        empQuery = empQuery.where('officialEmail', '==', state.user.email);
+    }
+
+    empQuery.onSnapshot(snap => {
         state.employees = []; 
         snap.forEach(doc => state.employees.push({ id: doc.id, ...doc.data() }));
+        
         state.employees.sort((a, b) => { 
             const aOrder = a.orderIndex !== undefined ? a.orderIndex : -a.createdAt; 
             const bOrder = b.orderIndex !== undefined ? b.orderIndex : -b.createdAt; 
             return aOrder - bOrder; 
         });
+        
         renderEmployeeTable(); 
         updateSelectButtons('emp');
         buildDropdownMetadata(); 
@@ -543,13 +553,14 @@ function buildDropdownMetadata() {
     state.metadata.techs = Array.from(techs).sort();
 
     const recruiters = new Set();
+    
+    // ONLY collect the first name from the employees table
     state.employees.forEach(e => { 
-        const fullName = [e.first, e.last].filter(Boolean).join(' ').trim();
-        if (fullName) recruiters.add(fullName);
-        else if (e.first) recruiters.add(e.first.trim()); 
+        if (e.first && e.first.trim()) {
+            recruiters.add(e.first.trim()); 
+        }
     });
-    state.candidates.forEach(c => { if (c.recruiter) recruiters.add(c.recruiter.trim()); });
-    state.placements.forEach(p => { if (p.recruiter) recruiters.add(p.recruiter.trim()); });
+
     state.metadata.recruiters = Array.from(recruiters).map(r => ({ value: r, display: r })).sort((a, b) => a.value.localeCompare(b.value));
     renderDropdowns();
 }
@@ -565,11 +576,24 @@ function renderDropdowns() {
 }
 
 function dropdownMinWidth(labels, minPx = 140, maxPx = 280) { return Math.min(maxPx, Math.max(minPx, (labels || []).reduce((m, s) => Math.max(m, String(s || '').length), 8) * 8.5 + 36)); }
+
 window.generateRecruiterDropdown = (currentVal, id, collection) => {
-    const list = state.metadata.recruiters || []; const labels = list.map(r => r.display || r.value); if (currentVal) labels.push(currentVal);
+    // Clone the list so we can inject legacy values if needed without polluting the master list
+    const list = [...(state.metadata.recruiters || [])]; 
+    const labels = list.map(r => r.display || r.value); 
+    
+    // If a legacy name exists that isn't in the employee table anymore, inject it so the cell isn't blank
+    if (currentVal) {
+        labels.push(currentVal);
+        if (!list.some(r => r.value === currentVal)) {
+            list.push({ value: currentVal, display: currentVal });
+        }
+    }
+    
     const options = list.map(r => `<option value="${r.value}" ${r.value === currentVal ? 'selected' : ''}>${r.display}</option>`).join('');
     return `<select class="status-select table-select-auto" style="width:100%; min-width:${dropdownMinWidth(labels, 160, 260)}px;" onchange="updateRecruiter('${id}', '${collection}', this.value)" onclick="event.stopPropagation()" ${!canEdit() ? 'disabled' : ''}><option value="" ${!currentVal ? 'selected' : ''}>Select Recruiter</option>${options}</select>`;
 };
+
 window.updateRecruiter = (id, collection, val) => {
     const oldVal = getOldValue(collection, id, 'recruiter'); pushToHistory(collection, id, 'recruiter', oldVal, val);
     db.collection(resolveDbCollection(collection, id)).doc(id).update({ recruiter: val }).then(() => showToast("Recruiter Auto-Saved"));
@@ -657,15 +681,34 @@ function applyAcSingleColumnWidth(key, width) {
     setAcElWidth(table.querySelector(`thead th[data-col="${key}"]`), w);
     const rows = table.tBodies[0] ? table.tBodies[0].rows : []; for (let r = 0; r < rows.length; r++) setAcElWidth(rows[r].cells[idx], w);
     if (!__acLiveWidths) __acLiveWidths = loadAcColumnWidths(); __acLiveWidths[key] = w;
-    let total = 0; getAcLiveColumnKeys().forEach(k => total += Number(__acLiveWidths[k]) || AC_COL_DEFAULTS[k] || 140);
-    table.style.setProperty('width', total + 'px', 'important'); table.style.setProperty('min-width', total + 'px', 'important');
+    
+    // --- Recalculate sticky offsets in real-time during resize ---
+    let currentLeft = 0;
+    getAcLiveColumnKeys().forEach((k, i) => {
+        const currentW = Number(__acLiveWidths[k]) || AC_COL_DEFAULTS[k] || 140;
+        if (i === 1) table.style.setProperty('--ac-col2-left', currentLeft + 'px');
+        if (i === 2) table.style.setProperty('--ac-col3-left', currentLeft + 'px');
+        currentLeft += currentW;
+    });
+
+    table.style.setProperty('width', currentLeft + 'px', 'important'); table.style.setProperty('min-width', currentLeft + 'px', 'important');
 }
+
 function applyAcColumnWidths(widths) {
     const table = document.getElementById('access-control-table'); if (!table) return;
     if (!widths) widths = loadAcColumnWidths();
     let total = 0;
+    let leftOffset = 0; 
+    
     getAcLiveColumnKeys().forEach((key, idx) => {
-        const w = clampAcWidth(key, widths[key] ?? AC_COL_DEFAULTS[key] ?? 140); widths[key] = w; total += w;
+        const w = clampAcWidth(key, widths[key] ?? AC_COL_DEFAULTS[key] ?? 140); widths[key] = w; 
+        
+        // --- Set CSS variables for sticky positioning ---
+        if (idx === 1) table.style.setProperty('--ac-col2-left', leftOffset + 'px');
+        if (idx === 2) table.style.setProperty('--ac-col3-left', leftOffset + 'px');
+        leftOffset += w;
+        total += w;
+
         const col = table.querySelector(`#ac-colgroup col[data-col="${key}"]`); if (col) { col.style.setProperty('width', w + 'px', 'important'); col.style.setProperty('min-width', w + 'px', 'important'); }
         setAcElWidth(table.querySelector(`thead th[data-col="${key}"]`), w);
         const rows = table.tBodies[0] ? table.tBodies[0].rows : []; for (let r = 0; r < rows.length; r++) setAcElWidth(rows[r].cells[idx], w);
@@ -784,7 +827,12 @@ window.renderNotifications = () => { const container = document.getElementById('
 window.markNotificationRead = async (id) => { try { await db.collection('notifications').doc(id).update({ read: true }); } catch (e) { showToast("Failed to mark read"); } };
 window.deleteNotification = async (id) => { try { await db.collection('notifications').doc(id).delete(); } catch (e) { showToast("Failed to dismiss"); } };
 
-function getRoleFilteredData(data, type) { if (!state.user) return data; if (state.userRole === 'Admin' || state.userRole === 'Manager') return data; if (type === 'employees') return data.filter(item => item.officialEmail === state.user.email); return data.filter(item => item.recruiter === state.currentUserName); }
+function getRoleFilteredData(data, type) { 
+    if (!state.user) return []; 
+    if (state.userRole === 'Admin' || state.userRole === 'Manager') return data; 
+    if (type === 'employees') return data.filter(item => item.officialEmail === state.user.email);
+    return data.filter(item => item.recruiter === state.currentUserName); 
+}
 function getFilteredData(data, filters) { return getRoleFilteredData(data, 'candidates').filter(item => { if (item.status === 'Placed') return false; return (!filters.text || (item.first + ' ' + item.last + ' ' + (item.tech||'')).toLowerCase().includes(filters.text)) && (!filters.recruiter || item.recruiter === filters.recruiter) && (!filters.tech || item.tech === filters.tech) && (!filters.status || item.status === filters.status); }); }
 
 function resolveDbCollection(collection, id) {
@@ -812,7 +860,6 @@ function updateUndoRedoUI() {
     if (undoBtn) { undoBtn.disabled = historyState.undo.length === 0; const last = historyState.undo[historyState.undo.length - 1]; undoBtn.title = last ? `Undo: ${last.label || last.type} (Ctrl+Z)` : 'Undo (Ctrl+Z)'; }
     if (redoBtn) { redoBtn.disabled = historyState.redo.length === 0; const next = historyState.redo[historyState.redo.length - 1]; redoBtn.title = next ? `Redo: ${next.label || next.type} (Ctrl+Y)` : 'Redo (Ctrl+Y)'; }
 }
-function stripLocalMeta(doc) { if (!doc || typeof doc !== 'object') return {}; const clean = { ...doc }; delete clean.id; delete clean._hubSource; return clean; }
 
 async function applyHistoryEntry(entry, direction) {
     if (!entry) return; historyState.applying = true;
@@ -831,12 +878,7 @@ window.undoLastAction = async () => { if (!historyState.undo.length) { showToast
 window.redoLastAction = async () => { if (!historyState.redo.length) { showToast('Nothing to redo'); return; } const entry = historyState.redo.pop(); try { await applyHistoryEntry(entry, 'redo'); historyState.undo.push(entry); logActivity('redo', entry.collection || entry.context || 'app', entry.id || null, entry.label || entry.type).catch(() => {}); } catch (e) { historyState.redo.push(entry); showToast('Redo failed: ' + (e.message || '')); } finally { updateUndoRedoUI(); } };
 
 document.addEventListener('keydown', (e) => { if (!(e.ctrlKey || e.metaKey)) return; const key = (e.key || '').toLowerCase(); if (key === 'z' && !e.shiftKey) { e.preventDefault(); undoLastAction(); } else if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); redoLastAction(); } });
-// Global alias fallback to catch any capitalized calls
-const UpdateDashboardStats = function() {
-    if (typeof updateDashboardStats === 'function') {
-        return updateDashboardStats();
-    }
-};
+
 /* ==========================================================================
    9. DASHBOARD CHARTS & STATS
    ========================================================================== */
@@ -856,13 +898,8 @@ function updateDashboardStats() {
     if(document.getElementById('stat-rec')) document.getElementById('stat-rec').innerText = roleEmployees.length;
 }
 
-// Case-insensitive safety alias (using direct assignment instead of const)
 window.UpdateDashboardStats = updateDashboardStats;
 
-
-/* ==========================================================================
-   9. DASHBOARD CHARTS & STATS
-   ========================================================================== */
 let recChartInstance = null;
 let techChartInstance = null;
 
@@ -887,13 +924,13 @@ function renderDashboardCharts() {
     const techLabels = Object.keys(techCounts); 
     const techData = Object.values(techCounts);
     
-    // Dynamic golden angle colors for infinite distinct slices
-    const baseColors = ['rgba(6,182,212,0.8)', 'rgba(245,158,11,0.8)', 'rgba(139,92,246,0.8)', 'rgba(34,197,94,0.8)', 'rgba(239,68,68,0.8)', 'rgba(59,130,246,0.8)', 'rgba(236,72,153,0.8)'];
     const techColors = techLabels.map((_, index) => {
-        if (index < baseColors.length) return baseColors[index];
         const hue = (index * 137.508) % 360; 
-        return `hsla(${hue}, 70%, 60%, 0.8)`;
+        return `hsla(${hue}, 85%, 65%, 0.85)`; 
     });
+    
+    Chart.defaults.color = '#cbd5e1';
+    Chart.defaults.font.family = 'inherit';
     
     const ctxRec = document.getElementById('chart-recruiter');
     if (ctxRec) {
@@ -905,20 +942,31 @@ function renderDashboardCharts() {
                 datasets: [{ 
                     label: 'Candidates Assigned', 
                     data: recData, 
-                    backgroundColor: 'rgba(6,182,212,0.6)', 
+                    backgroundColor: 'rgba(6, 182, 212, 0.8)', 
                     borderColor: '#06b6d4', 
                     borderWidth: 1, 
-                    borderRadius: 4,
-                    maxBarThickness: 40 // 🔥 FIX: Prevents bars from becoming extremely wide
+                    borderRadius: 6, 
+                    maxBarThickness: 35, 
+                    categoryPercentage: 0.6,
+                    barPercentage: 0.8
                 }] 
             },
             options: { 
                 responsive: true, 
                 maintainAspectRatio: false, 
-                plugins: { legend: { display: false } }, 
+                plugins: { 
+                    legend: { display: false },
+                    tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)', cornerRadius: 8 }
+                }, 
                 scales: { 
-                    y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' } }, 
-                    x: { grid: { display: false } } 
+                    y: { 
+                        beginAtZero: true, 
+                        grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                        ticks: { stepSize: 1 } 
+                    }, 
+                    x: { 
+                        grid: { display: false }
+                    } 
                 } 
             }
         });
@@ -934,30 +982,47 @@ function renderDashboardCharts() {
                 datasets: [{ 
                     data: techData, 
                     backgroundColor: techColors, 
-                    borderWidth: 1, 
-                    borderColor: 'rgba(255,255,255,0.1)' 
+                    borderWidth: 2, 
+                    borderColor: '#1e293b', 
+                    hoverOffset: 5
                 }] 
             },
             options: { 
                 responsive: true, 
-                maintainAspectRatio: false, 
+                maintainAspectRatio: false,
+                layout: {
+                    padding: 10
+                },
                 plugins: { 
                     legend: { 
-                        position: 'bottom', // 🔥 FIX: Moves legend underneath to save horizontal space
-                        labels: {
-                            boxWidth: 12,
-                            padding: 12,
-                            font: { size: 11 }
+                        display: false 
+                    },
+                    tooltip: { 
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)', 
+                        cornerRadius: 8,
+                        callbacks: {
+                            label: function(context) {
+                                return ` ${context.label}: ${context.raw}`;
+                            }
                         }
-                    } 
+                    }
                 }, 
-                cutout: '65%' 
+                cutout: '65%'
             }
         });
+
+        const legendContainer = document.getElementById('tech-legend');
+        if (legendContainer) {
+            legendContainer.innerHTML = techLabels.map((label, i) => `
+                <div class="tech-legend-item">
+                    <div class="tech-legend-swatch" style="background: ${techColors[i]}"></div>
+                    <div class="tech-legend-label" title="${label}">${label}</div>
+                    <div class="tech-legend-count">${techData[i]}</div>
+                </div>
+            `).join('');
+        }
     }
 }
-
-
 
 /* ==========================================================================
    COLUMN DELETION / HIDING
@@ -1082,7 +1147,7 @@ function renderCandidateTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(c => state.selection.cand.has(c.id));
     const customHeaders = (state.customColumns.candidates || []).map((col, idx) => generateCustomColumnHeader(col, idx, 'candidates')).join('');
     
-    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" style="cursor:pointer;" onclick="openAddColumnModal('candidates')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')"></i></div></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'candidates')}</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width:140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
+    thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="cursor:pointer; font-size:0.8rem;" onclick="cycleAlignAll('candidates')" title="Align All"></i></th><th><input type="checkbox" id="select-all-cand" onclick="toggleSelectAll('cand', this)" ${isAllChecked ? 'checked' : ''}></th><th>#</th><th>${thAlign('First Name', 'candidates')}</th><th>${thAlign('Last Name', 'candidates')}</th><th>${thAlign('Mobile', 'candidates')}</th><th>${thAlign('WhatsApp', 'candidates')}</th><th>${thAlign('Tech', 'candidates')}</th><th>${thAlign('Recruiter', 'candidates')}</th><th style="width:140px;">${thAlign('Status', 'candidates')}</th><th>${thAlign('Assigned', 'candidates')}</th><th>${thAlign('Gmail', 'candidates')}</th><th>${thAlign('LinkedIn', 'candidates')}</th><th>${thAlign('Resume', 'candidates')}</th><th>${thAlign('Track', 'candidates')}</th><th>${thAlign('Comments', 'candidates')}</th>${customHeaders}</tr>`;
     if(document.getElementById('cand-footer-count')) document.getElementById('cand-footer-count').innerText = `Showing ${filtered.length} total records`;
     
     tbody.innerHTML = filtered.map((c, i) => {
@@ -1105,7 +1170,7 @@ function renderCandidateTable() {
         <td class="drag-handle-cell"><i class="fa-solid fa-grip-vertical drag-handle-icon"></i></td>
         <td><input type="checkbox" ${isSel} onchange="toggleSelect('${c.id}', 'cand')"></td>
         <td>${i+1}</td>
-        <td tabindex="0" data-field="first" id="fname-${c.id}" onclick="window.handleFirstNameClick(event, '${c.id}', 'candidates')" ondblclick="window.handleFirstNameDblClick(event, '${c.id}', 'candidates')">${renderFirstNameCellContent(c, 'candidates')}</td>
+<td tabindex="0" data-field="first" id="fname-${c.id}" onclick="window.handleFirstNameClick(event, '${c.id}', 'candidates')" ondblclick="window.handleFirstNameDblClick(event, '${c.id}', 'candidates')" style="cursor: pointer; position: relative;">${c.first}</td>
         <td tabindex="0" data-field="last" ondblclick="inlineEdit('${c.id}', 'last', 'candidates', this)">${c.last}</td>
         <td tabindex="0" data-field="mobile" ondblclick="inlineEdit('${c.id}', 'mobile', 'candidates', this)">${c.mobile}</td>
         <td tabindex="0" data-field="wa" ondblclick="inlineEdit('${c.id}', 'wa', 'candidates', this)">${c.wa}</td>
@@ -1134,7 +1199,7 @@ function renderEmployeeTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(e => state.selection.emp.has(e.id));
     const customHeaders = (state.customColumns.employees || []).map((col, idx) => generateCustomColumnHeader(col, idx, 'employees')).join('');
     
-    document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" onclick="openAddColumnModal('employees')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem;" onclick="cycleAlignAll('employees')"></i></div></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'employees')}</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th>${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th><th>${thAlign('Track', 'employees')}</th>${customHeaders}</tr>`;
+    document.getElementById('employee-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem; cursor:pointer;" onclick="cycleAlignAll('employees')" title="Align All"></i></th><th><input type="checkbox" id="select-all-emp" onclick="toggleSelectAll('emp', this)" ${isAllChecked ? 'checked' : ''}></th><th>#</th><th>${thAlign('First Name', 'employees')}</th><th>${thAlign('Last Name', 'employees')}</th><th>${thAlign('Date of Birth', 'employees')}</th><th>${thAlign('Designation', 'employees')}</th><th>${thAlign('Work Mobile', 'employees')}</th><th>${thAlign('Personal Mobile', 'employees')}</th><th>${thAlign('Official Email', 'employees')}</th><th>${thAlign('Personal Email', 'employees')}</th><th>${thAlign('Track', 'employees')}</th>${customHeaders}</tr>`;
     if(document.getElementById('emp-footer-count')) document.getElementById('emp-footer-count').innerText = `Showing ${filtered.length} total records`;
     
     document.getElementById('employee-table-body').innerHTML = filtered.map((c, i) => {
@@ -1166,7 +1231,7 @@ function renderOnboardingTable() {
     const isAllChecked = filtered.length > 0 && filtered.every(o => state.selection.onb.has(o.id));
     const customHeaders = (state.customColumns.onboarding || []).map((col, idx) => generateCustomColumnHeader(col, idx, 'onboarding')).join('');
     
-    document.getElementById('onboarding-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" onclick="openAddColumnModal('onboarding')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem;" onclick="cycleAlignAll('onboarding')"></i></div></th><th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th><th>${thAlign('#', 'onboarding')}</th><th>${thAlign('First Name', 'onboarding')}</th><th>${thAlign('Last Name', 'onboarding')}</th><th>${thAlign('Date of Birth', 'onboarding')}</th><th>${thAlign('Recruiter', 'onboarding')}</th><th>${thAlign('Mobile', 'onboarding')}</th><th>${thAlign('Status', 'onboarding')}</th><th>${thAlign('Assigned', 'onboarding')}</th><th>${thAlign('Comments', 'onboarding')}</th>${customHeaders}</tr>`;
+    document.getElementById('onboarding-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem; cursor:pointer;" onclick="cycleAlignAll('onboarding')" title="Align All"></i></th><th><input type="checkbox" id="select-all-onb" onclick="toggleSelectAll('onb', this)" ${isAllChecked ? 'checked' : ''}></th><th>#</th><th>${thAlign('First Name', 'onboarding')}</th><th>${thAlign('Last Name', 'onboarding')}</th><th>${thAlign('Date of Birth', 'onboarding')}</th><th>${thAlign('Recruiter', 'onboarding')}</th><th>${thAlign('Mobile', 'onboarding')}</th><th>${thAlign('Status', 'onboarding')}</th><th>${thAlign('Assigned', 'onboarding')}</th><th>${thAlign('Comments', 'onboarding')}</th>${customHeaders}</tr>`;
     if(document.getElementById('onb-footer-count')) document.getElementById('onb-footer-count').innerText = `Showing ${filtered.length} total records`;
     
     document.getElementById('onboarding-table-body').innerHTML = filtered.map((c, i) => {
@@ -1201,7 +1266,7 @@ function renderPlacementTable() {
     const customHeaders = (state.customColumns.placements || []).map((col, idx) => generateCustomColumnHeader(col, idx, 'placements')).join('');
     const thead = document.querySelector('#placement-table-head');
     
-    if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" onclick="openAddColumnModal('placements')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem;" onclick="cycleAlignAll('placements')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'placements')}</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
+    if(thead) thead.innerHTML = `<tr><th style="width:40px; text-align:center;"><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem; cursor:pointer;" onclick="cycleAlignAll('placements')" title="Align All"></i></th><th style="width:40px;"><input type="checkbox" id="select-all-place" onclick="toggleSelectAll('place', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">#</th><th>${thAlign('First Name', 'placements')}</th><th>${thAlign('Last Name', 'placements')}</th><th>${thAlign('Tech', 'placements')}</th><th>${thAlign('Location', 'placements')}</th><th>${thAlign('Contract', 'placements')}</th><th>${thAlign('Assigned', 'placements')}</th><th>${thAlign('Actions', 'placements')}</th>${customHeaders}</tr>`;
     if(document.getElementById('placement-footer-count')) document.getElementById('placement-footer-count').innerText = `Showing ${placed.length} total records`;
     
     if(document.getElementById('placement-table-body')) {
@@ -1265,7 +1330,7 @@ function renderHubTable() {
     updateSelectButtons('hub');
     const isAllChecked = activeCandidates.length > 0 && activeCandidates.every(c => state.selection.hub.has(c.id));
     
-    document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><div style="display:flex; flex-direction:column; gap:5px; align-items:center;"><i class="fa-solid fa-table-columns hover-primary" onclick="openAddColumnModal('hub')"></i><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem;" onclick="cycleAlignAll('hub')"></i></div></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">${thAlign('#', 'hub')}</th><th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th><th style="width:150px;">${thAlign('Recruiter', 'hub')}</th><th style="width:120px;">${thAlign('Technology', 'hub')}</th><th style="text-align:center;">${thAlign('Submission', 'hub')}</th><th style="text-align:center;">${thAlign('Screenings', 'hub')}</th><th style="text-align:center;">${thAlign('Interview', 'hub')}</th><th style="text-align:right;">${thAlign('Date', 'hub')}</th></tr>`;
+    document.getElementById('hub-table-head').innerHTML = `<tr><th style="width:40px; text-align:center;"><i class="fa-solid fa-arrows-left-right-to-line hover-primary" style="font-size:0.8rem; cursor:pointer;" onclick="cycleAlignAll('hub')" title="Align All"></i></th><th style="width:40px;"><input type="checkbox" id="select-all-hub" onclick="toggleSelectAll('hub', this)" ${isAllChecked ? 'checked' : ''}></th><th style="width:50px;">#</th><th style="width:150px;">${thAlign('Candidate Name', 'hub')}</th><th style="width:150px;">${thAlign('Recruiter', 'hub')}</th><th style="width:120px;">${thAlign('Technology', 'hub')}</th><th style="text-align:center;">${thAlign('Submission', 'hub')}</th><th style="text-align:center;">${thAlign('Screenings', 'hub')}</th><th style="text-align:center;">${thAlign('Interview', 'hub')}</th><th style="text-align:right;">${thAlign('Date', 'hub')}</th></tr>`;
     if(document.getElementById('hub-footer-count')) document.getElementById('hub-footer-count').innerText = `Showing ${activeCandidates.length} active records`;
     const tbody = document.getElementById('hub-table-body');
     if (activeCandidates.length === 0) { tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:20px; opacity:0.6;">No activity found for this period.</td></tr>`; return; }
@@ -1308,20 +1373,26 @@ function renderHubTable() {
             const renderTimeline = (list, type) => {
                 const visibleLogs = (list||[]).filter(isInRange);
                 if(visibleLogs.length === 0) return `<li class="hub-log-item" style="opacity:0.5; font-style:italic;">No records in this range.</li>`;
+                const logArrayName = type === 'sub' ? 'submissionLog' : (type === 'scr' ? 'screeningLog' : 'interviewLog');
+                
                 return visibleLogs.map((entry, index) => {
                     const dateStr = typeof entry === 'string' ? entry : entry.date;
-                    const subject = typeof entry === 'string' ? 'Manual Entry' : (entry.subject || entry.note || 'No Subject');
+                    const subjectText = typeof entry === 'string' ? entry : (entry.subject || entry.note || '');
+                    const displayText = subjectText ? subjectText : '<span style="opacity:0.6; font-style:italic;">Click to add/paste details...</span>';
                     const link = !(typeof entry === 'string') && entry.link ? entry.link : null;
                     const icon = type === 'sub' ? 'fa-paper-plane' : (type === 'scr' ? 'fa-user-clock' : 'fa-headset');
+                    
                     return `<li class="hub-log-item" style="display:flex; flex-direction:column; gap:4px; padding:10px; border-bottom:1px solid rgba(255,255,255,0.05);">
                         <div style="display:flex; justify-content:space-between; width:100%;">
                             <span class="log-date" style="color:var(--primary); font-weight:bold; font-size:0.85rem;"><i class="fa-solid ${icon}"></i> ${dateStr}</span>
                             ${entry.recruiter ? `<span style="font-size:0.7rem; opacity:0.6;">${entry.recruiter}</span>` : ''}
                         </div>
-                        <div style="font-weight:500; color:#fff; font-size:0.9rem;">${subject}</div>
+                        <div style="font-weight:500; color:#fff; font-size:0.9rem; cursor:pointer;" title="Click to edit/paste details" onclick="event.stopPropagation(); editHubLogDetail('${c.id}', '${logArrayName}', ${index})">
+                            ${displayText} <i class="fa-solid fa-pen" style="font-size:0.7rem; opacity:0.5; margin-left:5px;"></i>
+                        </div>
                         ${link ? `<a href="${link}" target="_blank" class="hub-link-btn" style="margin-top:5px; text-decoration:none; display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:4px; background:rgba(255,255,255,0.05); color:var(--primary); font-size:0.8rem;">View Email</a>` : ''}
                         <div style="text-align:right; width:100%; margin-top:5px;">
-                            <button class="hub-action-btn delete" style="color: #ef4444; background:none; border:none; cursor:pointer;" onclick="event.stopPropagation(); deleteHubLog('${c.id}', '${type==='sub'?'submissionLog':type==='scr'?'screeningLog':'interviewLog'}', ${index})"><i class="fa-solid fa-trash"></i> Remove</button>
+                            <button class="hub-action-btn delete" style="color: #ef4444; background:none; border:none; cursor:pointer;" onclick="event.stopPropagation(); deleteHubLog('${c.id}', '${logArrayName}', ${index})"><i class="fa-solid fa-trash"></i> Remove</button>
                         </div>
                     </li>`;
                 }).join('');
@@ -1337,8 +1408,6 @@ function renderHubTable() {
     initColumnDragDrop('hub-table', 'hub');
     attachAllContextMenus();
 }
-
-
 
 /* ==========================================================================
    13. DATA MANIPULATION & INLINE EDITS
@@ -1775,18 +1844,58 @@ window.closeDeleteModal = () => { document.getElementById('delete-modal').style.
 window.removeFromCandidateHub = async (ids, options = {}) => {
     const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
     if (!uniqueIds.length) return { updated: 0, hubDocsRemoved: 0 };
-    const batch = db.batch(); let updated = 0; let hubDocsRemoved = 0;
+    
+    const batch = db.batch(); 
+    let updated = 0; 
+    let hubDocsRemoved = 0;
+    
     uniqueIds.forEach(id => {
         const isHubOnly = (state.hubData || []).some(h => h.id === id) && !(state.candidates || []).some(c => c.id === id);
-        if (isHubOnly) { batch.delete(db.collection('hub').doc(id)); hubDocsRemoved += 1; updated += 1; } 
+        
+        if (isHubOnly) { 
+            batch.delete(db.collection('hub').doc(id)); 
+            hubDocsRemoved += 1; 
+            updated += 1; 
+        } 
         else {
-            const candRef = db.collection('candidates').doc(id); batch.set(candRef, { hiddenFromHub: true, removedFromHubAt: new Date().toISOString(), removedFromHubBy: state.currentUserName || 'Unknown' }, { merge: true }); updated += 1;
-            const hubRef = db.collection('hub').doc(id); batch.delete(hubRef); hubDocsRemoved += 1;
+            const candRef = db.collection('candidates').doc(id); 
+            batch.set(candRef, { 
+                hiddenFromHub: true, 
+                removedFromHubAt: new Date().toISOString(), 
+                removedFromHubBy: state.currentUserName || 'Unknown',
+                submissionLog: [],
+                screeningLog: [],
+                interviewLog: []
+            }, { merge: true }); 
+            
+            updated += 1;
+            
+            const hubRef = db.collection('hub').doc(id); 
+            batch.delete(hubRef); 
+            hubDocsRemoved += 1;
         }
     });
+    
     await batch.commit();
+    
     state.hubData = (state.hubData || []).filter(h => !uniqueIds.includes(h.id));
-    uniqueIds.forEach(id => { const idx = (state.candidates || []).findIndex(c => c.id === id); if (idx >= 0) state.candidates[idx] = { ...state.candidates[idx], hiddenFromHub: true }; });
+    uniqueIds.forEach(id => { 
+        const idx = (state.candidates || []).findIndex(c => c.id === id); 
+        if (idx >= 0) {
+            state.candidates[idx] = { 
+                ...state.candidates[idx], 
+                hiddenFromHub: true,
+                submissionLog: [],
+                screeningLog: [],
+                interviewLog: []
+            }; 
+        } 
+    });
+
+    if (window.updateHubStats) {
+        updateHubStats(state.hub.filterType, state.hub.date);
+    }
+    
     return { updated, hubDocsRemoved };
 };
 
@@ -1806,7 +1915,6 @@ window.executeDelete = async () => {
             });
             pushHistoryEntry({ type: 'hub_remove', collection: 'hub', uiType: 'hub', records: snapshots, label: `Remove ${ids.length} from Candidate Hub` });
             
-            // This is the line that was accidentally cut off!
             const result = await window.removeFromCandidateHub(ids, { skipHistory: true });
             
             ids.forEach(id => logActivity('delete', 'hub', id, 'Removed from Candidate Hub only (master candidate preserved)'));
@@ -1833,67 +1941,6 @@ window.executeDelete = async () => {
         showToast('Delete Failed: ' + e.message); 
     }
 };
-window.removeFromCandidateHub = async (ids, options = {}) => {
-    const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
-    if (!uniqueIds.length) return { updated: 0, hubDocsRemoved: 0 };
-    
-    const batch = db.batch(); 
-    let updated = 0; 
-    let hubDocsRemoved = 0;
-    
-    uniqueIds.forEach(id => {
-        const isHubOnly = (state.hubData || []).some(h => h.id === id) && !(state.candidates || []).some(c => c.id === id);
-        
-        if (isHubOnly) { 
-            batch.delete(db.collection('hub').doc(id)); 
-            hubDocsRemoved += 1; 
-            updated += 1; 
-        } 
-        else {
-            const candRef = db.collection('candidates').doc(id); 
-            batch.set(candRef, { 
-                hiddenFromHub: true, 
-                removedFromHubAt: new Date().toISOString(), 
-                removedFromHubBy: state.currentUserName || 'Unknown',
-                // Clear out all log arrays to wipe daily, weekly, and monthly stats
-                submissionLog: [],
-                screeningLog: [],
-                interviewLog: []
-            }, { merge: true }); 
-            
-            updated += 1;
-            
-            const hubRef = db.collection('hub').doc(id); 
-            batch.delete(hubRef); 
-            hubDocsRemoved += 1;
-        }
-    });
-    
-    await batch.commit();
-    
-    // Update local state so UI updates without needing a page refresh
-    state.hubData = (state.hubData || []).filter(h => !uniqueIds.includes(h.id));
-    uniqueIds.forEach(id => { 
-        const idx = (state.candidates || []).findIndex(c => c.id === id); 
-        if (idx >= 0) {
-            state.candidates[idx] = { 
-                ...state.candidates[idx], 
-                hiddenFromHub: true,
-                submissionLog: [],
-                screeningLog: [],
-                interviewLog: []
-            }; 
-        } 
-    });
-
-    // Recalculate stats counters at the top of the hub immediately
-    if (window.updateHubStats) {
-        updateHubStats(state.hub.filterType, state.hub.date);
-    }
-    
-    return { updated, hubDocsRemoved };
-};
-
 
 window.moveToPlacements = async (id) => {
     if (!canEdit()) return showToast("Edit permission required"); 
@@ -2200,76 +2247,101 @@ window.sendCrmEmail = async () => {
 };
 
 /* ==========================================================================
-   17. FIRST NAME CLICK & DIRECT HUB ACTIVITY HANDLERS
+   FIRST NAME CLICK & DIRECT HUB ACTIVITY HANDLERS
    ========================================================================== */
 let currentHubPopover = null;
 
 window.handleFirstNameClick = function(event, id, col) {
     if (event.detail > 1) return; // Prevent single click from running on double click
+    showHubLogPopover(event, id, col, event.currentTarget);
 };
 
 window.handleFirstNameDblClick = function(event, id, col) {
     const cell = event.currentTarget;
     removeHubLogPopover();
-    removeGlobalContextMenu();
+    if (typeof removeGlobalContextMenu === 'function') removeGlobalContextMenu();
     inlineEdit(id, 'first', col, cell);
 };
 
-// Generates the inline quick-action buttons inside the First Name cell
-function renderFirstNameCellContent(c, col) {
-    return `<div style="display:flex; align-items:center; justify-content:space-between; width:100%; gap:8px;">
-        <span class="fname-text" style="flex:1;">${c.first || ''}</span>
-        <div class="fname-quick-actions" style="display:inline-flex; gap:4px; flex-shrink:0;">
-            <button type="button" class="btn-icon-small text-cyan" style="font-size:0.7rem; padding:2px 5px; background:rgba(6,182,212,0.1); border:1px solid rgba(6,182,212,0.3); border-radius:3px;" 
-                onclick="event.stopPropagation(); window.addHubLogFromTable('${c.id}', 'submission')" title="Add Submission to Candidate Hub">
-                <i class="fa-solid fa-paper-plane"></i> Sub
-            </button>
-            <button type="button" class="btn-icon-small text-gold" style="font-size:0.7rem; padding:2px 5px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:3px;" 
-                onclick="event.stopPropagation(); window.addHubLogFromTable('${c.id}', 'screening')" title="Add Screening to Candidate Hub">
-                <i class="fa-solid fa-user-clock"></i> Scr
-            </button>
-            <button type="button" class="btn-icon-small text-purple" style="font-size:0.7rem; padding:2px 5px; background:rgba(139,92,246,0.1); border:1px solid rgba(139,92,246,0.3); border-radius:3px;" 
-                onclick="event.stopPropagation(); window.addHubLogFromTable('${c.id}', 'interview')" title="Add Interview to Candidate Hub">
-                <i class="fa-solid fa-headset"></i> Int
-            </button>
-        </div>
-    </div>`;
-}
+window.showHubLogPopover = function(event, id, col, cellElement) {
+    if (typeof removeGlobalContextMenu === 'function') removeGlobalContextMenu();
+    removeHubLogPopover();
 
-function showHubLogPopover(event, id, col) {
-    removeGlobalContextMenu();
     const popover = document.createElement('div');
-    popover.className = 'quick-actions-popover';
-    popover.style.position = 'fixed';
-    popover.style.left = event.clientX + 'px';
-    popover.style.top  = event.clientY + 'px';
-    popover.style.zIndex = '9999';
+    popover.className = 'quick-actions-popover modern-popover';
+    popover.style.position = 'absolute'; 
+    popover.style.zIndex = '10000'; // Max z-index to stay above everything
+    
     popover.innerHTML = `
+        <div class="popover-header">
+            <span>QUICK ACTIONS</span>
+            <i class="fa-solid fa-xmark popover-close" onclick="removeHubLogPopover()"></i>
+        </div>
         <div class="quick-action-btn" id="pop-sub-${id}"><i class="fa-solid fa-paper-plane text-cyan"></i> Add Submission</div>
         <div class="quick-action-btn" id="pop-scr-${id}"><i class="fa-solid fa-user-clock text-gold"></i> Add Screening</div>
-        <div class="quick-action-btn" id="pop-int-${id}"><i class="fa-solid fa-headset text-purple"></i> Add Interview</div>`;
+        <div class="quick-action-btn" id="pop-int-${id}"><i class="fa-solid fa-headset text-purple"></i> Add Interview</div>
+    `;
+    
     popover.querySelector(`#pop-sub-${id}`).onclick = () => { addHubLogFromTable(id, 'submission'); };
     popover.querySelector(`#pop-scr-${id}`).onclick = () => { addHubLogFromTable(id, 'screening'); };
     popover.querySelector(`#pop-int-${id}`).onclick = () => { addHubLogFromTable(id, 'interview'); };
+    
+    // Append to body so it escapes all table overflow restrictions
     document.body.appendChild(popover);
     currentHubPopover = popover;
-    setTimeout(() => document.addEventListener('click', closeHubPopoverOnOutside), 0);
+
+    // --- Static Positioning ---
+    const rect = cellElement.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+
+    let top = rect.top + window.scrollY + (rect.height / 2) - (popoverRect.height / 2);
+    let left = rect.right + window.scrollX + 12;
+
+    if (left + popoverRect.width > window.innerWidth + window.scrollX) {
+        left = rect.left + window.scrollX - popoverRect.width - 12;
+        popover.style.transformOrigin = 'right center';
+    }
+
+    if (top + popoverRect.height > window.innerHeight + window.scrollY) {
+        top = window.innerHeight + window.scrollY - popoverRect.height - 10;
+    }
+
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+
+    // --- UX Fix: Close immediately on scroll ---
+    const tableWrapper = cellElement.closest('.table-wrapper') || cellElement.closest('.ac-table-wrapper');
+    
+    // Slight timeout prevents the click event from triggering an immediate close
+    setTimeout(() => {
+        if (tableWrapper) tableWrapper.addEventListener('scroll', removeHubLogPopover, { passive: true });
+        window.addEventListener('scroll', removeHubLogPopover, { passive: true });
+        window.addEventListener('resize', removeHubLogPopover, { passive: true });
+        document.addEventListener('click', closeHubPopoverOnOutside);
+        
+        currentHubPopover._trackedWrapper = tableWrapper;
+    }, 50);
 }
 
-function closeHubPopoverOnOutside(e) {
+window.closeHubPopoverOnOutside = function(e) {
     if (!currentHubPopover || currentHubPopover.contains(e.target)) return;
     removeHubLogPopover();
 }
 
-function removeHubLogPopover() {
+window.removeHubLogPopover = function() {
     if (currentHubPopover) {
+        // Clean up listeners
+        if (currentHubPopover._trackedWrapper) {
+            currentHubPopover._trackedWrapper.removeEventListener('scroll', removeHubLogPopover);
+        }
+        window.removeEventListener('scroll', removeHubLogPopover);
+        window.removeEventListener('resize', removeHubLogPopover);
+        document.removeEventListener('click', closeHubPopoverOnOutside);
+
         currentHubPopover.remove();
         currentHubPopover = null;
-        document.removeEventListener('click', closeHubPopoverOnOutside);
     }
 }
-
-
 
 /* ==========================================================================
    18. UNIFIED CONTEXT MENU (for all tables)
@@ -2488,19 +2560,36 @@ window.triggerPhotoUpload = () => { document.getElementById('profile-upload-inpu
 
 window.handlePhotoUpload = async (input) => {
     if (!input.files || !input.files[0] || !state.user) return;
+    
     const file = input.files[0];
     const email = state.user.email;
+    const btnIcon = document.querySelector('.avatar-edit-btn');
+    
+    if(btnIcon) btnIcon.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    
     try {
         const ref = storage.ref(`profiles/${email}_${Date.now()}`);
         await ref.put(file);
         const url = await ref.getDownloadURL();
         await db.collection('users').doc(email).set({ photoURL: url }, { merge: true });
+        
         document.getElementById('profile-main-img').src = url;
         document.getElementById('profile-main-img').style.display = 'block';
         document.getElementById('profile-main-icon').style.display = 'none';
         document.getElementById('btn-delete-photo').style.display = 'inline-flex';
-        showToast("Photo uploaded");
-    } catch(err) { showToast("Photo upload failed"); console.error(err); }
+        
+        showToast("Photo uploaded successfully");
+        
+    } catch(err) { 
+        console.error("Firebase Upload Error:", err);
+        let errorMsg = "Upload failed";
+        if (err.message && err.message.includes("unauthorized")) errorMsg = "Upload blocked by Storage Rules";
+        if (err.message && err.message.includes("quota")) errorMsg = "Storage quota exceeded";
+        showToast(errorMsg); 
+    } finally {
+        input.value = '';
+        if(btnIcon) btnIcon.innerHTML = '<i class="fa-solid fa-camera"></i>';
+    }
 };
 
 window.deleteProfilePhoto = async () => {
@@ -2638,6 +2727,31 @@ function setupEventListeners() {
         if(defaultToggle) defaultToggle.classList.add('active');
         renderCandidateTable();
     });
+
+    // --- Access Control Filters ---
+    document.getElementById('ac-search-input')?.addEventListener('input', e => { 
+        state.acFilters.text = e.target.value.toLowerCase(); 
+        state.acPage.index = 1;
+        if (typeof renderAccessControlTable === 'function') renderAccessControlTable(); 
+    });
+
+    document.getElementById('ac-role-filter')?.addEventListener('change', e => { 
+        state.acFilters.role = e.target.value; 
+        state.acPage.index = 1;
+        if (typeof renderAccessControlTable === 'function') renderAccessControlTable(); 
+    });
+
+    document.getElementById('ac-status-filter')?.addEventListener('change', e => { 
+        const newStatus = e.target.value;
+        state.acFilters.status = newStatus; 
+        
+        document.querySelectorAll('#ac-status-toggles .btn-toggle').forEach(b => b.classList.remove('active'));
+        const activeToggle = document.querySelector(`#ac-status-toggles .btn-toggle[data-ac-status="${newStatus}"]`);
+        if (activeToggle) activeToggle.classList.add('active');
+
+        state.acPage.index = 1;
+        if (typeof renderAccessControlTable === 'function') renderAccessControlTable(); 
+    });
 }
 
 /* ==========================================================================
@@ -2677,11 +2791,14 @@ window.handleDrop = async (e, collection) => {
 };
 
 /* ==========================================================================
-   24. HUB SPECIFIC HELPERS
+   24. HUB SPECIFIC HELPERS (UPDATED)
    ========================================================================== */
 window.triggerHubNote = async (id, type) => {
-    const note = prompt("Enter manual activity note:");
-    if(note === null || note.trim() === "") return;
+    const typeLabelMap = { 'submissionLog': 'Submission', 'screeningLog': 'Screening', 'interviewLog': 'Interview' };
+    const label = typeLabelMap[type] || 'Activity';
+    
+    const note = prompt(`Enter or paste ${label} details:`, "");
+    if (note === null || note.trim() === "") return;
     
     let cand = state.candidates.find(c => c.id === id);
     let collection = 'candidates';
@@ -2690,11 +2807,12 @@ window.triggerHubNote = async (id, type) => {
         collection = 'hub';
     }
     
-    if(!cand) return showToast("Record not found", "error");
+    if(!cand) return showToast("Record not found");
     
     let logs = [...(cand[type] || [])];
     logs.push({ 
         date: getLocalDateString(), 
+        subject: note.trim(),
         note: note.trim(), 
         recruiter: state.currentUserName, 
         timestamp: Date.now() 
@@ -2702,7 +2820,7 @@ window.triggerHubNote = async (id, type) => {
     
     try { 
         await db.collection(collection).doc(id).update({ [type]: logs }); 
-        showToast("Manual log added"); 
+        showToast(`${label} details saved`); 
     } catch(err) { 
         showToast("Failed to add log"); 
     }
@@ -2745,27 +2863,32 @@ window.addHubLogFromTable = async (id, type) => {
 
     if (!cand) return showToast("Record not found");
 
+    const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
+    
+    const userDetails = prompt(`Enter or paste ${typeLabel} details:`, "");
+    if (userDetails === null) return; 
+
     if (!Array.isArray(cand[logField])) {
         cand[logField] = [];
     }
 
+    const detailText = userDetails.trim() || `${typeLabel} Log`;
+
     const newEntry = { 
         date: getLocalDateString(), 
-        note: '', 
+        subject: detailText,
+        note: detailText, 
         recruiter: state.currentUserName || 'Unknown', 
         timestamp: Date.now() 
     };
 
-    // 1. Instantly update local state
     cand[logField].push(newEntry);
     cand.hiddenFromHub = false;
 
-    // 2. Instantly refresh the UI so it feels 100% instantaneous
     if (window.renderHubTable) renderHubTable();
     if (window.updateHubStats) updateHubStats();
-    showToast(`✔ ${type.charAt(0).toUpperCase() + type.slice(1)} added`);
+    showToast(`✔ ${typeLabel} added`);
 
-    // 3. Sync to Firestore silently in the background without blocking the screen
     db.collection(collection).doc(id).update({ 
         [logField]: cand[logField],
         hiddenFromHub: false 
@@ -2777,7 +2900,31 @@ window.addHubLogFromTable = async (id, type) => {
     removeHubLogPopover();
 };
 
+window.editHubLogDetail = async (id, type, index) => {
+    let cand = state.candidates.find(c => c.id === id) || state.hubData.find(c => c.id === id);
+    let collection = state.candidates.some(c => c.id === id) ? 'candidates' : 'hub';
+    if (!cand || !cand[type] || !cand[type][index]) return;
 
+    const currentEntry = cand[type][index];
+    const currentVal = typeof currentEntry === 'string' ? currentEntry : (currentEntry.subject || currentEntry.note || '');
+    
+    const newVal = prompt("Edit or paste details:", currentVal);
+    if (newVal === null) return;
+
+    let logs = [...cand[type]];
+    if (typeof logs[index] === 'string') {
+        logs[index] = { date: getLocalDateString(), subject: newVal.trim(), note: newVal.trim(), recruiter: state.currentUserName, timestamp: Date.now() };
+    } else {
+        logs[index] = { ...logs[index], subject: newVal.trim(), note: newVal.trim() };
+    }
+
+    try {
+        await db.collection(collection).doc(id).update({ [type]: logs });
+        showToast("Details updated");
+    } catch(err) {
+        showToast("Failed to update details");
+    }
+};
 
 /* ==========================================================================
    25. STARTUP
