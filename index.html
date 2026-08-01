@@ -14,7 +14,7 @@
   <!-- Chart.js (external library) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-  <!-- Our custom CSS (no inline styles) -->
+  <!-- Custom CSS -->
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -131,7 +131,7 @@
               <button class="nav-item" onclick="renderGmailList('Drafts', this)">
                   <span class="material-icons" style="font-size: 18px;">drafts</span> <span>Drafts</span>
               </button>
-             
+              
               <div class="nav-item" onclick="toggleCategories()" style="font-size: 0.9rem; opacity: 0.8;">
                   <span class="material-icons" id="category-arrow" style="font-size: 16px;">expand_more</span> <span>Categories</span>
               </div>
@@ -152,7 +152,7 @@
                       <small>Create label</small>
                   </div>
               </div>
-             
+              
               <div style="margin-top: 15px; padding-left: 5px; color: gray; font-size: 10px; font-weight: bold; display:flex; justify-content:space-between; padding-right:10px;">
                   <span>LABELS</span>
                   <span id="manage-indicator" style="display:none; color:var(--danger); cursor:pointer;" onclick="toggleManageMode()">Done</span>
@@ -272,7 +272,8 @@
         <div id="view-candidates" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('candidates')"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button class="btn-insert" onclick="createNewRow('candidates')"><i class="fa-solid fa-table-list"></i> Insert Row</button>
+              <button class="btn-insert" onclick="openAddColumnModal('candidates')"><i class="fa-solid fa-plus"></i> Insert Column</button>
               <div class="status-toggles">
                 <button class="btn-toggle active" data-status="">All</button>
                 <button class="btn-toggle" data-status="Active">Active</button>
@@ -299,7 +300,8 @@
         <div id="view-placements" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="manualAddPlacement()"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button class="btn-insert" onclick="manualAddPlacement()"><i class="fa-solid fa-table-list"></i> Insert Row</button>
+              <button class="btn-insert" onclick="openAddColumnModal('placements')"><i class="fa-solid fa-plus"></i> Insert Column</button>
               <button id="btn-delete-placement" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('place')"><i class="fa-solid fa-trash-can"></i> (<span id="place-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -349,7 +351,8 @@
           </div>
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('hub')"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button class="btn-insert" onclick="createNewRow('hub')"><i class="fa-solid fa-table-list"></i> Insert Row</button>
+              <button class="btn-insert" onclick="openAddColumnModal('hub')"><i class="fa-solid fa-plus"></i> Insert Column</button>
               <button id="btn-delete-hub" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('hub')"><i class="fa-solid fa-trash-can"></i> (<span id="hub-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -368,7 +371,8 @@
         <div id="view-employees" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('employees')"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button class="btn-insert" onclick="createNewRow('employees')"><i class="fa-solid fa-table-list"></i> Insert Row</button>
+              <button class="btn-insert" onclick="openAddColumnModal('employees')"><i class="fa-solid fa-plus"></i> Insert Column</button>
               <button id="btn-delete-employee" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('emp')"><i class="fa-solid fa-trash-can"></i> (<span id="emp-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -387,7 +391,8 @@
         <div id="view-onboarding" class="content-view">
           <div class="toolbar glass-panel">
             <div class="left-actions">
-              <button class="btn-insert" onclick="createNewRow('onboarding')"><i class="fa-solid fa-plus"></i> Insert Row</button>
+              <button class="btn-insert" onclick="createNewRow('onboarding')"><i class="fa-solid fa-table-list"></i> Insert Row</button>
+              <button class="btn-insert" onclick="openAddColumnModal('onboarding')"><i class="fa-solid fa-plus"></i> Insert Column</button>
               <button id="btn-delete-onboarding" class="btn btn-danger" style="display: none;" onclick="openDeleteModal('onb')"><i class="fa-solid fa-trash-can"></i> (<span id="onboarding-selected-count">0</span>)</button>
             </div>
             <div class="filters-group modern-filter-row">
@@ -604,7 +609,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
   
-  <!-- Our custom JavaScript file (contains all logic + improvements) -->
+  <!-- Custom JavaScript -->
   <script src="script.js"></script>
 </body>
 </html>
